@@ -37,7 +37,20 @@ public record SyncSetResponse(
         Long version,
         // Membership counts keyed by state name (APPLIED/PENDING/FAILED/REVIEW);
         // empty for single-set responses, populated by the list endpoint.
-        Map<String, Long> stateCounts) {
+        Map<String, Long> stateCounts,
+        // The last complete content verify's counts (the dashboard's drift snapshot).
+        VerifySnapshot verify) {
+
+    /**
+     * The stored drift snapshot: the last complete content verify ({@code at}
+     * null when never verified) and, when a newer verify didn't finish reading
+     * both directories, when that was ({@code incompleteAt}). {@code held} is how
+     * many members had a reference value the sync holds back, {@code dangling}
+     * how many of those name an entry missing on the source (null until counted).
+     */
+    public record VerifySnapshot(OffsetDateTime at, Integer missing, Integer orphan, Integer mismatch,
+                                 OffsetDateTime incompleteAt, Integer held, Integer dangling) {
+    }
 
     public static SyncSetResponse of(SyncSet s) {
         return of(s, Map.of());
@@ -50,6 +63,9 @@ public record SyncSetResponse(
                 s.getTransformRules(), s.getExcludedAttributes(),
                 s.getReconcileCadenceSeconds(), s.getReconcileLastRunAt(),
                 s.isEnabled(), s.getLoggingLevel(), s.getCreatedAt(), s.getUpdatedAt(), s.getVersion(),
-                stateCounts == null ? Map.of() : stateCounts);
+                stateCounts == null ? Map.of() : stateCounts,
+                new VerifySnapshot(s.getLastVerifiedAt(), s.getVerifyMissingCount(), s.getVerifyOrphanCount(),
+                        s.getVerifyMismatchCount(), s.getVerifyIncompleteAt(), s.getVerifyHeldCount(),
+                        s.getVerifyDanglingCount()));
     }
 }

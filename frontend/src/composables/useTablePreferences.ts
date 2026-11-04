@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Persist per-table user preferences (column widths, hidden columns, page size,
- * sort state) so they survive page reloads. Storage is the server-side
+ * Persist per-table user preferences (column widths, hidden columns, column
+ * order, page size, sort state) so they survive page reloads. Storage is the server-side
  * preferences document (namespace `tables`, keyed by `tableKey`) via the
  * preferences store — not localStorage — so a user's table layout follows them
  * across browsers and devices.
@@ -38,10 +38,17 @@ export interface TablePrefs {
    * default-hidden seed.
    */
   seenColumns: string[]
+  /**
+   * User-chosen order of the movable columns, by key. Empty = the caller's
+   * declared order. May hold keys the table isn't rendering right now (e.g.
+   * a discovered attribute the current search didn't return) so they slot
+   * back into place when they reappear; see {@link orderColumns}.
+   */
+  order: string[]
 }
 
 export function defaultPrefs(): TablePrefs {
-  return { widths: {}, hidden: [], pageSize: 50, sortKey: '', sortAsc: true, seenColumns: [] }
+  return { widths: {}, hidden: [], pageSize: 50, sortKey: '', sortAsc: true, seenColumns: [], order: [] }
 }
 
 /** Coerce a stored (possibly partial / legacy) blob into a full TablePrefs. */
@@ -54,6 +61,7 @@ function normalize(parsed: Partial<TablePrefs> | null | undefined): TablePrefs {
     sortKey: typeof p.sortKey === 'string' ? p.sortKey : '',
     sortAsc: typeof p.sortAsc === 'boolean' ? p.sortAsc : true,
     seenColumns: Array.isArray(p.seenColumns) ? p.seenColumns : [],
+    order: Array.isArray(p.order) ? p.order.filter((k): k is string => typeof k === 'string') : [],
   }
 }
 
@@ -66,6 +74,14 @@ export interface UseTablePreferences {
   setHidden: (cols: string[]) => void
   setPageSize: (size: number) => void
   setSort: (key: string, asc: boolean) => void
+  /**
+   * Save a new order for the columns currently rendered. Keys in the saved
+   * order that aren't in {@code keys} (columns absent right now) are kept,
+   * after the given keys, so they return to roughly their old place.
+   */
+  setOrder: (keys: string[]) => void
+  /** Forget the saved column order, reverting to the declared order. */
+  resetOrder: () => void
   /**
    * Called by ResultsTable whenever {@code props.columns} changes.
    * For each column key not yet in {@code prefs.seenColumns}, applies
@@ -122,6 +138,16 @@ export function useTablePreferences(tableKey: string): UseTablePreferences {
     prefs.value = { ...prefs.value, sortKey: key, sortAsc: asc }
   }
 
+  function setOrder(keys: string[]): void {
+    const given = new Set(keys)
+    const absent = prefs.value.order.filter(k => !given.has(k))
+    prefs.value = { ...prefs.value, order: [...keys, ...absent] }
+  }
+
+  function resetOrder(): void {
+    prefs.value = { ...prefs.value, order: [] }
+  }
+
   function reset(): void {
     prefs.value = defaultPrefs()
   }
@@ -142,13 +168,33 @@ export function useTablePreferences(tableKey: string): UseTablePreferences {
     }
   }
 
-  return { prefs, setWidth, resetWidths, toggleHidden, setHidden, setPageSize, setSort, recordSeen, reset }
+  return {
+    prefs, setWidth, resetWidths, toggleHidden, setHidden, setPageSize, setSort,
+    setOrder, resetOrder, recordSeen, reset,
+  }
 }
 
 // ── Pure helpers (exported so tests can exercise them without mounting) ──
 
 export interface SortableRow {
   [col: string]: unknown
+}
+
+/**
+ * Arrange items by a saved key order. Items whose key appears in
+ * {@code order} come first, in that order; the rest follow in their original
+ * (declared) order — so a column the user has never placed, such as a newly
+ * discovered attribute, lands after the ones they arranged. Saved keys with
+ * no matching item are ignored. An empty order returns the input unchanged.
+ */
+export function orderColumns<T extends { key: string }>(items: T[], order: string[]): T[] {
+  if (order.length === 0) return items
+  const rank = new Map<string, number>()
+  order.forEach((k, i) => { if (!rank.has(k)) rank.set(k, i) })
+  const placed = items.filter(c => rank.has(c.key))
+    .sort((a, b) => rank.get(a.key)! - rank.get(b.key)!)
+  const rest = items.filter(c => !rank.has(c.key))
+  return [...placed, ...rest]
 }
 
 /**

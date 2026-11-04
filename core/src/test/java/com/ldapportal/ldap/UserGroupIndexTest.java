@@ -44,6 +44,23 @@ class UserGroupIndexTest {
     }
 
     @Test
+    void cell_joinsTheLabelsAsAMultiValueCell_escapingALiteralPipe() {
+        UserGroupIndex index = UserGroupIndex.of(List.of(
+                group("cn=admins,ou=g,dc=x", "admins", "member", JSMITH),
+                group("cn=a|b,ou=g,dc=x", "a|b", "member", JSMITH)));
+
+        assertThat(index.cell(JSMITH, null)).isEqualTo("admins|a\\|b");
+        assertThat(index.cell("uid=nobody,dc=x", null)).isEmpty();
+    }
+
+    @Test
+    void withColumn_putsTheGroupsColumnLast_replacingAnAttributeOfThatName() {
+        assertThat(UserGroupIndex.withColumn(List.of("dn", "Groups", "mail")))
+                .containsExactly("dn", "mail", UserGroupIndex.COLUMN);
+        assertThat(UserGroupIndex.withColumn(List.of())).containsExactly("groups");
+    }
+
+    @Test
     void usesTheDnWhenAnotherGroupSharesTheCn() {
         UserGroupIndex index = UserGroupIndex.of(List.of(
                 group("cn=engineering,ou=a,dc=x", "engineering", "member", JSMITH),

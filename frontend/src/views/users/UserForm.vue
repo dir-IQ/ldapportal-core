@@ -576,7 +576,8 @@ interface UserTemplateConfig {
   showDnField?: boolean
   /**
    * Optional ${attr} expression that seeds the (editable) DN field on create.
-   * Blank falls back to "<rdnAttribute>=<rdnValue>,<parentDn>".
+   * Blank falls back to "<rdnAttribute>=<rdnValue>,<parentDn>", or to just
+   * ",<parentDn>" when an operator-entered profile has no RDN attribute.
    */
   dnTemplate?: string | null
   /** DN field layout (designer-configured); null reproduces the default (after the RDN, 2/3). */
@@ -998,6 +999,10 @@ const defaultDn = computed(() => {
   const attr = rdnAttr.value?.attributeName || local.rdnAttribute || ''
   const val = rdnEffectiveValue.value
   const base = local.parentDn || ''
+  // An operator-entered profile with neither a template nor an RDN attribute
+  // leaves naming to the operator: pre-fill just the target OU for them to
+  // complete with the entry's RDN.
+  if (!attr && showDnField.value && base) return `,${base}`
   if (!attr || !val || !base) return ''
   return `${attr}=${escapeRdnValue(val)},${base}`
 })
@@ -1071,9 +1076,20 @@ const dnError = computed(() => {
   const dn = effectiveDn.value.trim()
   const base = (local.parentDn || '').trim()
   if (!dn) return dnEdited.value ? 'DN is required' : ''
+  // A DN with no RDN at all (the bare ",<target OU>" pre-fill) is flagged once
+  // the operator types or tries to save, not on first sight. Only a missing
+  // RDN: a template RDN still waiting on a blank field ("uid=,ou=…") is left to
+  // that field's own required check.
+  if (dn.startsWith(',')) {
+    return dnEdited.value || validationAttempted.value
+      ? 'Start the DN with the entry\'s RDN, e.g. uid=jsmith' : ''
+  }
   if (base && !dnWithinBase(dn, base)) return `DN must be within ${base}`
   return ''
 })
+
+/** Set by the first save attempt, so an incomplete pre-filled DN is reported then. */
+const validationAttempted = ref(false)
 
 /** Whether to show the DN field alongside the RDN. */
 const showDnField = computed(() => props.userTemplateConfig?.showDnField !== false)
@@ -1305,6 +1321,7 @@ function validate(): boolean {
 
 /** Populates {@link fieldErrors}; returns true when the form is valid. */
 function runValidation(): boolean {
+  validationAttempted.value = true
   for (const k of Object.keys(fieldErrors)) delete fieldErrors[k]
   // The editable DN must stay within the profile's target OU on create. This
   // gate applies even on the fallback path (no attribute template).

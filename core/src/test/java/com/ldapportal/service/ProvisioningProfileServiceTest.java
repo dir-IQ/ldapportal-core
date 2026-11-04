@@ -697,6 +697,36 @@ class ProvisioningProfileServiceTest {
     }
 
     @Test
+    void createProfile_operatorEnteredWithoutRdnAttribute_storesNull() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        var captor = org.mockito.ArgumentCaptor.forClass(ProvisioningProfile.class);
+        // Operator-entered, no template: the operator types the whole DN, so no
+        // RDN attribute is needed; a blank one is stored as null.
+        var req = reqFull("  ", null, true, false,
+                List.of(attrEntry("cn", "TEXT", true, false, null)));
+
+        assertThatCode(() -> service.create(directoryId, req, true, null))
+                .doesNotThrowAnyException();
+        org.mockito.Mockito.verify(profileRepo, org.mockito.Mockito.atLeastOnce()).save(captor.capture());
+        assertThat(captor.getAllValues()).allSatisfy(p -> assertThat(p.getRdnAttribute()).isNull());
+    }
+
+    @Test
+    void createProfile_automaticWithoutRdnAttribute_rejected() {
+        UUID directoryId = UUID.randomUUID();
+        // Rejected before anything is saved, so only the directory lookup is stubbed.
+        var dir = new com.ldapportal.entity.DirectoryConnection();
+        dir.setId(directoryId);
+        given(dirRepo.findById(directoryId)).willReturn(Optional.of(dir));
+        var req = reqWith(null, null, List.of(attrEntry("cn", "TEXT", true, false, null)));
+
+        assertThatThrownBy(() -> service.create(directoryId, req, true, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("RDN attribute is required when the DN is composed automatically");
+    }
+
+    @Test
     void createProfile_selfRegistrationWithOperatorEnteredDn_rejected() {
         UUID directoryId = UUID.randomUUID();
         // Interlock throws in applyCommonFields, before the profile is saved, so

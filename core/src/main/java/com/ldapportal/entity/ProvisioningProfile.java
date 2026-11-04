@@ -90,8 +90,12 @@ public class ProvisioningProfile {
     @Column(name = "object_class_name")
     private List<String> objectClassNames = new ArrayList<>();
 
-    /** The attribute used as the RDN when constructing the entry DN. */
-    @Column(name = "rdn_attribute", nullable = false, length = 100)
+    /**
+     * The attribute used as the RDN when the app composes the entry DN
+     * (Automatic mode). Null in operator-entered mode when no DN template names
+     * the entry — the operator types the whole DN.
+     */
+    @Column(name = "rdn_attribute", length = 100)
     private String rdnAttribute;
 
     @Column(name = "show_dn_field", nullable = false)

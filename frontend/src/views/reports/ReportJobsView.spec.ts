@@ -219,6 +219,32 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect(body.reportParams).toHaveProperty('branchDn')
   })
 
+  it('passes every column to the table, labelled, showing the first ten and groups, hiding the rest', async () => {
+    const reports = await import('@/api/reports')
+    const attrs = ['cn', 'mail', 'sn', 'givenname', 'uid', 'title', 'ou', 'l', 'st', 'employeenumber', 'street']
+    ;(reports.runOperationalReportData as unknown as Mock).mockResolvedValueOnce({
+      data: {
+        columns: ['dn', ...attrs, 'groups'],
+        labels: { dn: 'DN', cn: 'Name', groups: 'Groups' },
+        rows: [],
+      },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'Run Report')!.trigger('click')
+    await flushPromises()
+
+    const columns = wrapper.findComponent({ name: 'ResultsTable' }).props('columns') as
+      { key: string, label: string, defaultHidden?: boolean }[]
+    expect(columns.map(c => c.key)).toEqual(['dn', ...attrs, 'groups'])
+    // Backend label first, else the friendly LDAP name matched ignoring case.
+    expect(columns.find(c => c.key === 'cn')!.label).toBe('Name')
+    expect(columns.find(c => c.key === 'givenname')!.label).toBe('First Name')
+    expect(columns.find(c => c.key === 'employeenumber')!.label).toBe('Employee #')
+    expect(columns.filter(c => !c.defaultHidden).map(c => c.key)).toEqual(['dn', ...attrs.slice(0, 9), 'groups'])
+    expect(columns.find(c => c.key === 'groups')!.label).toBe('Groups')
+  })
+
   it.each(['USERS_IN_BRANCH', 'MISSING_DATA'])(
     'browses the %s branch picker from the admin\'s profile OU, not the superadmin endpoint',
     async (type) => {

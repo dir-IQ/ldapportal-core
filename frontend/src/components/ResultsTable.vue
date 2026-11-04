@@ -9,6 +9,8 @@
  *   - Pagination with selectable page size (25 / 50 / 100 / All)
  *   - Quick-filter input (case-insensitive substring match across visible cols)
  *   - Column show/hide picker (persisted)
+ *   - Column reordering from the picker by dragging a column's grip.
+ *     Persisted; `lockPosition` / `pinned` columns stay put.
  *   - Sticky header
  *   - Per-cell rendering via scoped slot `cell-<key>` so callers keep
  *     full control over badges, dates, DN truncation, etc.
@@ -32,8 +34,10 @@
  *   </ResultsTable>
  */
 import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import Sortable, { type SortableEvent } from 'sortablejs'
 import {
   useTablePreferences,
+  orderColumns,
   sortRows,
   filterRows,
   paginate,
@@ -68,6 +72,13 @@ export interface ColumnDef {
    * supported.
    */
   pinned?: boolean
+  /**
+   * If true, the column can't be reordered from the picker. Locked columns
+   * declared before the first movable column stay at the start (e.g. DN);
+   * the rest stay at the end (e.g. a row-actions column). `pinned` columns
+   * are always locked.
+   */
+  lockPosition?: boolean
 }
 
 const props = withDefaults(defineProps<{
@@ -119,7 +130,9 @@ const emit = defineEmits<{
   (e: 'row-click', row: SortableRow): void
 }>()
 
-const { prefs, setWidth, resetWidths, toggleHidden, setPageSize, setSort, recordSeen } = useTablePreferences(props.tableKey)
+const {
+  prefs, setWidth, resetWidths, toggleHidden, setPageSize, setSort, setOrder, resetOrder, recordSeen,
+} = useTablePreferences(props.tableKey)
 
 // Seed default-hidden columns the first time each column key is
 // shown to the user. Re-runs whenever the caller's `columns` prop
@@ -137,10 +150,31 @@ function syncSeen(): void {
 syncSeen()
 watch(() => props.columns.map(c => c.key).join('\u0000'), syncSeen)
 
+// ── Column order ────────────────────────────────────────────────────────────
+// Three bands: locked columns declared before the first movable one (start),
+// the movable columns in the user's saved order, then the remaining locked
+// columns (end). Keeps DN first and the actions column last however the
+// user arranges the rest.
+const isLocked = (c: ColumnDef): boolean => !!(c.lockPosition || c.pinned)
+const columnBands = computed(() => {
+  const firstMovable = props.columns.findIndex(c => !isLocked(c))
+  if (firstMovable < 0) return { leading: props.columns, movable: [] as ColumnDef[], trailing: [] as ColumnDef[] }
+  return {
+    leading: props.columns.slice(0, firstMovable),
+    movable: orderColumns(props.columns.filter(c => !isLocked(c)), prefs.value.order),
+    trailing: props.columns.slice(firstMovable).filter(isLocked),
+  }
+})
+const movableColumns = computed(() => columnBands.value.movable)
+const orderedColumns = computed<ColumnDef[]>(() => {
+  const b = columnBands.value
+  return [...b.leading, ...b.movable, ...b.trailing]
+})
+
 // ── Column visibility ───────────────────────────────────────────────────────
 const hiddenSet = computed(() => new Set(prefs.value.hidden))
 const visibleColumns = computed<ColumnDef[]>(() =>
-  props.columns.filter(c => c.alwaysVisible || !hiddenSet.value.has(c.key)),
+  orderedColumns.value.filter(c => c.alwaysVisible || !hiddenSet.value.has(c.key)),
 )
 const visibleKeys = computed(() => visibleColumns.value.map(c => c.key))
 
@@ -353,6 +387,38 @@ function onColumnToggle(col: ColumnDef): void {
   })
 }
 
+const colLabel = (c: ColumnDef): string => c.label || c.key
+
+// Drag-to-reorder in the picker. sortablejs is used directly rather than via
+// vuedraggable: vuedraggable's bundle ships a core-js polyfill that replaces
+// NodeList.prototype.forEach globally, which a shared table shouldn't do.
+// Sortable moves the DOM node itself; we put it back and let Vue re-render
+// the list from the new saved order, so Vue stays the owner of the DOM.
+const movableListRef = ref<HTMLElement | null>(null)
+let sortable: Sortable | null = null
+watch(movableListRef, (el) => {
+  sortable?.destroy()
+  sortable = el
+    ? Sortable.create(el, { handle: '.col-drag-handle', animation: 150, onEnd: onDragEnd })
+    : null
+})
+onBeforeUnmount(() => sortable?.destroy())
+
+function onDragEnd({ item, from, oldIndex, newIndex }: SortableEvent): void {
+  if (oldIndex == null || newIndex == null || oldIndex === newIndex) return
+  // Undo Sortable's move. Insert relative to element siblings (not null) so
+  // the node stays inside Vue's v-for fragment anchors.
+  item.remove()
+  const before = from.children[oldIndex]
+  if (before) from.insertBefore(item, before)
+  else from.children[oldIndex - 1]?.after(item)
+  const keys = movableColumns.value.map(c => c.key)
+  const [moved] = keys.splice(oldIndex, 1)
+  keys.splice(newIndex, 0, moved)
+  setOrder(keys)
+}
+
+
 function onDocClick(e: MouseEvent): void {
   if (!showColPicker.value) return
   if (colPickerRef.value && !colPickerRef.value.contains(e.target as Node)) {
@@ -408,7 +474,7 @@ watch(() => props.rows, () => { page.value = 0 })
 </script>
 
 <template>
-  <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+  <div class="bg-white border border-gray-200 rounded-xl">
     <!-- Toolbar -->
     <div class="px-5 py-3 border-b border-gray-200 flex items-center justify-between gap-3 flex-wrap">
       <div class="flex items-center gap-3 flex-1 min-w-0">
@@ -459,21 +525,65 @@ watch(() => props.rows, () => { page.value = 0 })
           </button>
           <div
             v-if="showColPicker"
-            class="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-2 w-56 max-h-80 overflow-y-auto"
+            class="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-2 w-64 max-h-[min(36rem,70vh)] overflow-y-auto"
           >
-            <div v-for="col in columns" :key="col.key"
-                 class="px-3 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-2 cursor-pointer"
+            <!-- Locked columns that sit before the movable ones (e.g. DN). -->
+            <div v-for="col in columnBands.leading" :key="col.key"
+                 class="pl-8 pr-3 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-2 cursor-pointer"
                  :class="col.alwaysVisible ? 'opacity-50 cursor-not-allowed' : ''"
                  @click="onColumnToggle(col)">
               <input
                 type="checkbox"
                 :checked="!hiddenSet.has(col.key) || col.alwaysVisible"
                 :disabled="col.alwaysVisible"
+                :aria-label="`Show ${colLabel(col)}`"
                 @click.stop
                 @change="onColumnToggle(col)"
                 class="rounded border-gray-300"
               />
-              <span class="text-gray-700">{{ col.label || col.key }}</span>
+              <span class="text-gray-700 truncate">{{ colLabel(col) }}</span>
+            </div>
+            <!-- Movable columns: drag the grip to reorder. -->
+            <div ref="movableListRef">
+              <div v-for="col in movableColumns" :key="col.key"
+                   class="px-3 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-2 cursor-pointer"
+                   :class="col.alwaysVisible ? 'cursor-not-allowed' : ''"
+                   :data-picker-key="col.key"
+                   @click="onColumnToggle(col)">
+                <span
+                  class="col-drag-handle cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 leading-none select-none"
+                  title="Drag to reorder"
+                  aria-hidden="true"
+                  @click.stop
+                >⋮⋮</span>
+                <input
+                  type="checkbox"
+                  :checked="!hiddenSet.has(col.key) || col.alwaysVisible"
+                  :disabled="col.alwaysVisible"
+                  :aria-label="`Show ${colLabel(col)}`"
+                  @click.stop
+                  @change="onColumnToggle(col)"
+                  class="rounded border-gray-300"
+                />
+                <span class="text-gray-700 truncate flex-1 min-w-0"
+                      :class="col.alwaysVisible ? 'opacity-50' : ''">{{ colLabel(col) }}</span>
+              </div>
+            </div>
+            <!-- Locked columns that sit after the movable ones (e.g. actions). -->
+            <div v-for="col in columnBands.trailing" :key="col.key"
+                 class="pl-8 pr-3 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-2 cursor-pointer"
+                 :class="col.alwaysVisible ? 'opacity-50 cursor-not-allowed' : ''"
+                 @click="onColumnToggle(col)">
+              <input
+                type="checkbox"
+                :checked="!hiddenSet.has(col.key) || col.alwaysVisible"
+                :disabled="col.alwaysVisible"
+                :aria-label="`Show ${colLabel(col)}`"
+                @click.stop
+                @change="onColumnToggle(col)"
+                class="rounded border-gray-300"
+              />
+              <span class="text-gray-700 truncate">{{ colLabel(col) }}</span>
             </div>
             <!-- Layout reset: clears any fitted / dragged widths back to the
                  column defaults. Paired with "Fit columns" so the width
@@ -483,6 +593,12 @@ watch(() => props.rows, () => { page.value = 0 })
               class="w-full text-left px-3 py-1.5 mt-1 pt-2 border-t border-gray-100 text-sm text-gray-600 hover:bg-gray-50"
               @click="resetWidths(); showColPicker = false"
             >Reset column widths</button>
+            <button
+              type="button"
+              class="w-full text-left px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-default"
+              :disabled="prefs.order.length === 0"
+              @click="resetOrder"
+            >Reset column order</button>
           </div>
         </div>
       </div>

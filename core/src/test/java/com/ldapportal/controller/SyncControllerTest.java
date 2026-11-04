@@ -79,7 +79,7 @@ class SyncControllerTest extends BaseControllerTest {
         return new SyncSetResponse(SET, LINK, "people", "ou=people,dc=src", null, null, "ou=Users,dc=dst",
                 null, null, null, null, null, null, null, null, true,
                 com.ldapportal.entity.enums.SyncLoggingLevel.SUMMARY, OffsetDateTime.now(), OffsetDateTime.now(), 0L,
-                java.util.Map.of());
+                java.util.Map.of(), null);
     }
 
     // ── authz ──────────────────────────────────────────────────────────────────

@@ -108,7 +108,7 @@ public final class DiffValueComparison {
     }
 
     /** Whether values of {@code baseName} hold DNs. */
-    static boolean isDnValued(String baseName, Schema schema, Collection<String> dnAttrs) {
+    public static boolean isDnValued(String baseName, Schema schema, Collection<String> dnAttrs) {
         for (String dnAttr : dnAttrs) {
             if (dnAttr.equalsIgnoreCase(baseName)) {
                 return true;

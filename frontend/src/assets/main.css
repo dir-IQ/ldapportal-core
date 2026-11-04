@@ -490,3 +490,20 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   padding-left: 0.75rem;
   padding-right: 0.75rem;
 }
+
+/*
+ * Profile theme tint (ProfilePill, the bulk Active-profile field). The colours
+ * come from themeTintStyle() as custom properties, one set per theme, with the
+ * text already brought to at least 4.5:1 against its background. Not a control,
+ * so no hover / disabled / compact layers; dark mode swaps in the dark set.
+ */
+.profile-tint {
+  background-color: var(--profile-tint-bg);
+  border-color: var(--profile-tint-border);
+  color: var(--profile-tint-text);
+}
+[data-theme="dark"] .profile-tint {
+  background-color: var(--profile-tint-bg-dark);
+  border-color: var(--profile-tint-border-dark);
+  color: var(--profile-tint-text-dark);
+}

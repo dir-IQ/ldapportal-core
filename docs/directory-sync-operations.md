@@ -525,26 +525,37 @@ ambiguous target; it quarantines for a human.
 
 The inventory API classifies each `REVIEW` row as `reviewKind`
 `PENDING_DELETE`, `AMBIGUOUS_MATCH`, `PLACEMENT_CONFLICT` (or `OTHER` for an
-unrecognized reason), and the inventory names each row's actions for it.
+unrecognized reason), and the inventory names its actions for the rows selected.
 
-### Resolving `REVIEW` (and the other row actions)
+### Resolving `REVIEW` (and the other inventory actions)
 
-| Row | Actions |
+The inventory's actions are bulk actions: tick rows (or the header checkbox for
+the whole page) and pick an action from the bar above the table. The selection
+covers the current page only and is cleared when the page, state filter or
+search changes. Each request is sent one row at a time; a row that fails is
+reported with the first reason and doesn't stop the others.
+
+| Action | Applies to |
 |---|---|
-| **Held delete** (`PENDING_DELETE`) | **Delete target** — approves the deletion: deletes the target entry now, whatever the set's delete policy or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`, with the set and directory names as for a run's writes). Refused while the set or link is disabled. **Keep entry, stop syncing** — dismiss: the target entry stays but is no longer managed (verification then reports it *orphaned on target*). **Re-check** — recompute: re-applies it if the entry came back into scope; otherwise leaves it held under `deletePolicy=REVIEW`, or deletes it under `DELETE` (a single recompute doesn't apply the guard). |
-| **Ambiguous match / placement conflict** | **Retry match** (recompute, after cleaning up the conflicting target entries) · **Stop tracking** |
-| **FAILED** | **Retry** (recompute) · **Stop tracking** |
-| **Synced / Pending** (`APPLIED` / `PENDING`) | **Re-sync** (recompute) · **Stop tracking** |
+| **Recompute** — named for the selection: **Re-check** (held deletes), **Retry match** (ambiguous match / placement conflict, after cleaning up the conflicting target entries), **Retry** (`FAILED`), **Re-sync** (Synced / Pending), or **Recompute** when the selection mixes them | Every selected row |
+| **Delete target** — approves the deletion: deletes the target entry now, whatever the set's delete policy or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`, with the set and directory names as for a run's writes). Refused while the set or link is disabled. | Only the held deletes (`PENDING_DELETE`) among the selection; the button appears only when there are some, and other selected rows are left alone |
+| **Stop tracking** — dismiss | Every selected row |
 
-**Re-check**, **Retry match**, **Retry** and **Re-sync** queue a recompute of the
-row, which the worker picks up within about ten seconds. The inventory then
-watches the row for up to 20 seconds, refreshes it when it changes and says what
-it became. If nothing changed, it says so; for a held delete that means the
-entry is still outside the set's filter or scope.
+A recompute queues each selected row, and the worker picks the requests up
+within about ten seconds. The inventory then reloads the page for up to 20
+seconds, until every row has changed, and says what they became (e.g.
+`Retry done: 2 now Synced, 1 now Failed; 1 unchanged after 20 seconds`). A row
+that left the filtered page is looked up on its own. For a held delete,
+**Re-check** re-applies the entry if it came back into scope; otherwise it stays
+held under `deletePolicy=REVIEW`, or is deleted under `DELETE` (a single
+recompute doesn't apply the guard). An unchanged held delete means the entry is
+still outside the set's filter or scope.
 
 **Stop tracking** (dismiss) drops only the index row — the target isn't touched.
 An in-scope entry is picked up again from scratch by the next reconcile; an
-out-of-scope one is left unmanaged. Destructive actions ask for confirmation.
+out-of-scope one is left unmanaged. For a held delete it keeps the target entry,
+which the set then no longer manages (verification reports it *orphaned on
+target*). Destructive actions ask for confirmation, once for the whole selection.
 
 ### `FAILED` reasons
 The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
@@ -558,9 +569,14 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
 ## 7. Monitoring
 
 ### 7.1 The UI (Directory Sync → expand a link → a set → its inventory)
-- **Link / set tables** show a colour-coded **Health** rollup: red `N failed`
-  (worst), amber `N review`, green `Healthy`, grey `No data` — derived from
-  membership `stateCounts`.
+- **Link / set tables** show a colour-coded **Health** rollup: `N failed` and
+  `N review` side by side (e.g. `2 failed · 5 review`, red while anything
+  failed, amber for review alone), green `Healthy`, grey `No data` — derived
+  from membership `stateCounts`. Held deletes (entries that left scope whose
+  target delete waits for approval) are called out within the review count,
+  e.g. `5 review (3 deletes)`; the rest are correlation decisions (ambiguous
+  match, placement conflict). The dashboard's *sync items awaiting review*
+  action says how many are deletes too.
 - **Membership inventory modal** (per set): state-filter chips (All / Synced /
   Pending / Review / Failed with counts, each with a tooltip saying what it means, and **Not in set**, below), a search box (identity or DN),
   per-row Identity / State / Source DN / Target DN / **Reason**, and per-row
@@ -626,7 +642,31 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   directories and compares them directly (it ignores the membership index, so it
   catches drift the index believes is already converged). Reports counts of
   in-sync / **missing on target** / **orphaned on target** / **content drift**
-  entries, with sample DNs for each. Read-only; never writes.
+  entries, with sample DNs for each. Read-only; never writes. When the set
+  writes a **source anchor**, only target entries carrying it count as
+  orphaned: an entry under the same target base that nothing manages isn't
+  this set's drift. Nor is one another set placed: when several sets write
+  their anchor into the same attribute, an entry whose anchor value another
+  set's index places at that DN is left out too. Without an anchor every entry
+  under the target base that matches the filter is counted, and the result says
+  so. It also counts **held references**: members with a reference value
+  (`secDN`, group `member`, …) the sync holds back because the entry it names
+  isn't placed by any sync set. They aren't drift — a held value is left as
+  the target has it — but each is listed with its value and whether the entry
+  it names **doesn't exist on the source** (a source data problem a reconcile
+  can't fix) or simply **isn't synced yet** (it fills in once that entry
+  lands). The counts are stored with the drift snapshot, so the inventory
+  shows them without running a verify.
+- **Drift column and drifting sets.** Each set stores its last *complete*
+  content verify (it runs after every scheduled or manual reconcile, and on
+  **Verify contents**). The sets table's **Drift** column shows it — e.g.
+  *12 orphaned · 1 different*, *In sync* or *Not verified* — with the verify's
+  time on hover, and each link rolls up how many of its sets drift. When any
+  enabled set drifts, a **drifting sets** banner lists them all with an
+  **Open set** button each; the dashboard's *entries differ from source*
+  message links here (`?drift=1`) with the list open. A verify that couldn't
+  read both directories completely doesn't replace the stored counts; the
+  column then says *(may be out of date)*.
 - **Saving in the set editor.** **Save** keeps the editor open, so you can
   edit, save and preview in one place. The preview runs on the **saved** set,
   so Preview impact is unavailable while the form holds unsaved edits. Saving a
@@ -639,7 +679,12 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   are taken from the run's stored entries, so they always match its list.
   Works on a **disabled** set, and runs automatically as the confirmation step
   when you enable a set: if the run would delete entries (or the delete guard
-  would trip) you're asked before it turns on.
+  would trip) you're asked before it turns on. It also starts by itself when
+  you create a set, and when a save changes what the set manages or writes
+  (applicability filter, source base DN or scope, target base DN, reference
+  or excluded attributes, transform rules), so its counts are there to read
+  before choosing **Reconcile now** or **Later**. Saves that change nothing
+  it applies (name, cadence, logging level) don't start one.
 - **Preview impact** (set editor; needs *manage directory sync*) — opens the
   full, paged list of what a reconcile would do to **each entry**: **Add**,
   **Modify**, **Move**, **Delete**, **Review**, **No change**, **Forget**,

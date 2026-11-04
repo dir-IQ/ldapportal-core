@@ -9,6 +9,35 @@
       <button v-if="canManage" @click="openLinkModal()" class="btn-primary">+ New Link</button>
     </div>
 
+    <!-- ── Drifting sets: every enabled set whose last complete content verify
+         found drift (what the dashboard's drift count adds up), so they can
+         be found without opening each set. ?drift=1 opens the list. ──────── -->
+    <section v-if="driftingSets.length" data-testid="drifting-sets"
+             class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-amber-900">
+          <span class="font-medium">{{ driftingSets.length }} sync {{ driftingSets.length === 1 ? 'set' : 'sets' }}
+            drifting</span> at their last content verify.
+        </p>
+        <button type="button" class="btn-secondary btn-compact" :aria-expanded="showDrifting"
+                aria-controls="drifting-sets-list" @click="showDrifting = !showDrifting">
+          {{ showDrifting ? 'Hide' : 'Show' }} drifting sets
+        </button>
+      </div>
+      <ul v-if="showDrifting" id="drifting-sets-list" class="mt-3 divide-y divide-amber-200 text-sm">
+        <li v-for="s in driftingSets" :key="s.id" class="flex flex-wrap items-center justify-between gap-2 py-2">
+          <div class="min-w-0">
+            <span class="font-medium text-gray-900">{{ s.name }}</span>
+            <span class="text-gray-500"> · {{ linkName(s.linkId) }}</span>
+            <span class="block text-xs" :class="driftSummary(s).tone" :title="driftSummary(s).title">
+              {{ driftSummary(s).label }} · verified {{ verifiedAt(s) }}
+            </span>
+          </div>
+          <button type="button" class="btn-secondary btn-compact" @click="openSetById(s.id)">Open set</button>
+        </li>
+      </ul>
+    </section>
+
     <!-- ── Links (each expands to its nested sync sets) ─────────────────── -->
     <DataTable :columns="linkCols" :rows="links" :loading="loadingLinks" row-key="id"
                empty-text="No sync links configured yet."
@@ -32,6 +61,9 @@
           <span class="w-2 h-2 rounded-full shrink-0" :class="healthSummary(linkCounts(row.id)).dot" aria-hidden="true"></span>
           {{ healthSummary(linkCounts(row.id)).label }}
         </span>
+      </template>
+      <template #cell-drift="{ row }">
+        <span class="text-xs font-medium" :class="linkDrift(row.id).tone">{{ linkDrift(row.id).label }}</span>
       </template>
       <template #cell-enabled="{ row }">
         <span class="text-xs font-medium" :class="row.enabled ? 'text-green-600' : 'text-gray-500'">
@@ -72,6 +104,11 @@
                     :class="healthSummary(setCounts(s)).tone">
                 <span class="w-2 h-2 rounded-full shrink-0" :class="healthSummary(setCounts(s)).dot" aria-hidden="true"></span>
                 {{ healthSummary(setCounts(s)).label }}
+              </span>
+            </template>
+            <template #cell-drift="{ row: s }">
+              <span class="text-xs font-medium" :class="driftSummary(s).tone" :title="driftSummary(s).title">
+                {{ driftSummary(s).label }}
               </span>
             </template>
             <template #cell-enabled="{ row: s }">
@@ -344,6 +381,7 @@ import {
   type SyncSetDefaults, type SyncLoggingLevel,
 } from '@/api/sync'
 import { DEFAULT_PLACEHOLDER, syncSetHelp } from '@/components/sync/syncSetHelp'
+import { driftCounts, driftSummary, driftTotal, isDrifting } from '@/components/sync/syncDrift'
 
 interface DirOption { id: string; displayName: string }
 
@@ -377,6 +415,7 @@ const linkCols = [
   { key: 'targetDirId', label: 'Target' },
   { key: 'captureMode', label: 'Capture' },
   { key: 'health', label: 'Health' },
+  { key: 'drift', label: 'Drift' },
   { key: 'enabled', label: 'Enabled' },
 ]
 const setCols = [
@@ -385,14 +424,39 @@ const setCols = [
   { key: 'targetBaseDn', label: 'Target base' },
   { key: 'deletePolicy', label: 'Delete policy' },
   { key: 'health', label: 'Health' },
+  { key: 'drift', label: 'Drift' },
   { key: 'enabled', label: 'Enabled' },
 ]
+
+// ── Drift (each set's last complete content verify) ──
+// The drifting-sets list is open by default only for the dashboard's ?drift=1.
+const showDrifting = ref(false)
+/** Enabled sets whose last complete verify found drift, most first. */
+const driftingSets = computed<SyncSet[]>(() => allSets.value
+  .filter(isDrifting)
+  .sort((a, b) => driftTotal(driftCounts(b)) - driftTotal(driftCounts(a))))
+function linkName(linkId: string): string {
+  return links.value.find((l) => l.id === linkId)?.displayName ?? '—'
+}
+function verifiedAt(s: SyncSet): string {
+  return s.verify?.at ? new Date(s.verify.at).toLocaleString() : '—'
+}
+/** A link's drift rollup over its enabled sets. */
+function linkDrift(linkId: string): { label: string; tone: string } {
+  const own = allSets.value.filter((s) => s.linkId === linkId && s.enabled)
+  const drifting = own.filter(isDrifting).length
+  if (drifting) return { label: `${drifting} ${drifting === 1 ? 'set' : 'sets'} drifting`, tone: 'text-amber-800' }
+  if (own.some((s) => driftCounts(s))) return { label: 'In sync', tone: 'text-green-700' }
+  return { label: 'Not verified', tone: 'text-gray-400' }
+}
 
 // ── Health rollup (membership state counts) ──
 type StateCounts = Record<string, number>
 
+// REVIEW_DELETE counts the held deletes among the REVIEW rows: a subset, not a state.
+const HELD_DELETE_KEY = 'REVIEW_DELETE'
 function countTotal(c: StateCounts | undefined): number {
-  return Object.values(c ?? {}).reduce((a, b) => a + b, 0)
+  return Object.entries(c ?? {}).reduce((a, [k, v]) => (k === HELD_DELETE_KEY ? a : a + v), 0)
 }
 function setCounts(s: SyncSet | undefined): StateCounts {
   return s?.stateCounts ?? {}
@@ -405,10 +469,20 @@ function linkCounts(linkId: string): StateCounts {
   }
   return acc
 }
-// A single dot + label summarizing health (worst non-zero state wins).
+// A dot + label summarizing health. Failed and review show side by side (the
+// dot and colour follow the worse), so a failure never hides what waits for
+// review; held deletes are called out within the review count.
 function healthSummary(c: StateCounts): { dot: string; label: string; tone: string } {
-  if ((c.FAILED ?? 0) > 0) return { dot: 'bg-red-600', label: `${c.FAILED} failed`, tone: 'text-red-700' }
-  if ((c.REVIEW ?? 0) > 0) return { dot: 'bg-amber-500', label: `${c.REVIEW} review`, tone: 'text-amber-800' }
+  const failed = c.FAILED ?? 0
+  const review = c.REVIEW ?? 0
+  const deletes = Math.min(c[HELD_DELETE_KEY] ?? 0, review)
+  const parts: string[] = []
+  if (failed > 0) parts.push(`${failed} failed`)
+  if (review > 0) {
+    parts.push(`${review} review` + (deletes > 0 ? ` (${deletes} ${deletes === 1 ? 'delete' : 'deletes'})` : ''))
+  }
+  if (failed > 0) return { dot: 'bg-red-600', label: parts.join(' · '), tone: 'text-red-700' }
+  if (review > 0) return { dot: 'bg-amber-500', label: parts.join(' · '), tone: 'text-amber-800' }
   if (countTotal(c) > 0) return { dot: 'bg-green-600', label: 'Healthy', tone: 'text-green-700' }
   return { dot: 'bg-gray-300', label: 'No data', tone: 'text-gray-400' }
 }
@@ -801,6 +875,10 @@ async function doSaveSet() {
   } finally {
     savingSet.value = false
   }
+  // A new set, or a save that changed what the set manages or writes, starts
+  // the impact preview straight away: the panel would otherwise only say "No
+  // preview yet", and its counts are what to read before reconciling.
+  if (saved && (creating || (before && reconciledChanges(before, saved).length > 0))) void runPreview()
   // Asked once the save is done, so the button no longer reads "Saving…" behind it.
   if (before && saved && before.enabled && saved.enabled) await offerReconcile(before, saved)
 }
@@ -839,7 +917,7 @@ async function offerReconcile(before: SyncSet, after: SyncSet) {
     message: `${what} effect at the set's next reconcile. Reconcile now to apply ${changed.length === 1 ? 'it' : 'them'} `
       + 'to every entry: entries that now leave the set are deleted or held for review, as its delete policy '
       + 'says, and deletions held for entries that are back in the set clear.\n\n'
-      + 'To see what it would do first, choose Later and run Preview impact.',
+      + 'To see what it would do first, choose Later: the impact preview is already running in the editor.',
     confirmLabel: 'Reconcile now',
     cancelLabel: 'Later',
   })
@@ -954,7 +1032,9 @@ function queryParam(v: unknown): string | undefined {
 //   ?set=<id>            → open that set's inventory
 //   ?state=FAILED|REVIEW → open the worst set in that state, pre-filtered
 //   ?link=<id>           → expand + highlight that link
+//   ?drift=1             → open the drifting-sets list
 async function applyDeepLink() {
+  if (queryParam(route.query.drift)) showDrifting.value = true
   const setId = queryParam(route.query.set)
   const linkId = queryParam(route.query.link)
   const stateRaw = queryParam(route.query.state)

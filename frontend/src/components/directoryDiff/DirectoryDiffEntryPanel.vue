@@ -14,9 +14,9 @@
             {{ CATEGORY_LABELS[entry.category] }} · {{ position }}
           </h2>
           <div class="flex gap-2">
-            <button type="button" class="btn-secondary btn-sm" :disabled="!hasPrevious" @click="emit('previous')">‹ Previous</button>
-            <button type="button" class="btn-secondary btn-sm" :disabled="!hasNext" @click="emit('next')">Next ›</button>
-            <button type="button" class="btn-neutral btn-sm" aria-label="Close" @click="emit('close')">✕</button>
+            <button type="button" class="btn-secondary btn-compact" :disabled="!hasPrevious" @click="emit('previous')">‹ Previous</button>
+            <button type="button" class="btn-secondary btn-compact" :disabled="!hasNext" @click="emit('next')">Next ›</button>
+            <button type="button" class="btn-neutral btn-compact" aria-label="Close" @click="emit('close')">✕</button>
           </div>
         </div>
 
@@ -71,8 +71,24 @@
           </template>
           <p v-else-if="isPaired" class="text-sm text-gray-600 mb-4">Every compared attribute matches.</p>
 
+          <!-- A reference naming an entry that doesn't exist (e.g. a secDN whose
+               person was deleted) is a data problem in that directory, not a
+               copy that went wrong: a sync holds such a value back. -->
+          <div v-if="live?.dangling?.length" class="mb-4 text-sm" data-testid="dangling-references">
+            <p class="text-amber-800 font-medium">References to entries that don’t exist</p>
+            <p class="text-xs text-gray-600 mb-1">
+              These values name no entry in their own directory, so a sync can’t write them: fix them at the source.
+            </p>
+            <ul class="text-xs list-disc pl-4">
+              <li v-for="d in live.dangling" :key="d.side + d.attribute + d.value">
+                <span class="font-mono">{{ d.attribute }}</span> on {{ d.side }}:
+                <span class="font-mono break-all">{{ d.value }}</span>
+              </li>
+            </ul>
+          </div>
+
           <div v-if="sameRows.length" class="mb-4">
-            <button type="button" class="btn-neutral btn-sm mb-2" :aria-expanded="showSame" @click="showSame = !showSame">
+            <button type="button" class="btn-neutral btn-compact mb-2" :aria-expanded="showSame" @click="showSame = !showSame">
               {{ showSame ? 'Hide' : 'Show' }} {{ sameRows.length }} matching attribute{{ sameRows.length === 1 ? '' : 's' }}
             </button>
             <table v-if="showSame" class="w-full text-sm" data-testid="same-table">
@@ -90,11 +106,11 @@
         </template>
 
         <div class="flex flex-wrap gap-2 pt-2 border-t border-gray-200">
-          <button v-if="isPaired" type="button" class="btn-primary btn-sm" :disabled="rechecking" @click="recheck">
+          <button v-if="isPaired" type="button" class="btn-primary btn-compact" :disabled="rechecking" @click="recheck">
             {{ rechecking ? 'Re-reading…' : 'Re-read live' }}
           </button>
-          <RouterLink v-if="entry.dnA" :to="browserLink(dirA, entry.dnA)" class="btn-secondary btn-sm">Open A in browser</RouterLink>
-          <RouterLink v-if="entry.dnB" :to="browserLink(dirB, entry.dnB)" class="btn-secondary btn-sm">Open B in browser</RouterLink>
+          <RouterLink v-if="entry.dnA" :to="browserLink(dirA, entry.dnA)" class="btn-secondary btn-compact">Open A in browser</RouterLink>
+          <RouterLink v-if="entry.dnB" :to="browserLink(dirB, entry.dnB)" class="btn-secondary btn-compact">Open B in browser</RouterLink>
         </div>
       </aside>
     </div>

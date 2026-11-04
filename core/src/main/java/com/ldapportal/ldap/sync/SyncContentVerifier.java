@@ -51,7 +51,11 @@ import java.util.UUID;
  *
  * <ul>
  *   <li><b>missing</b> — a member with no entry at its expected target DN,</li>
- *   <li><b>orphan</b> — a target entry with no corresponding source member,</li>
+ *   <li><b>orphan</b> — a target entry with no corresponding source member. When
+ *       the set writes a source anchor, only target entries carrying it count,
+ *       less those another set's index places at that DN under that anchor
+ *       value: an entry the set doesn't manage (another set's, or one never
+ *       synced) under the same target base isn't this set's drift,</li>
  *   <li><b>mismatch</b> — present on both sides, but the target's attributes
  *       differ from the projected desired state (the same diff the engine's
  *       MODIFY uses — see {@link TargetEntryDiffer}).</li>
@@ -159,13 +163,87 @@ public class SyncContentVerifier {
         Set<String> excluded = SyncExcludedAttributes.effectiveFor(ctx.set);
         tracking.phase(SyncVerifyPhase.COMPARING);
         tracking.total(expected.size());
+        String anchorAttr = anchorAttribute(ctx.set);
         SyncVerifyResult result = compare(expected, actual, excluded, sourceComplete, targetComplete,
                 targetSchemas.forDirectory(ctx.target), SyncReferenceAttributes.forSet(ctx.set), (n, dn) -> {
                     tracking.processed(n);
                     tracking.current(dn);
-                });
+                }, anchorAttr, managedElsewhere(syncSetId, expected, actual, anchorAttr));
         tracking.processed(expected.size());
-        return result;
+        return result.withHeldReferences(heldReferencesOnSource(ctx, members.values()));
+    }
+
+    /**
+     * {@link #heldReferences} with the referenced DNs looked up on the source over
+     * one pooled connection rather than one borrow per DN. If the source can't be
+     * reached, nothing counts as dangling.
+     */
+    private SyncVerifyResult.HeldReferences heldReferencesOnSource(Context ctx,
+                                                                   java.util.Collection<MembershipDecision> members) {
+        try {
+            return connectionFactory.withConnectionUnreplicated(ctx.source, conn -> {
+                Map<String, Boolean> onSource = new HashMap<>();
+                return heldReferences(members, dn -> onSource.computeIfAbsent(normDn(dn), k -> {
+                    try {
+                        return conn.getEntry(dn, "1.1") != null;
+                    } catch (Exception ex) {
+                        return true; // a failed read isn't evidence the entry is missing
+                    }
+                }));
+            });
+        } catch (Exception ex) {
+            log.warn("Sync set {}: couldn't look up held references on the source ({})",
+                    ctx.set.getId(), ex.toString());
+            return heldReferences(members, dn -> true);
+        }
+    }
+
+    /** At most this many distinct referenced DNs are looked up on the source per verify. */
+    static final int HELD_CHECK_LIMIT = 500;
+
+    /**
+     * The members whose reference values are held back (they name an entry the
+     * sync hasn't placed), and how many of those name an entry that doesn't
+     * exist on the source at all. Pure apart from {@code existsOnSource}
+     * (package-private for direct unit testing).
+     */
+    static SyncVerifyResult.HeldReferences heldReferences(java.util.Collection<MembershipDecision> members,
+                                                         java.util.function.Predicate<String> existsOnSource) {
+        int entries = 0;
+        int dangling = 0;
+        boolean unchecked = false;
+        Set<String> looked = new java.util.HashSet<>();
+        List<SyncVerifyResult.HeldSample> samples = new ArrayList<>();
+        for (MembershipDecision d : members) {
+            Map<String, List<String>> refs = new java.util.LinkedHashMap<>(d.heldReferences());
+            d.unresolvedReferences().forEach((attr, dns) -> refs.merge(attr, dns,
+                    (x, y) -> { List<String> all = new ArrayList<>(x); all.addAll(y); return all; }));
+            if (refs.isEmpty()) {
+                continue;
+            }
+            entries++;
+            boolean entryDangling = false;
+            for (Map.Entry<String, List<String>> ref : refs.entrySet()) {
+                for (String dn : ref.getValue()) {
+                    Boolean missing = null;
+                    if (looked.size() < HELD_CHECK_LIMIT || looked.contains(normDn(dn))) {
+                        looked.add(normDn(dn));
+                        missing = !existsOnSource.test(dn);
+                    } else {
+                        unchecked = true;
+                    }
+                    entryDangling |= Boolean.TRUE.equals(missing);
+                    if (samples.size() < SAMPLE_LIMIT) {
+                        samples.add(new SyncVerifyResult.HeldSample(d.targetDn(), ref.getKey(), dn,
+                                Boolean.TRUE.equals(missing)));
+                    }
+                }
+            }
+            if (entryDangling) {
+                dangling++;
+            }
+        }
+        return new SyncVerifyResult.HeldReferences(entries, dangling, unchecked, List.copyOf(samples));
     }
 
     /** Told as the comparison reaches each expected entry: how many came before it, and its DN. */
@@ -193,13 +271,62 @@ public class SyncContentVerifier {
                                     Set<String> excluded, boolean sourceComplete, boolean targetComplete,
                                     com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs) {
         return compare(expected, actual, excluded, sourceComplete, targetComplete, schema, dnAttrs,
-                CompareProgress.NONE);
+                CompareProgress.NONE, null, NOT_ELSEWHERE);
+    }
+
+    /** Says whether another set manages an anchored entry: (anchor value, entry DN) → true when it does. */
+    @FunctionalInterface
+    interface ManagedElsewhere {
+        boolean test(String anchorValue, String entryDn);
+    }
+
+    static final ManagedElsewhere NOT_ELSEWHERE = (v, dn) -> false;
+
+    /** Identities per query when looking up who manages the orphan candidates. */
+    static final int IDENTITY_BATCH = 500;
+
+    /**
+     * For the anchored target entries this set can't account for: whether
+     * another set's index places that anchor value at that very DN, so the entry
+     * is that set's, not this one's orphan (several sets may write their anchor
+     * into the same attribute under one target base).
+     */
+    private ManagedElsewhere managedElsewhere(UUID syncSetId, Map<String, Expected> expected,
+                                              Map<String, Entry> actual, String anchorAttr) {
+        if (anchorAttr == null) {
+            return NOT_ELSEWHERE;
+        }
+        java.util.Set<String> values = new java.util.LinkedHashSet<>();
+        for (Map.Entry<String, Entry> en : actual.entrySet()) {
+            if (!expected.containsKey(en.getKey())) {
+                String[] v = en.getValue().getAttributeValues(anchorAttr);
+                if (v != null) {
+                    values.addAll(java.util.Arrays.asList(v));
+                }
+            }
+        }
+        if (values.isEmpty()) {
+            return NOT_ELSEWHERE;
+        }
+        // identity -> normalized target DNs other sets place it at
+        Map<String, Set<String>> elsewhere = new HashMap<>();
+        List<String> all = new ArrayList<>(values);
+        for (int from = 0; from < all.size(); from += IDENTITY_BATCH) {
+            for (com.ldapportal.entity.Membership m
+                    : membershipRepo.findAllByIdentityIn(all.subList(from, Math.min(all.size(), from + IDENTITY_BATCH)))) {
+                if (!syncSetId.equals(m.getSyncSetId()) && m.getTargetDn() != null) {
+                    elsewhere.computeIfAbsent(m.getIdentity(), k -> new java.util.HashSet<>()).add(normDn(m.getTargetDn()));
+                }
+            }
+        }
+        return (value, dn) -> elsewhere.getOrDefault(value, Set.of()).contains(normDn(dn));
     }
 
     static SyncVerifyResult compare(Map<String, Expected> expected, Map<String, Entry> actual,
                                     Set<String> excluded, boolean sourceComplete, boolean targetComplete,
                                     com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs,
-                                    CompareProgress progress) {
+                                    CompareProgress progress, String anchorAttr,
+                                    ManagedElsewhere managedElsewhere) {
         int inSync = 0;
         int compared = 0;
         List<String> missing = new ArrayList<>();
@@ -226,9 +353,12 @@ public class SyncContentVerifier {
             }
         }
 
+        // With an anchor, only entries carrying it are the set's to account for:
+        // an unanchored entry under the target base is someone else's.
         List<String> orphans = new ArrayList<>();
         for (Map.Entry<String, Entry> en : actual.entrySet()) {
-            if (!expected.containsKey(en.getKey())) {
+            if (!expected.containsKey(en.getKey())
+                    && (anchorAttr == null || isOwnOrphan(en.getValue(), anchorAttr, managedElsewhere))) {
                 orphans.add(en.getValue().getDN());
             }
         }
@@ -237,7 +367,27 @@ public class SyncContentVerifier {
                 expected.size(), actual.size(), inSync,
                 missing.size(), orphans.size(), mismatches.size(),
                 sample(missing), sample(orphans), sample(mismatches),
-                sourceComplete, targetComplete, null);
+                sourceComplete, targetComplete, null, anchorAttr != null);
+    }
+
+    /** Anchored, and not placed at its DN by another set under any of its anchor values. */
+    private static boolean isOwnOrphan(Entry e, String anchorAttr, ManagedElsewhere managedElsewhere) {
+        String[] values = e.getAttributeValues(anchorAttr);
+        if (values == null || values.length == 0) {
+            return false;
+        }
+        for (String v : values) {
+            if (managedElsewhere.test(v, e.getDN())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The set's source anchor attribute, or {@code null} when it writes none. */
+    static String anchorAttribute(SyncSet set) {
+        String a = set.getSourceAnchorAttribute();
+        return a == null || a.isBlank() ? null : a.trim();
     }
 
     // ── LDAP enumeration (no writes) ───────────────────────────────────────────
@@ -263,8 +413,11 @@ public class SyncContentVerifier {
         SearchScope scope = SyncScopes.searchScope(ctx.set);
         Filter filter = applicabilityFilter(ctx.set);
         int pageSize = ctx.target.getPagingSize();
+        // The anchor explicitly too: orphan counting reads it, and it may be operational.
+        String anchor = anchorAttribute(ctx.set);
+        String[] attrs = anchor == null ? new String[] {"*"} : new String[] {"*", anchor};
         return connectionFactory.withConnectionUnreplicated(ctx.target, conn -> {
-            SearchRequest req = new SearchRequest(base, scope, filter, "*");
+            SearchRequest req = new SearchRequest(base, scope, filter, attrs);
             return SyncPagedSearch.all(conn, req, pageSize);
         });
     }

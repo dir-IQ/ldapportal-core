@@ -41,6 +41,7 @@ class ProvisioningProfileControllerTest extends BaseControllerTest {
 
     @MockitoBean ProvisioningProfileService service;
     @MockitoBean PasswordGeneratorService passwordGenerator;
+    @MockitoBean com.ldapportal.service.ProfileExportImportService exportImportService;
 
     static final UUID DIR_ID     = UUID.fromString("20000000-0000-0000-0000-000000000002");
     static final UUID PROFILE_ID = UUID.fromString("30000000-0000-0000-0000-000000000003");
@@ -130,5 +131,124 @@ class ProvisioningProfileControllerTest extends BaseControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"copy\",\"targetDirectoryId\":\"not-a-uuid\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ── copy-form ────────────────────────────────────────────────────────────
+
+    static final UUID TARGET_ID     = UUID.fromString("50000000-0000-0000-0000-000000000005");
+    static final String COPY_FORM_URL = GET_URL + "/copy-form";
+
+    @Test
+    void copyForm_superadmin_forwardsTheTargetsToTheService() throws Exception {
+        given(service.copyForm(eq(DIR_ID), eq(PROFILE_ID), eq(List.of(TARGET_ID)), any()))
+                .willReturn(List.of(stubResponse()));
+
+        mockMvc.perform(post(COPY_FORM_URL).with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"targetProfileIds\":[\"" + TARGET_ID + "\"]}"))
+                .andExpect(status().isOk());
+
+        verify(service).copyForm(eq(DIR_ID), eq(PROFILE_ID), eq(List.of(TARGET_ID)), any());
+    }
+
+    @Test
+    void copyForm_withNoTargets_returns400() throws Exception {
+        mockMvc.perform(post(COPY_FORM_URL).with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"targetProfileIds\":[]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void copyForm_rejectedByATarget_returns400() throws Exception {
+        given(service.copyForm(any(), any(), any(), any()))
+                .willThrow(new IllegalArgumentException("Profile [x] in [test]: bad"));
+
+        mockMvc.perform(post(COPY_FORM_URL).with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"targetProfileIds\":[\"" + TARGET_ID + "\"]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void copyForm_admin_returns403() throws Exception {
+        mockMvc.perform(post(COPY_FORM_URL).with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"targetProfileIds\":[\"" + TARGET_ID + "\"]}"))
+                .andExpect(status().isForbidden());
+    }
+
+    // ── export / import ──────────────────────────────────────────────────────
+
+    static final String EXPORT_URL = GET_URL + "/export";
+    static final String IMPORT_URL = "/api/v1/directories/" + DIR_ID + "/profiles/import";
+
+    private static com.ldapportal.dto.profile.ProfileExportDocument exportDoc() {
+        var def = new com.ldapportal.dto.profile.ProfileExportDocument.ProfileDefinition(
+                "Employees / Staff", null, null, "ou=people,dc=x", null, List.of("inetOrgPerson"), "uid",
+                true, null, null, null, null, false, null, null, null, null, null, null, null, null,
+                false, false, List.of(), List.of(), List.of(), null, null);
+        return new com.ldapportal.dto.profile.ProfileExportDocument(1,
+                com.ldapportal.dto.profile.ProfileExportDocument.KIND, null, null, def);
+    }
+
+    @Test
+    void export_superadmin_returnsTheFileAsAnAttachment() throws Exception {
+        given(exportImportService.export(DIR_ID, PROFILE_ID)).willReturn(exportDoc());
+
+        mockMvc.perform(get(EXPORT_URL).with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("Content-Disposition", "attachment; filename=\"Employees-Staff.profile.json\""))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.kind")
+                        .value(com.ldapportal.dto.profile.ProfileExportDocument.KIND));
+    }
+
+    @Test
+    void export_admin_returns403() throws Exception {
+        mockMvc.perform(get(EXPORT_URL).with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    private static final String IMPORT_BODY = "{\"mode\":\"CREATE\",\"rewriteBaseDn\":true,\"document\":"
+            + "{\"formatVersion\":1,\"kind\":\"ldapportal.provisioning-profile\",\"profile\":"
+            + "{\"name\":\"Employees\",\"targetUserDn\":\"ou=people,dc=x\",\"objectClassNames\":[\"inetOrgPerson\"]}}}";
+
+    @Test
+    void import_superadmin_forwardsTheRequest() throws Exception {
+        given(exportImportService.importProfile(eq(DIR_ID), any(), any()))
+                .willReturn(new com.ldapportal.dto.profile.ProfileImportResult(stubResponse(), List.of(), List.of()));
+
+        mockMvc.perform(post(IMPORT_URL).with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content(IMPORT_BODY))
+                .andExpect(status().isOk());
+
+        verify(exportImportService).importProfile(eq(DIR_ID),
+                org.mockito.ArgumentMatchers.argThat(r -> r.mode()
+                        == com.ldapportal.dto.profile.ProfileImportRequest.Mode.CREATE
+                        && r.rewriteBaseDn() && "Employees".equals(r.document().profile().name())),
+                any());
+    }
+
+    @Test
+    void import_withoutADocument_returns400() throws Exception {
+        mockMvc.perform(post(IMPORT_URL).with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"mode\":\"CREATE\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void import_fileMissingTheTargetOu_returns400() throws Exception {
+        mockMvc.perform(post(IMPORT_URL).with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(IMPORT_BODY.replace("\"targetUserDn\":\"ou=people,dc=x\",", "")))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void import_admin_returns403() throws Exception {
+        mockMvc.perform(post(IMPORT_URL).with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content(IMPORT_BODY))
+                .andExpect(status().isForbidden());
     }
 }
