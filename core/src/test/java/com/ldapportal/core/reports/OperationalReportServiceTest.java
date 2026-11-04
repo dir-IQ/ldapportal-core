@@ -28,6 +28,7 @@ import org.springframework.security.access.AccessDeniedException;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -287,6 +288,31 @@ class OperationalReportServiceTest {
         // Same cell as BulkUserService's export: the import reads it back as one group.
         assertThat(data.rows()).singleElement()
                 .satisfies(row -> assertThat(row).containsEntry("groups", "r\\|d"));
+    }
+
+    @Test
+    void groupsColumn_forAnAdmin_readsGroupsFromAllTheirOus_notJustTheReportsUserOu() {
+        // The admin view scopes the report to the profile's user OU; the groups
+        // live in the profile's group OU and must still be named.
+        String groupsOu = "ou=groups,dc=example,dc=com";
+        AuthPrincipal alice = admin();
+        DirectoryConnection dc = ldapDir();
+        when(permissionService.resolveSearchBaseDns(alice, dirId, BRANCH)).thenReturn(List.of(BRANCH));
+        when(permissionService.isDnWithinScope(alice, dirId, BRANCH)).thenReturn(true);
+        when(permissionService.getAuthorizedOuDns(alice, dirId)).thenReturn(Set.of(BRANCH, groupsOu));
+        when(userService.searchUsersRaw(eq(dc), anyString(), eq(BRANCH), anyInt(), eq("*")))
+                .thenReturn(List.of(entry("uid=alice", Map.of("uid", List.of("alice")))));
+        when(groupService.searchGroups(eq(dc), anyString(), eq(BRANCH), any(String[].class)))
+                .thenReturn(List.of());
+        when(groupService.searchGroups(eq(dc), anyString(), eq(groupsOu), any(String[].class)))
+                .thenReturn(List.of(new LdapGroup("cn=admins," + groupsOu,
+                        Map.of("cn", List.of("admins"), "member", List.of("uid=alice," + BRANCH)))));
+
+        ReportData data = service.run(dc, "USERS_IN_BRANCH",
+                Map.of("branchDn", BRANCH, "scopeBaseDn", BRANCH), dirId, alice);
+
+        assertThat(data.rows()).singleElement()
+                .satisfies(row -> assertThat(row).containsEntry("groups", "admins"));
     }
 
     @Test

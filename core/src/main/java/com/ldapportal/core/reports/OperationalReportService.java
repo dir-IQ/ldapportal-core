@@ -102,10 +102,17 @@ public class OperationalReportService {
      * is clamped to their authorized OUs exactly the way the user and group
      * listings are, so a report can never read past what the admin could
      * browse. {@code bases} holds a single {@code null} when unbounded.
+     *
+     * <p>{@code groupBases} is where the groups column looks for groups. It is
+     * wider than {@code bases} for an admin: a report narrowed to their user OU
+     * must still name the groups in their group OU, so it covers every OU they
+     * hold, the same groups their Groups list shows.</p>
      */
-    record ReportScope(List<String> bases, Predicate<String> dnAllowed, boolean restricted) {
+    record ReportScope(List<String> bases, List<String> groupBases,
+                       Predicate<String> dnAllowed, boolean restricted) {
         static ReportScope unbounded(String requestedBase) {
-            return new ReportScope(Collections.singletonList(requestedBase), dn -> true, false);
+            List<String> bases = Collections.singletonList(requestedBase);
+            return new ReportScope(bases, bases, dn -> true, false);
         }
 
         /** Refuse an explicit DN parameter (branch, group) outside the scope. */
@@ -160,7 +167,8 @@ public class OperationalReportService {
             return ReportScope.unbounded(requestedBase);
         }
         List<String> bases = permissionService.resolveSearchBaseDns(principal, directoryId, requestedBase);
-        return new ReportScope(bases,
+        List<String> groupBases = List.copyOf(permissionService.getAuthorizedOuDns(principal, directoryId));
+        return new ReportScope(bases, groupBases,
                 dn -> permissionService.isDnWithinScope(principal, directoryId, dn), true);
     }
 
@@ -239,8 +247,9 @@ public class OperationalReportService {
 
     /**
      * Adds a last {@value #GROUPS_COLUMN} column naming each listed user's
-     * groups, worked out from the group entries under the caller's search
-     * bases, so only groups they can see are named. Built exactly as the user
+     * groups, worked out from the group entries under the caller's group
+     * search bases ({@link ReportScope#groupBases()}), so only groups they can
+     * see are named. Built exactly as the user
      * CSV export builds its groups column ({@link UserGroupIndex}: same labels,
      * same {@code |}-joined cell), so the two agree. The UI shows it by
      * default; a CSV export carries it.
@@ -254,7 +263,7 @@ public class OperationalReportService {
         }
         UserGroupIndex index;
         try {
-            index = UserGroupIndex.build(groupService, dc, scope.bases());
+            index = UserGroupIndex.build(groupService, dc, scope.groupBases());
         } catch (RuntimeException e) {
             // The report itself still stands; it just goes without the column.
             log.warn("Could not read groups for the report's groups column: {}", e.getMessage());
