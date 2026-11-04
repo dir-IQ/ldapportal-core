@@ -144,8 +144,8 @@ For operational reports, go to **Reports** in the sidebar:
   to users or groups. Can also be scheduled.
 - All available in CSV and PDF format. The table shows the first ten columns;
   turn the rest on from the **Columns** menu. Reports that list users also
-  offer a **Groups** column (each user's groups, `|`-separated), hidden until
-  you turn it on. A CSV export carries every column, headed by the real LDAP
+  show a **Groups** column (each user's groups, `|`-separated, limited to
+  groups under your authorized OUs). A CSV export carries every column, headed by the real LDAP
   attribute names (`givenname`, not "First Name"); password attributes are
   never included.
 
