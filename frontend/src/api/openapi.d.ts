@@ -4180,6 +4180,7 @@ export interface components {
             reportParams?: {
                 [key: string]: unknown;
             };
+            columns?: string[];
         };
         ReportData: {
             columns?: string[];

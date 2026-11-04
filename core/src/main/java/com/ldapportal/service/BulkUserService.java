@@ -1256,7 +1256,9 @@ public class BulkUserService {
         List<String> cols = new ArrayList<>();
         cols.add("dn");
         if (!requestedAttrs.isEmpty()) {
-            cols.addAll(requestedAttrs);
+            // dn is always the first column; a request naming it (e.g. a table
+            // showing nothing but dn) must not get a second one.
+            requestedAttrs.stream().filter(a -> !a.equalsIgnoreCase("dn")).forEach(cols::add);
         } else {
             users.stream()
                     .flatMap(u -> u.getAttributes().keySet().stream())
