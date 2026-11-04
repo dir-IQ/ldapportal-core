@@ -1615,11 +1615,11 @@ function toggleApprover(accountId: string) {
         <div v-if="modalTab === 'general'" class="space-y-4">
           <div>
             <label for="sp-name" class="block text-sm font-medium text-gray-700 mb-1">Name</label>
-            <input autocomplete="off" id="sp-name" v-model="profile.name" class="input w-full" placeholder="e.g. Full-Time Engineer" />
+            <input id="sp-name" v-model="profile.name" class="input w-full" placeholder="e.g. Full-Time Engineer" />
           </div>
           <div>
             <label for="sp-description" class="block text-sm font-medium text-gray-700 mb-1">Description</label>
-            <textarea autocomplete="off" id="sp-description" v-model="profile.description" class="input w-full" rows="2"></textarea>
+            <textarea id="sp-description" v-model="profile.description" class="input w-full" rows="2"></textarea>
           </div>
           <div>
             <label for="sp-theme-color" class="block text-sm font-medium text-gray-700 mb-1">Theme Color</label>
@@ -1631,12 +1631,12 @@ function toggleApprover(accountId: string) {
                 <!-- A native colour input can't represent "unset" (it always holds
                      a value), so bind :value with a display fallback and commit on
                      @input; the hex field and Clear button own the unset state. -->
-                <input autocomplete="off" id="sp-theme-color" type="color"
+                <input id="sp-theme-color" type="color"
                   :value="profile.themeColor || '#2563eb'"
                   @input="profile.themeColor = ($event.target as HTMLInputElement).value"
                   class="h-9 w-10 rounded border border-gray-300 cursor-pointer p-0.5 shrink-0"
                   aria-label="Profile theme colour picker" />
-                <input autocomplete="off" v-model="profile.themeColor" class="input w-28" maxlength="7"
+                <input v-model="profile.themeColor" class="input w-28" maxlength="7"
                   placeholder="(unset)" aria-label="Theme colour hex" />
                 <button v-if="profile.themeColor" type="button" class="btn-neutral text-xs"
                   @click="profile.themeColor = ''">Clear</button>
@@ -1651,13 +1651,13 @@ function toggleApprover(accountId: string) {
           </div>
           <div v-if="!editing">
             <label for="sp-directory" class="block text-sm font-medium text-gray-700 mb-1">Directory</label>
-            <select autocomplete="off" id="sp-directory" v-model="selectedDirId" class="input w-full">
+            <select id="sp-directory" v-model="selectedDirId" class="input w-full">
               <option v-for="d in directories" :key="d.id" :value="d.id">{{ d.displayName }}</option>
             </select>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Target User DN</label>
-            <DnPicker autocomplete="off" v-model="profile.targetUserDn" :directory-id="selectedDirId ?? ''"
+            <DnPicker v-model="profile.targetUserDn" :directory-id="selectedDirId ?? ''"
               placeholder="e.g. ou=engineers,ou=people,dc=corp" />
             <!-- Target-User-DN warning banner: surfaces when the probe says
                  the DN doesn't resolve in the directory. Doesn't
@@ -1684,7 +1684,7 @@ function toggleApprover(accountId: string) {
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Target Group DN</label>
-            <DnPicker autocomplete="off" v-model="profile.targetGroupDn" :directory-id="selectedDirId ?? ''"
+            <DnPicker v-model="profile.targetGroupDn" :directory-id="selectedDirId ?? ''"
               placeholder="Defaults to the Target User DN" />
             <p class="mt-1 text-xs text-gray-500">
               Container the profile's groups live under. Scopes the group browser below.
@@ -1720,7 +1720,7 @@ function toggleApprover(accountId: string) {
                 </span>
               </div>
               <div class="flex gap-2">
-                <select autocomplete="off" v-model="ocToAdd" aria-label="Add object class" class="input flex-1">
+                <select v-model="ocToAdd" aria-label="Add object class" class="input flex-1">
                   <option value="">Select object class…</option>
                   <option v-for="oc in availableObjectClasses" :key="oc" :value="oc">{{ oc }}</option>
                 </select>
@@ -1731,12 +1731,12 @@ function toggleApprover(accountId: string) {
               <label class="block text-sm font-medium text-gray-700 mb-1">DN &amp; naming</label>
               <div class="space-y-1 mb-2">
                 <label class="flex items-start gap-2 text-sm">
-                  <input autocomplete="off" type="radio" value="auto" v-model="dnMode" :disabled="profile.objectClassNames.length === 0" class="mt-0.5" />
+                  <input type="radio" value="auto" v-model="dnMode" :disabled="profile.objectClassNames.length === 0" class="mt-0.5" />
                   <span><span class="font-medium">Automatic</span> — the app composes
                     <code>&lt;attribute&gt;=&lt;value&gt;,&lt;target OU&gt;</code> from a naming attribute; the operator can't edit it.</span>
                 </label>
                 <label class="flex items-start gap-2 text-sm">
-                  <input autocomplete="off" type="radio" value="operator" v-model="dnMode" :disabled="profile.objectClassNames.length === 0" class="mt-0.5" />
+                  <input type="radio" value="operator" v-model="dnMode" :disabled="profile.objectClassNames.length === 0" class="mt-0.5" />
                   <span><span class="font-medium">Operator-entered</span> — the operator sets the DN on the create form,
                     optionally seeded by a template. Self-registration is unavailable in this mode.</span>
                 </label>
@@ -1746,7 +1746,7 @@ function toggleApprover(accountId: string) {
                 <label class="block text-xs text-gray-500">
                   Naming (RDN) attribute <span class="text-red-500">*</span>
                 </label>
-                <select autocomplete="off" v-model="profile.rdnAttribute" aria-label="RDN attribute" class="input w-full text-sm"
+                <select v-model="profile.rdnAttribute" aria-label="RDN attribute" class="input w-full text-sm"
                   :disabled="profile.objectClassNames.length === 0" @change="onRdnAttributeChange">
                   <option value="">{{ profile.objectClassNames.length === 0 ? 'Add an object class first' : 'Select attribute…' }}</option>
                   <option v-for="attr in rdnCandidates" :key="attr" :value="attr">{{ attr }}</option>
@@ -1761,7 +1761,7 @@ function toggleApprover(accountId: string) {
                    types the RDN in front of the pre-filled target OU. -->
               <div v-else>
                 <label class="block text-xs text-gray-500">DN template (optional)</label>
-                <input autocomplete="off" v-model="profile.dnTemplate" type="text" aria-label="DN template" class="input w-full font-mono text-xs"
+                <input v-model="profile.dnTemplate" type="text" aria-label="DN template" class="input w-full font-mono text-xs"
                   placeholder="cn=${givenName} ${sn},ou=People,dc=example,dc=com" />
                 <p class="text-[11px] text-gray-500 mt-1">
                   Pre-fills the editable DN. <code>${'{'}attr{'}'}</code> tokens resolve to the new user's values; a
@@ -1773,12 +1773,12 @@ function toggleApprover(accountId: string) {
           </div>
           <div class="flex gap-6">
             <label class="flex items-center gap-2 text-sm">
-              <input autocomplete="off" type="checkbox" v-model="profile.enabled" /> Profile is enabled
+              <input type="checkbox" v-model="profile.enabled" /> Profile is enabled
             </label>
             <label class="flex items-center gap-2 text-sm"
               :class="dnMode === 'operator' ? 'text-gray-400 cursor-not-allowed' : ''"
               :title="dnMode === 'operator' ? 'Self-registration requires an automatically-composed DN (Automatic mode)' : undefined">
-              <input autocomplete="off" type="checkbox" v-model="profile.selfRegistrationAllowed" :disabled="dnMode === 'operator'" /> Self-registration is enabled for this profile
+              <input type="checkbox" v-model="profile.selfRegistrationAllowed" :disabled="dnMode === 'operator'" /> Self-registration is enabled for this profile
             </label>
           </div>
 
@@ -1811,7 +1811,7 @@ function toggleApprover(accountId: string) {
                 <div class="max-h-48 overflow-y-auto space-y-1">
                   <label v-for="attr in availableAttributes" :key="attr"
                     class="flex items-center gap-2 text-sm p-1 hover:bg-white rounded cursor-pointer">
-                    <input autocomplete="off" type="checkbox"
+                    <input type="checkbox"
                       :checked="attrPickerSelection.includes(attr)"
                       @change="toggleAttrPickerSelection(attr)" />
                     <span class="font-mono text-[13px]">{{ attr }}</span>
@@ -1849,11 +1849,11 @@ function toggleApprover(accountId: string) {
             <div class="grid grid-cols-3 gap-3 text-sm">
               <div>
                 <label :for="`sp-attr-${i}-customLabel`" class="block text-xs text-gray-500">Custom Label</label>
-                <input autocomplete="off" :id="`sp-attr-${i}-customLabel`" v-model="attr.customLabel" class="input w-full text-sm" />
+                <input :id="`sp-attr-${i}-customLabel`" v-model="attr.customLabel" class="input w-full text-sm" />
               </div>
               <div>
                 <label :for="`sp-attr-${i}-inputType`" class="block text-xs text-gray-500">Input Type</label>
-                <select autocomplete="off" :id="`sp-attr-${i}-inputType`" v-model="attr.inputType" class="input w-full text-sm"
+                <select :id="`sp-attr-${i}-inputType`" v-model="attr.inputType" class="input w-full text-sm"
                   :disabled="isSystemFixedAttribute(attr)"
                   :title="isSystemFixedAttribute(attr) ? 'objectClass is system-managed and always HIDDEN_FIXED.' : undefined">
                   <option v-for="t in ['TEXT','TEXTAREA','PASSWORD','BOOLEAN','DATE','DATETIME','MULTI_VALUE','DN_LOOKUP','DN','SELECT','HIDDEN_FIXED']"
@@ -1865,7 +1865,7 @@ function toggleApprover(accountId: string) {
                 <!-- objectClass is system-managed: its value comes from the
                      profile's object-class list, not this field. Lock it so a
                      stray value can't be entered (the server ignores it). -->
-                <input autocomplete="off" :id="`sp-attr-${i}-defaultValue`" v-model="attr.defaultValue"
+                <input :id="`sp-attr-${i}-defaultValue`" v-model="attr.defaultValue"
                        :disabled="isSystemFixedAttribute(attr)"
                        :placeholder="isSystemFixedAttribute(attr) ? 'Managed by the Object Classes list' : ''"
                        class="input w-full text-sm disabled:bg-gray-100 disabled:text-gray-400 dark:disabled:bg-gray-800" />
@@ -1875,16 +1875,16 @@ function toggleApprover(accountId: string) {
               </div>
               <div v-if="showFieldFor(attr.inputType, 'computedExpression')">
                 <label :for="`sp-attr-${i}-computedExpression`" class="block text-xs text-gray-500">Computed Expression</label>
-                <input autocomplete="off" :id="`sp-attr-${i}-computedExpression`" v-model="attr.computedExpression" class="input w-full text-sm"
+                <input :id="`sp-attr-${i}-computedExpression`" v-model="attr.computedExpression" class="input w-full text-sm"
                   placeholder="${givenName}.${sn}@corp.com" />
               </div>
               <div v-if="showFieldFor(attr.inputType, 'validationRegex')">
                 <label :for="`sp-attr-${i}-validationRegex`" class="block text-xs text-gray-500">Validation Regex</label>
-                <input autocomplete="off" :id="`sp-attr-${i}-validationRegex`" v-model="attr.validationRegex" class="input w-full text-sm" />
+                <input :id="`sp-attr-${i}-validationRegex`" v-model="attr.validationRegex" class="input w-full text-sm" />
               </div>
               <div v-if="showFieldFor(attr.inputType, 'allowedValues')">
                 <label :for="`sp-attr-${i}-allowedValues`" class="block text-xs text-gray-500">Allowed Values (JSON array)</label>
-                <input autocomplete="off" :id="`sp-attr-${i}-allowedValues`" v-model="attr.allowedValues" class="input w-full text-sm"
+                <input :id="`sp-attr-${i}-allowedValues`" v-model="attr.allowedValues" class="input w-full text-sm"
                   placeholder='["Eng","Finance","HR"]' />
               </div>
             </div>
@@ -1892,18 +1892,18 @@ function toggleApprover(accountId: string) {
                  (required + hidden, the rest off) and rendered read-only. -->
             <div class="flex gap-4 text-xs">
               <label class="flex items-center gap-1">
-                <input autocomplete="off" type="checkbox" v-model="attr.requiredOnCreate"
+                <input type="checkbox" v-model="attr.requiredOnCreate"
                   :disabled="isEnforcedNamingAttribute(attr) || isSchemaRequired(attr) || isAutoGeneratedPasswordField(attr)" /> Required
               </label>
-              <label class="flex items-center gap-1"><input autocomplete="off" type="checkbox" v-model="attr.editableOnCreate" :disabled="isAutoGeneratedPasswordField(attr)" /> Editable (create)</label>
-              <label class="flex items-center gap-1"><input autocomplete="off" type="checkbox" v-model="attr.editableOnUpdate" :disabled="isAutoGeneratedPasswordField(attr)" /> Editable (update)</label>
-              <label class="flex items-center gap-1"><input autocomplete="off" type="checkbox" v-model="attr.selfServiceEdit" :disabled="isAutoGeneratedPasswordField(attr)" /> Self-service</label>
-              <label v-if="profile.selfRegistrationAllowed" class="flex items-center gap-1"><input autocomplete="off" type="checkbox" v-model="attr.selfRegistrationEdit" :disabled="isAutoGeneratedPasswordField(attr)" /> Self-registration</label>
+              <label class="flex items-center gap-1"><input type="checkbox" v-model="attr.editableOnCreate" :disabled="isAutoGeneratedPasswordField(attr)" /> Editable (create)</label>
+              <label class="flex items-center gap-1"><input type="checkbox" v-model="attr.editableOnUpdate" :disabled="isAutoGeneratedPasswordField(attr)" /> Editable (update)</label>
+              <label class="flex items-center gap-1"><input type="checkbox" v-model="attr.selfServiceEdit" :disabled="isAutoGeneratedPasswordField(attr)" /> Self-service</label>
+              <label v-if="profile.selfRegistrationAllowed" class="flex items-center gap-1"><input type="checkbox" v-model="attr.selfRegistrationEdit" :disabled="isAutoGeneratedPasswordField(attr)" /> Self-registration</label>
               <label class="flex items-center gap-1"
                 :title="attr.inputType === 'HIDDEN_FIXED'
                   ? 'HIDDEN_FIXED attributes are applied server-side and never shown, so they are always hidden.'
                   : (hiddenLockedPendingComputed(attr) ? 'A required attribute can only be hidden once it has a computed expression, so the value can be set without operator input.' : undefined)">
-                <input autocomplete="off" type="checkbox" v-model="attr.hidden"
+                <input type="checkbox" v-model="attr.hidden"
                   :disabled="attr.inputType === 'HIDDEN_FIXED' || ((attr.requiredOnCreate || isSchemaRequired(attr)) && !attr.computedExpression) || isRdnAttribute(attr) || isAutoGeneratedPasswordField(attr)" /> Hidden
               </label>
               <span v-if="hiddenLockedPendingComputed(attr)" class="text-gray-400 italic">
@@ -1979,12 +1979,12 @@ function toggleApprover(accountId: string) {
           <fieldset class="border border-gray-300 rounded-lg p-4 space-y-2">
             <legend class="text-sm font-semibold text-gray-700 px-1">Group Inclusion</legend>
             <label class="flex items-center gap-2 text-sm">
-              <input autocomplete="off" type="checkbox" v-model="profile.autoIncludeGroups" @change="onAutoIncludeToggle" />
+              <input type="checkbox" v-model="profile.autoIncludeGroups" @change="onAutoIncludeToggle" />
               Automatically include with other profiles
               <span class="text-gray-500 text-xs">(this profile's groups will be added to users provisioned by any other profile in this directory)</span>
             </label>
             <label v-if="!profile.autoIncludeGroups" class="flex items-center gap-2 text-sm">
-              <input autocomplete="off" type="checkbox" v-model="profile.excludeAutoIncludes" />
+              <input type="checkbox" v-model="profile.excludeAutoIncludes" />
               Exclude auto-included groups
               <span class="text-gray-500 text-xs">(users provisioned by this profile will not receive groups from auto-included profiles)</span>
             </label>
@@ -1997,12 +1997,12 @@ function toggleApprover(accountId: string) {
             <div v-for="(g, i) in profile.groupAssignments" :key="i" class="flex gap-2 items-end">
               <div class="flex-1">
                 <label class="block text-xs text-gray-500">Group DN</label>
-                <DnPicker autocomplete="off" v-model="g.groupDn" :directory-id="selectedDirId ?? ''" scope="group"
+                <DnPicker v-model="g.groupDn" :directory-id="selectedDirId ?? ''" scope="group"
                   :base-dn="profile.targetGroupDn || ''" />
               </div>
               <div class="w-40">
                 <label :for="`sp-group-${i}-memberAttr`" class="block text-xs text-gray-500">Member Attribute</label>
-                <select autocomplete="off" :id="`sp-group-${i}-memberAttr`" v-model="g.memberAttribute" class="input w-full text-sm">
+                <select :id="`sp-group-${i}-memberAttr`" v-model="g.memberAttribute" class="input w-full text-sm">
                   <option>member</option>
                   <option>uniqueMember</option>
                   <option>memberUid</option>
@@ -2024,7 +2024,7 @@ function toggleApprover(accountId: string) {
               <label v-for="ap in availableAdditionalProfiles" :key="ap.id"
                 class="flex items-center gap-1.5 text-sm border rounded px-3 py-1.5 cursor-pointer"
                 :class="profile.additionalProfileIds.includes(ap.id) ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200 hover:border-gray-300'">
-                <input autocomplete="off" type="checkbox" :checked="profile.additionalProfileIds.includes(ap.id)"
+                <input type="checkbox" :checked="profile.additionalProfileIds.includes(ap.id)"
                   @change="toggleAdditionalProfile(ap.id)" class="accent-blue-600" />
                 {{ ap.name }}
               </label>
@@ -2073,7 +2073,7 @@ function toggleApprover(accountId: string) {
                   <p class="text-sm text-gray-600">{{ complianceRows.length }} missing membership(s) found</p>
                   <div class="flex items-center gap-3">
                     <label class="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
-                      <input autocomplete="off" type="checkbox" @change="toggleAllCompliance(($event.target as HTMLInputElement).checked)"
+                      <input type="checkbox" @change="toggleAllCompliance(($event.target as HTMLInputElement).checked)"
                              :checked="complianceSelectedCount === complianceRows.length && complianceRows.length > 0"
                              class="rounded" />
                       Select all
@@ -2097,7 +2097,7 @@ function toggleApprover(accountId: string) {
                     <tbody class="divide-y divide-gray-50">
                       <tr v-for="(row, i) in complianceRows" :key="i" :class="row.selected ? 'bg-blue-50/50' : ''">
                         <td class="px-3 py-1.5">
-                          <input autocomplete="off" type="checkbox" v-model="row.selected" :aria-label="`Select ${row.userDn}`" class="rounded" />
+                          <input type="checkbox" v-model="row.selected" :aria-label="`Select ${row.userDn}`" class="rounded" />
                         </td>
                         <td class="px-3 py-1.5 text-gray-700 truncate max-w-xs" :title="row.userDn">{{ row.userDn }}</td>
                         <td class="px-3 py-1.5 text-gray-600 truncate max-w-xs" :title="row.groupDn">{{ row.groupDn }}</td>
@@ -2117,7 +2117,7 @@ function toggleApprover(accountId: string) {
             <legend class="text-sm font-semibold text-gray-800 px-1">Password Generation</legend>
             <div>
               <label for="sp-pw-disposition" class="block text-xs text-gray-500 mb-1">Password handling</label>
-              <select autocomplete="off" id="sp-pw-disposition" v-model="profile.passwordDisposition" class="input w-full md:w-1/2 text-sm">
+              <select id="sp-pw-disposition" v-model="profile.passwordDisposition" class="input w-full md:w-1/2 text-sm">
                 <option value="OPERATOR_ENTERED">Operator enters or generates it in the form</option>
                 <option value="GENERATED_DELIVERED">Auto-generate and email it to the user</option>
                 <option value="GENERATED_DISCARDED">Auto-generate, never shown (e.g. certificate-only login)</option>
@@ -2140,31 +2140,31 @@ function toggleApprover(accountId: string) {
             <div class="grid grid-cols-6 gap-3">
               <div class="col-span-2">
                 <label for="sp-pw-length" class="block text-xs text-gray-500 mb-1">Length</label>
-                <input autocomplete="off" id="sp-pw-length" type="number" v-model.number="profile.passwordLength" min="8" max="128"
+                <input id="sp-pw-length" type="number" v-model.number="profile.passwordLength" min="8" max="128"
                   class="input w-full text-sm" />
               </div>
               <div class="col-span-4 flex flex-wrap gap-4 items-end pb-1">
                 <label class="flex items-center gap-1 text-sm">
-                  <input autocomplete="off" type="checkbox" v-model="profile.passwordUppercase" /> A-Z
+                  <input type="checkbox" v-model="profile.passwordUppercase" /> A-Z
                 </label>
                 <label class="flex items-center gap-1 text-sm">
-                  <input autocomplete="off" type="checkbox" v-model="profile.passwordLowercase" /> a-z
+                  <input type="checkbox" v-model="profile.passwordLowercase" /> a-z
                 </label>
                 <label class="flex items-center gap-1 text-sm">
-                  <input autocomplete="off" type="checkbox" v-model="profile.passwordDigits" /> 0-9
+                  <input type="checkbox" v-model="profile.passwordDigits" /> 0-9
                 </label>
                 <label class="flex items-center gap-1 text-sm">
-                  <input autocomplete="off" type="checkbox" v-model="profile.passwordSpecial" /> Special
+                  <input type="checkbox" v-model="profile.passwordSpecial" /> Special
                 </label>
               </div>
             </div>
             <div v-if="profile.passwordSpecial">
               <label for="sp-pw-special" class="block text-xs text-gray-500 mb-1">Special Characters</label>
-              <input autocomplete="off" id="sp-pw-special" v-model="profile.passwordSpecialChars" class="input w-full text-sm font-mono"
+              <input id="sp-pw-special" v-model="profile.passwordSpecialChars" class="input w-full text-sm font-mono"
                 placeholder="!@#$%^&*" />
             </div>
             <label v-if="profile.passwordDisposition === 'OPERATOR_ENTERED'" class="flex items-center gap-2 text-sm">
-              <input autocomplete="off" type="checkbox" v-model="profile.emailPasswordToUser" />
+              <input type="checkbox" v-model="profile.emailPasswordToUser" />
               Email the password to the user on creation
             </label>
           </fieldset>
@@ -2181,26 +2181,26 @@ function toggleApprover(accountId: string) {
             </p>
             <template v-else>
             <label class="flex items-center gap-2 text-sm font-medium">
-              <input autocomplete="off" type="checkbox" v-model="approval.requireApproval" /> Require approval for user creation
+              <input type="checkbox" v-model="approval.requireApproval" /> Require approval for user creation
             </label>
             <div v-if="approval.requireApproval" class="space-y-4">
               <div>
                 <label for="sp-approver-mode" class="block text-sm font-medium text-gray-700 mb-1">Approver Mode</label>
-                <select autocomplete="off" id="sp-approver-mode" v-model="approval.approverMode" class="input w-full">
+                <select id="sp-approver-mode" v-model="approval.approverMode" class="input w-full">
                   <option value="DATABASE">Individual users (select approvers below)</option>
                   <option value="LDAP_GROUP">LDAP Group</option>
                 </select>
               </div>
               <div v-if="approval.approverMode === 'LDAP_GROUP'">
                 <label class="block text-sm font-medium text-gray-700 mb-1">Approver Group DN</label>
-                <DnPicker autocomplete="off" v-model="approval.approverGroupDn" :directory-id="selectedDirId ?? ''" scope="group" />
+                <DnPicker v-model="approval.approverGroupDn" :directory-id="selectedDirId ?? ''" scope="group" />
               </div>
               <div v-if="approval.approverMode === 'DATABASE'">
                 <label class="block text-sm font-medium text-gray-700 mb-2">Approvers</label>
                 <div class="space-y-1 max-h-48 overflow-y-auto border rounded p-2">
                   <label v-for="admin in admins.filter(a => a.role === 'ADMIN')" :key="admin.id"
                     class="flex items-center gap-2 text-sm p-1 hover:bg-gray-50 rounded cursor-pointer">
-                    <input autocomplete="off" type="checkbox"
+                    <input type="checkbox"
                       :checked="profileApprovers.includes(admin.id)"
                       @change="toggleApprover(admin.id)" />
                     {{ admin.username }}
@@ -2251,12 +2251,12 @@ function toggleApprover(accountId: string) {
         <p class="text-sm text-gray-600">Create a copy of <strong>{{ cloneTarget?.name }}</strong> with a new name.</p>
         <div>
           <label for="sp-clone-name" class="block text-sm font-medium text-gray-700 mb-1">New Profile Name</label>
-          <input autocomplete="off" id="sp-clone-name" v-model="cloneName" class="input w-full" placeholder="Profile name"
+          <input id="sp-clone-name" v-model="cloneName" class="input w-full" placeholder="Profile name"
                  @keydown.enter="doClone" />
         </div>
         <div>
           <label for="sp-clone-directory" class="block text-sm font-medium text-gray-700 mb-1">Directory</label>
-          <select autocomplete="off" id="sp-clone-directory" v-model="cloneDirId" class="input w-full">
+          <select id="sp-clone-directory" v-model="cloneDirId" class="input w-full">
             <option v-for="d in directories" :key="d.id" :value="d.id">{{ d.displayName }}</option>
           </select>
           <p v-if="cloneCrossDirectory" class="mt-1 text-xs text-gray-500">

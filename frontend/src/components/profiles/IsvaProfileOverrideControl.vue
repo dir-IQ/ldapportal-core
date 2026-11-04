@@ -136,7 +136,7 @@ watch(
   <fieldset v-if="visible" class="border border-gray-300 rounded-lg p-3 space-y-3">
     <legend class="text-sm font-semibold text-gray-800 px-1">{{ IVIA_ABBR }} Integration</legend>
     <label class="flex items-center gap-2 text-sm font-medium text-gray-900">
-      <input autocomplete="off"
+      <input
         type="checkbox"
         :checked="forceOff"
         :disabled="saving"

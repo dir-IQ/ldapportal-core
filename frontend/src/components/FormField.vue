@@ -49,6 +49,7 @@
         :disabled="disabled"
         :rows="rows"
         :aria-invalid="error ? 'true' : undefined"
+        :autocomplete="noAutofill ? 'off' : undefined"
         @input="$emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
         class="input block w-full"
       />
@@ -59,6 +60,7 @@
         :value="modelValue"
         :disabled="disabled"
         :aria-invalid="error ? 'true' : undefined"
+        :autocomplete="noAutofill ? 'off' : undefined"
         @change="$emit('update:modelValue', ($event.target as HTMLSelectElement).value)"
         class="input block w-full"
       >
@@ -109,6 +111,11 @@ const props = withDefaults(defineProps<{
   // masks the value. Off by default so secret fields (bind passwords, API
   // keys) stay masked unless a caller opts in.
   revealable?: boolean
+  // Opt-in: also turn browser autocomplete off on the textarea / select
+  // variants (inputs already default to 'off' / 'new-password' above). For
+  // forms whose fields take their type from config, e.g. the new/edit user
+  // modal, so every variant is covered whatever type a field ends up with.
+  noAutofill?: boolean
 }>(), {
   id: () => `field-${Math.random().toString(36).slice(2)}`,
   type: 'text',
@@ -118,6 +125,7 @@ const props = withDefaults(defineProps<{
   error: null,
   autocomplete: null,
   revealable: false,
+  noAutofill: false,
 })
 defineEmits<{ 'update:modelValue': [value: string] }>()
 

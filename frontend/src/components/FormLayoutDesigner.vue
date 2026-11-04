@@ -9,7 +9,7 @@
       </div>
       <div class="flex items-center gap-2">
         <label v-if="!hideDnToggle" class="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
-          <input autocomplete="off" type="checkbox" v-model="localShowDnField" class="rounded" />
+          <input type="checkbox" v-model="localShowDnField" class="rounded" />
           Show DN field on form
         </label>
         <button
@@ -26,7 +26,7 @@
          "<rdn>=<value>,<targetUserDn>" composition. -->
     <div v-if="!hideDnToggle && localShowDnField" class="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-1">
       <label for="fld-dn-template" class="block text-xs font-medium text-gray-600">DN template (optional)</label>
-      <input autocomplete="off"
+      <input
         id="fld-dn-template"
         v-model="localDnTemplate"
         type="text"
@@ -133,7 +133,7 @@
           <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
           </svg>
-          <input autocomplete="off"
+          <input
             v-model="section.name"
             placeholder="Section name (optional)"
             class="flex-1 bg-transparent text-sm font-medium text-gray-700 placeholder-gray-400 focus:outline-none"
