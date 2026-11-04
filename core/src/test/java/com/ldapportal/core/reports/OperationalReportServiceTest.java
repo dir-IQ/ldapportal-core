@@ -214,9 +214,8 @@ class OperationalReportServiceTest {
                 Map.of("branchDn", BRANCH, "attributes", List.of("mail", "sn")), dirId, superadmin());
 
         assertThat(data.columns()).containsExactly("dn", "missingAttributes", "objectClass", "mail", "sn");
-        assertThat(data.labels()).containsEntry("dn", "DN").containsEntry("missingAttributes", "Missing Attributes")
-                .containsEntry("objectClass", "Object Class").containsEntry("mail", "Email")
-                .containsEntry("sn", "Last Name");
+        // Attribute columns are headed by their LDAP name; only the derived column has a label.
+        assertThat(data.labels()).containsExactly(Map.entry("missingAttributes", "Missing Attributes"));
         assertThat(data.rows()).extracting(r -> r.get("dn"))
                 .containsExactly("uid=nomail," + BRANCH, "uid=blanksn," + BRANCH, "uid=none," + BRANCH);
         assertThat(data.rows().get(0).get("missingAttributes")).isEqualTo("mail");
@@ -263,14 +262,40 @@ class OperationalReportServiceTest {
         ReportData data = service.run(dc, "USERS_IN_BRANCH", Map.of("branchDn", BRANCH), dirId, superadmin());
 
         assertThat(data.columns()).containsExactly("dn", "cn", "givenname", "mail", "uid", "groups");
-        assertThat(data.labels()).containsEntry("cn", "Name").containsEntry("givenname", "First Name")
-                .containsEntry("groups", "Groups");
+        // Real attribute names only — no friendly headings, groups included.
+        assertThat(data.labels()).isEmpty();
         assertThat(data.rows()).singleElement().satisfies(row -> {
             assertThat(row).containsEntry("dn", "uid=alice," + BRANCH).containsEntry("mail", "a@example.com");
             assertThat(row).containsEntry("groups", "admins|devs");
         });
         // Read without the enricher chain, so no addon virtual columns (isva.*).
         verify(userService, never()).searchUsers(any(), anyString(), any(), anyInt(), any(String[].class));
+    }
+
+    @Test
+    void entryReport_fetchesOperationalAttributes_onlyWhenAsked() {
+        DirectoryConnection dc = ldapDir();
+        when(userService.searchUsersRaw(eq(dc), anyString(), eq(BRANCH), anyInt(), eq("*"), eq("+")))
+                .thenReturn(List.of(entry("uid=alice", Map.of(
+                        "uid", List.of("alice"), "modifytimestamp", List.of("20261104120000Z")))));
+
+        ReportData data = service.run(dc, "USERS_IN_BRANCH",
+                Map.of("branchDn", BRANCH, "includeOperational", true), dirId, superadmin());
+
+        assertThat(data.columns()).contains("modifytimestamp");
+        verify(userService, never()).searchUsersRaw(eq(dc), anyString(), eq(BRANCH), anyInt(), eq("*"));
+    }
+
+    @Test
+    void entryAttributes_acceptsBooleanOrString_andDefaultsToUserAttributesOnly() {
+        assertThat(OperationalReportService.entryAttributes(Map.of())).containsExactly("*");
+        assertThat(OperationalReportService.entryAttributes(null)).containsExactly("*");
+        assertThat(OperationalReportService.entryAttributes(Map.of("includeOperational", false)))
+                .containsExactly("*");
+        assertThat(OperationalReportService.entryAttributes(Map.of("includeOperational", true)))
+                .containsExactly("*", "+");
+        assertThat(OperationalReportService.entryAttributes(Map.of("includeOperational", "true")))
+                .containsExactly("*", "+");
     }
 
     @Test

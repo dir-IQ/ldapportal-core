@@ -18,6 +18,9 @@
  *     the label), e.g. a column-level toggle. Use `@click.stop` inside it
  *     so the control doesn't also trigger the header's sort.
  *   - Optional checkbox selection column (v-model:selectedKeys + rowKey).
+ *   - Emits `visible-columns-change` with the visible column keys in display
+ *     order (immediately, then on every show/hide/reorder) so a caller can
+ *     make an export carry exactly the columns on screen.
  *
  * Caller contract:
  *   <ResultsTable
@@ -128,6 +131,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (e: 'update:selectedKeys', v: Set<unknown>): void
   (e: 'row-click', row: SortableRow): void
+  (e: 'visible-columns-change', keys: string[]): void
 }>()
 
 const {
@@ -177,6 +181,8 @@ const visibleColumns = computed<ColumnDef[]>(() =>
   orderedColumns.value.filter(c => c.alwaysVisible || !hiddenSet.value.has(c.key)),
 )
 const visibleKeys = computed(() => visibleColumns.value.map(c => c.key))
+watch(() => visibleKeys.value.join('\u0000'),
+  () => emit('visible-columns-change', [...visibleKeys.value]), { immediate: true })
 
 // ── Filtering ───────────────────────────────────────────────────────────────
 const query = ref('')

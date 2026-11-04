@@ -269,6 +269,19 @@ describe('ResultsTable.vue', () => {
     expect(headerLabels.some(l => l.includes('Department'))).toBe(false)
   })
 
+  it('emits the visible column keys up front and again when one is hidden', async () => {
+    const w = makeWrapper()
+    expect(w.emitted('visible-columns-change')![0]).toEqual([['id', 'name', 'dept']])
+
+    await w.findAll('button').find(b => b.text().includes('Columns'))!.trigger('click')
+    await flushPromises()
+    await w.findAll('div.cursor-pointer').find(d => d.text().includes('Department'))!.trigger('click')
+    await nextTick()
+
+    const events = w.emitted('visible-columns-change')!
+    expect(events[events.length - 1]).toEqual([['id', 'name']])
+  })
+
   it('alwaysVisible columns cannot be hidden', async () => {
     const w = makeWrapper()
     const colsBtn = w.findAll('button').find(b => b.text().includes('Columns'))!
