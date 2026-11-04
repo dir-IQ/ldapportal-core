@@ -220,7 +220,7 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect(body.reportParams).toHaveProperty('branchDn')
   })
 
-  it('passes every column to the table, labelled, showing the first ten and hiding the rest and groups', async () => {
+  it('passes every column to the table, labelled, showing the first ten and groups, hiding the rest', async () => {
     const reports = await import('@/api/reports')
     const attrs = ['cn', 'mail', 'sn', 'givenname', 'uid', 'title', 'ou', 'l', 'st', 'employeenumber', 'street']
     ;(reports.runOperationalReportData as unknown as Mock).mockResolvedValueOnce({
@@ -242,8 +242,8 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect(columns.find(c => c.key === 'cn')!.label).toBe('Name')
     expect(columns.find(c => c.key === 'givenname')!.label).toBe('First Name')
     expect(columns.find(c => c.key === 'employeenumber')!.label).toBe('Employee #')
-    expect(columns.filter(c => !c.defaultHidden).map(c => c.key)).toEqual(['dn', ...attrs.slice(0, 9)])
-    expect(columns.find(c => c.key === 'groups')).toMatchObject({ label: 'Groups', defaultHidden: true })
+    expect(columns.filter(c => !c.defaultHidden).map(c => c.key)).toEqual(['dn', ...attrs.slice(0, 9), 'groups'])
+    expect(columns.find(c => c.key === 'groups')!.label).toBe('Groups')
   })
 
   it.each(['USERS_IN_BRANCH', 'MISSING_DATA'])(

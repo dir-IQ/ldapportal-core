@@ -680,7 +680,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onAuditActionClickOu
 
 /** Columns shown up front; the rest start hidden but can be turned on from the Columns menu. */
 const VISIBLE_COLUMN_LIMIT = 10
-/** Each listed user's groups, added by the backend; shown only on request. */
+/** Each listed user's groups, added last by the backend; always shown, outside the ten-column limit. */
 const GROUPS_COLUMN = 'groups'
 
 function columnLabel(col: string): string {
@@ -689,13 +689,14 @@ function columnLabel(col: string): string {
 
 // Every column reaches the table (internal ones like 'id' aside), headed by
 // the backend's label or the friendly LDAP name ("cn" → "Name"). Past the
-// first ten, and the groups column, start hidden in the Columns menu.
+// first ten start hidden in the Columns menu; the groups column is always
+// shown and doesn't count toward the ten.
 const tableColumns = computed<ColumnDef[]>(() => {
   let shown = 0
   return resultColumns.value
     .filter(c => !HIDDEN_COLUMNS.has(c))
     .map(c => {
-      const hidden = c === GROUPS_COLUMN || shown++ >= VISIBLE_COLUMN_LIMIT
+      const hidden = c !== GROUPS_COLUMN && shown++ >= VISIBLE_COLUMN_LIMIT
       return hidden ? { key: c, label: columnLabel(c), defaultHidden: true } : { key: c, label: columnLabel(c) }
     })
 })

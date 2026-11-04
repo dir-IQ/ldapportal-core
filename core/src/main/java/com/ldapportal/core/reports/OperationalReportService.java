@@ -242,8 +242,8 @@ public class OperationalReportService {
      * groups, worked out from the group entries under the caller's search
      * bases, so only groups they can see are named. Built exactly as the user
      * CSV export builds its groups column ({@link UserGroupIndex}: same labels,
-     * same {@code |}-joined cell), so the two agree. The UI hides it until
-     * asked for; a CSV export carries it.
+     * same {@code |}-joined cell), so the two agree. The UI shows it by
+     * default; a CSV export carries it.
      */
     private ReportData withGroups(DirectoryConnection dc, ReportScope scope, ReportData data) {
         List<String> columns = UserGroupIndex.withColumn(data.columns());
