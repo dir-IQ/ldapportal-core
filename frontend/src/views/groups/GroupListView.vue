@@ -36,7 +36,7 @@
       <LdapFilterBuilder
         v-model="filterText"
         :directory-id="dirId"
-        :relevant-attributes="profileAttributeNames"
+        :object-classes="filterObjectClasses"
       />
       <RecentSearches
         ref="recentSearchesRef"
@@ -273,6 +273,7 @@ import { listProfiles } from '@/api/profiles'
 import { usePermissions } from '@/composables/usePermissions'
 import ResultsTable from '@/components/ResultsTable.vue'
 import LdapFilterBuilder from '@/components/LdapFilterBuilder.vue'
+import { rowObjectClasses } from '@/composables/useLdapFilter'
 import RecentSearches from '@/components/RecentSearches.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import AppModal from '@/components/AppModal.vue'
@@ -485,15 +486,17 @@ const allProfiles     = ref<ProfileLite[]>([])
 const selectedProfileId = ref('')
 const profileData     = ref<ProfileLite | null>(null)
 
-// Attribute names the active profile declares — fed to LdapFilterBuilder
-// so the attribute picker defaults to this subset instead of the
-// directory's full schema. Builder exposes a "Show all attributes"
-// toggle for power users; empty array disables scoping.
-const profileAttributeNames = computed<string[]>(() =>
-  (profileData.value?.attributeConfigs ?? [])
-    .map(a => a.attributeName)
-    .filter((n): n is string => typeof n === 'string' && n.length > 0),
-)
+
+// objectClasses fed to LdapFilterBuilder: its suggestions are every
+// attribute the loaded groups' classes allow (groupOfNames, posixGroup,
+// …). The profile's objectClassNames and attributeConfigs describe
+// *users*, so neither is used here. Before the first search returns,
+// the builder falls back to the full directory schema.
+const filterObjectClasses = computed<string[]>(() => {
+  const out: string[] = []
+  for (const row of groups.value) out.push(...rowObjectClasses(row.__entry?.attributes))
+  return out
+})
 const bulkMode      = ref<BulkMode | null>(null)
 const bulkMemberDns = ref('')
 const bulkBusy      = ref(false)
