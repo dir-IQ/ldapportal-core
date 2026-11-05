@@ -23,6 +23,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -49,7 +50,7 @@ class AuditQueryServiceExportTest {
 
     @Test
     void writesEveryMatchingEvent_withTheSyncColumns() {
-        when(repo.findAll(any(), any(), any(), any(), eq("directory-sync"), any(), any(), any(), any()))
+        when(repo.findAll(any(), any(), any(), any(), any(), eq("directory-sync"), any(), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(syncUpdate("uid=a,dc=dst")), PageRequest.of(0, 1000), 1));
         StringWriter out = new StringWriter();
 
@@ -66,23 +67,23 @@ class AuditQueryServiceExportTest {
 
     @Test
     void withNoEnd_pinsTheWindowToWhenTheExportStarted() {
-        when(repo.findAll(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(repo.findAll(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of()));
         OffsetDateTime before = OffsetDateTime.now();
 
         service.exportCsv(AuditQueryCriteria.EMPTY, null, new StringWriter());
 
         ArgumentCaptor<OffsetDateTime> to = ArgumentCaptor.forClass(OffsetDateTime.class);
-        verify(repo).findAll(any(), any(), any(), any(), any(), any(), isNull(), to.capture(), any());
+        verify(repo).findAll(any(), any(), any(), any(), any(), any(), any(), isNull(), to.capture(), any());
         assertThat(to.getValue()).isAfterOrEqualTo(before);
     }
 
     @Test
     void readsPageAfterPage_andStopsAtTheCap() {
         int total = AuditQueryService.MAX_EXPORT_ROWS + 10;
-        when(repo.findAllByDirectoryIds(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(repo.findAllByDirectoryIds(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenAnswer(inv -> {
-                    Pageable p = inv.getArgument(8);
+                    Pageable p = inv.getArgument(9);
                     List<AuditEvent> rows = new ArrayList<>();
                     for (int i = 0; i < p.getPageSize(); i++) {
                         rows.add(syncUpdate("uid=u" + (p.getOffset() + i) + ",dc=dst"));
@@ -98,5 +99,52 @@ class AuditQueryServiceExportTest {
         assertThat(result.matched()).isEqualTo(total);
         assertThat(result.truncated()).isTrue();
         assertThat(out.toString().split("\r\n")).hasSize(AuditQueryService.MAX_EXPORT_ROWS + 1);
+    }
+
+    // ── "Target DN contains" ────────────────────────────────────────────────
+
+    @Test
+    void containsPattern_wrapsTrimmedTextInWildcards() {
+        assertThat(AuditQueryService.containsPattern("  jdoe ")).isEqualTo("%jdoe%");
+    }
+
+    @Test
+    void containsPattern_blankMeansNoFilter() {
+        assertThat(AuditQueryService.containsPattern(null)).isNull();
+        assertThat(AuditQueryService.containsPattern("   ")).isNull();
+    }
+
+    @Test
+    void containsPattern_escapesLikeWildcardsSoTheyMatchLiterally() {
+        assertThat(AuditQueryService.containsPattern("a%b_c\\d")).isEqualTo("%a\\%b\\_c\\\\d%");
+    }
+
+    @Test
+    void containsPattern_rejectsOverlongText() {
+        String tooLong = "x".repeat(AuditQueryService.MAX_DN_CONTAINS_LENGTH + 1);
+        assertThatThrownBy(() -> AuditQueryService.containsPattern(tooLong))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void query_passesTheContainsPatternToTheRepository() {
+        when(repo.findAll(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.query(AuditQueryCriteria.builder().targetDnContains("jdoe").build(), 0, 50);
+
+        verify(repo).findAll(any(), any(), any(), isNull(), eq("%jdoe%"), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void export_keepsTheContainsFilterWhenPinningTheWindow() {
+        when(repo.findAllByDirectoryIds(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.exportCsv(AuditQueryCriteria.builder().targetDnContains("jdoe").build(),
+                Set.of(UUID.randomUUID()), new StringWriter());
+
+        verify(repo).findAllByDirectoryIds(any(), any(), any(), isNull(), eq("%jdoe%"), any(), any(), any(),
+                any(), any());
     }
 }

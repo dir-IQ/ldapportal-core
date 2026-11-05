@@ -122,11 +122,24 @@ describe('DirectorySyncView', () => {
     wrapper.unmount()
   })
 
-  it('rolls up membership health onto the link row (worst state wins)', async () => {
+  it('rolls up membership health onto the link row, failed and review side by side', async () => {
     const wrapper = mount(DirectorySyncView)
     await flushPromises()
-    // FAILED outranks REVIEW/APPLIED, so the link shows the failure summary.
-    expect(wrapper.find('tbody tr').text()).toContain('2 failed')
+    // A failure no longer hides what waits for review.
+    expect(wrapper.find('tbody tr').text()).toContain('2 failed · 1 review')
+  })
+
+  it('calls out held deletes within the review count', async () => {
+    vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [
+      { ...set, stateCounts: { APPLIED: 5, REVIEW: 4, REVIEW_DELETE: 3 } },
+    ] } as never)
+    const wrapper = mount(DirectorySyncView)
+    await flushPromises()
+    const row = wrapper.find('tbody tr').text()
+    expect(row).toContain('4 review (3 deletes)')
+    expect(row).not.toContain('failed')
+    vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [set] } as never)
+    wrapper.unmount()
   })
 
   it('authoring a transform rule includes it in the create payload', async () => {
@@ -187,6 +200,49 @@ describe('DirectorySyncView', () => {
     // set-1 has the FAILED memberships, so the inventory opens already filtered.
     expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', expect.objectContaining({ state: 'FAILED' }))
     wrapper.unmount()
+  })
+
+  describe('drift', () => {
+    const drifting = {
+      ...set, id: 'set-2', name: 'ivia users',
+      verify: { at: '2026-11-02T10:00:00Z', missing: 0, orphan: 12, mismatch: 1, incompleteAt: null },
+    }
+    const clean = {
+      ...set, id: 'set-3', name: 'groups',
+      verify: { at: '2026-11-02T10:00:00Z', missing: 0, orphan: 0, mismatch: 0, incompleteAt: null },
+    }
+
+    it('lists every drifting set, and ?drift=1 opens the list', async () => {
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [set, drifting, clean] } as never)
+      routerState.query = { drift: '1' }
+      const wrapper = mount(DirectorySyncView)
+      await flushPromises()
+      const panel = wrapper.find('[data-testid="drifting-sets"]')
+      expect(panel.text()).toContain('1 sync set drifting')
+      // Only the set with drift is listed (never-verified and clean ones aren't).
+      expect(panel.text()).toContain('ivia users')
+      expect(panel.text()).toContain('12 orphaned · 1 different')
+      expect(panel.text()).not.toContain('groups')
+      // The link's Drift column rolls its sets up.
+      expect(wrapper.text()).toContain('1 set drifting')
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [set] } as never)
+      wrapper.unmount()
+    })
+
+    it('keeps the list closed without ?drift=1, and shows nothing when no set drifts', async () => {
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [drifting] } as never)
+      const wrapper = mount(DirectorySyncView)
+      await flushPromises()
+      expect(wrapper.find('[data-testid="drifting-sets"]').exists()).toBe(true)
+      expect(wrapper.find('#drifting-sets-list').exists()).toBe(false)
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [clean] } as never)
+      const quiet = mount(DirectorySyncView)
+      await flushPromises()
+      expect(quiet.find('[data-testid="drifting-sets"]').exists()).toBe(false)
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [set] } as never)
+      wrapper.unmount()
+      quiet.unmount()
+    })
   })
 
   it('deep link ?link=<id> expands that link without opening a set modal', async () => {
@@ -294,6 +350,9 @@ describe('DirectorySyncView', () => {
       expect(syncApi.createSyncSet).toHaveBeenCalledTimes(1)
       expect(document.body.textContent).toContain('Edit sync set')
       expect(button('Preview impact')!.disabled).toBe(false)
+      // A new set's impact preview starts by itself.
+      await flushPromises()
+      expect(syncApi.startPreviewRun).toHaveBeenCalledWith('set-1')
       wrapper.unmount()
     })
 
@@ -335,6 +394,34 @@ describe('DirectorySyncView', () => {
         applicabilityFilter: '(&(objectClass=secGroup)\n  (!(cn=iv-admin)))', // the server joins the lines
       }))
       wrapper.unmount()
+    })
+
+    it('starts the impact preview after a save that changes what the set applies, not otherwise', async () => {
+      vi.mocked(syncApi.updateSyncSet).mockResolvedValueOnce(
+        { data: { ...set, applicabilityFilter: '(!(uid=svc-*))' } } as never)
+      confirmApi.confirm.mockResolvedValueOnce(false)
+      const wrapper = await openEditor('Edit')
+      vi.mocked(syncApi.startPreviewRun).mockClear()
+      await type('Applicability filter', '(!(uid=svc-*))')
+      await submit()
+      await flushPromises()
+      expect(syncApi.startPreviewRun).toHaveBeenCalledWith('set-1')
+      expect(confirmApi.confirm).toHaveBeenCalledWith(expect.objectContaining({
+        message: expect.stringContaining('the impact preview is already running in the editor'),
+      }))
+      wrapper.unmount()
+
+      vi.clearAllMocks()
+      document.body.innerHTML = ''
+      vi.mocked(syncApi.updateSyncSet).mockResolvedValueOnce({ data: { ...set, name: 'people (HR)' } } as never)
+      const other = await openEditor('Edit')
+      vi.mocked(syncApi.startPreviewRun).mockClear()
+      await type('Name', 'people (HR)')
+      await submit()
+      await flushPromises()
+      expect(syncApi.updateSyncSet).toHaveBeenCalled()
+      expect(syncApi.startPreviewRun).not.toHaveBeenCalled()
+      other.unmount()
     })
 
     it('offers to reconcile now after a save changes the filter, and queues it on yes', async () => {

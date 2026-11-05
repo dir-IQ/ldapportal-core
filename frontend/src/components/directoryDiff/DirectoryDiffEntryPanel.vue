@@ -71,6 +71,22 @@
           </template>
           <p v-else-if="isPaired" class="text-sm text-gray-600 mb-4">Every compared attribute matches.</p>
 
+          <!-- A reference naming an entry that doesn't exist (e.g. a secDN whose
+               person was deleted) is a data problem in that directory, not a
+               copy that went wrong: a sync holds such a value back. -->
+          <div v-if="live?.dangling?.length" class="mb-4 text-sm" data-testid="dangling-references">
+            <p class="text-amber-800 font-medium">References to entries that don’t exist</p>
+            <p class="text-xs text-gray-600 mb-1">
+              These values name no entry in their own directory, so a sync can’t write them: fix them at the source.
+            </p>
+            <ul class="text-xs list-disc pl-4">
+              <li v-for="d in live.dangling" :key="d.side + d.attribute + d.value">
+                <span class="font-mono">{{ d.attribute }}</span> on {{ d.side }}:
+                <span class="font-mono break-all">{{ d.value }}</span>
+              </li>
+            </ul>
+          </div>
+
           <div v-if="sameRows.length" class="mb-4">
             <button type="button" class="btn-neutral btn-compact mb-2" :aria-expanded="showSame" @click="showSame = !showSame">
               {{ showSame ? 'Hide' : 'Show' }} {{ sameRows.length }} matching attribute{{ sameRows.length === 1 ? '' : 's' }}

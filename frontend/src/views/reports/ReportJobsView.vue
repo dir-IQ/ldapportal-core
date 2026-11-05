@@ -128,8 +128,14 @@
         :columns="tableColumns"
         :rows="resultRows"
         empty-text="No entries found for this report."
+        @visible-columns-change="visibleColumnKeys = $event"
       >
         <template #toolbar>
+          <label v-if="isEntryReport" class="flex items-center gap-1.5 text-xs text-gray-600"
+                 title="Also fetch operational attributes (createTimestamp, entryUUID, …) and run the report again. They appear in the Columns menu.">
+            <input v-model="includeOperational" type="checkbox" class="rounded border-gray-300" :disabled="running" />
+            Operational attributes
+          </label>
           <button @click="doExport('CSV')" :disabled="exporting" class="btn-secondary text-xs">Export CSV</button>
           <!-- PDF rendering ships with the commercial governance
                module; hide the button on community where the
@@ -405,7 +411,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
@@ -418,11 +424,15 @@ import {
 } from '@/api/reports'
 import { listDirectories } from '@/api/directories'
 import { checkIntegrity } from '@/api/browse'
+import { listAttributeTypes } from '@/api/schema'
+import {
+  buildUserAttributeColumns, attributeDisplayName, useOperationalAttributesToggle,
+} from '@/composables/useUserAttributeColumns'
 import { getAuditActions } from '@/api/audit'
 import { actionLabel } from '@/components/dashboard/auditLabels'
 import { downloadBlob } from '@/composables/useApi'
 import {
-  friendlyColumnName, formatRelativeDate, formatFullDate,
+  formatRelativeDate, formatFullDate,
   looksLikeTimestamp, looksLikeDn,
   integrityTypeBadgeClass, friendlyIntegrityType, sourceBadgeClass,
   DATE_COLUMNS, HIDDEN_COLUMNS,
@@ -611,6 +621,8 @@ const running = ref(false)
 const exporting = ref(false)
 const hasResults = ref(false)
 const resultColumns = ref<string[]>([])
+/** Display headings by column key; entry reports key columns by attribute name. */
+const resultLabels = ref<Record<string, string>>({})
 const resultRows = ref<ReportRow[]>([])
 
 const currentRunType   = computed(() => reportTypes.value.find(t => t.value === runForm.value.reportType))
@@ -676,19 +688,87 @@ async function loadAuditActions(): Promise<void> {
 onMounted(() => { document.addEventListener('click', onAuditActionClickOutside); loadAuditActions() })
 onBeforeUnmount(() => document.removeEventListener('click', onAuditActionClickOutside))
 
-// Show max 10 columns, hide internal columns like 'id'. Use the friendly
-// column name for display (e.g. "cn" → "Name") so callers see consistent
-// labels regardless of report shape.
-const tableColumns = computed<ColumnDef[]>(() =>
-  resultColumns.value
+/** Columns shown up front; the rest start hidden but can be turned on from the Columns menu. */
+const VISIBLE_COLUMN_LIMIT = 10
+/** Each listed user's groups, added last by the backend; always shown, outside the ten-column limit. */
+const GROUPS_COLUMN = 'groups'
+
+function columnLabel(col: string): string {
+  return resultLabels.value[col] ?? col
+}
+
+/**
+ * Reports that list user entries with every attribute they carry. Their
+ * columns follow the Users page's rules (useUserAttributeColumns): the same
+ * set, order and defaults, headed by the real attribute name.
+ */
+const ENTRY_REPORT_TYPES = new Set([
+  'USERS_IN_GROUP', 'USERS_IN_BRANCH', 'USERS_WITH_NO_GROUP',
+  'RECENTLY_ADDED', 'RECENTLY_MODIFIED', 'DISABLED_ACCOUNTS',
+])
+/** The report whose results are on screen (the form may have moved on since). */
+const shownReportType = ref('')
+const isEntryReport = computed(() => ENTRY_REPORT_TYPES.has(shownReportType.value))
+
+/** Fetch operational attributes too (`+`) for entry reports; remembered per browser. */
+const includeOperational = useOperationalAttributesToggle('report-jobs')
+watch(includeOperational, () => { if (hasResults.value && isEntryReport.value) doRun() })
+
+/** Lower-cased attribute name → schema spelling, per directory; best effort. */
+const schemaNames = ref<Map<string, string>>(new Map())
+let schemaNamesDir = ''
+async function loadSchemaNames(dir: string): Promise<void> {
+  if (!dir || dir === schemaNamesDir) return
+  schemaNamesDir = dir
+  try {
+    const { data } = await listAttributeTypes(dir)
+    const map = new Map<string, string>()
+    for (const a of (Array.isArray(data) ? data : []) as Array<{ name?: string }>) {
+      if (a.name) map.set(a.name.toLowerCase(), a.name)
+    }
+    if (schemaNamesDir === dir) schemaNames.value = map
+  } catch {
+    if (schemaNamesDir === dir) schemaNames.value = new Map()
+  }
+}
+
+/** Visible column keys in display order, reported by ResultsTable; the CSV export follows them. */
+const visibleColumnKeys = ref<string[]>([])
+
+// Entry reports: the shared user-attribute columns. Every other report keeps
+// its own columns in the backend's order, headed by the backend's label or
+// the key; past the first ten start hidden in the Columns menu.
+const tableColumns = computed<ColumnDef[]>(() => {
+  if (isEntryReport.value) {
+    return buildUserAttributeColumns(resultColumns.value, {
+      groupsKey: GROUPS_COLUMN,
+      schemaNames: schemaNames.value,
+    })
+  }
+  let shown = 0
+  return resultColumns.value
     .filter(c => !HIDDEN_COLUMNS.has(c))
-    .slice(0, 10)
-    .map(c => ({ key: c, label: friendlyColumnName(c) })),
-)
+    .map(c => {
+      const label = c === 'dn' ? 'dn' : (resultLabels.value[c] ?? attributeDisplayName(c, schemaNames.value))
+      const hidden = c !== GROUPS_COLUMN && shown++ >= VISIBLE_COLUMN_LIMIT
+      return hidden ? { key: c, label, defaultHidden: true } : { key: c, label }
+    })
+})
+
+/**
+ * The columns a CSV export asks for: the visible ones in display order, each
+ * by its real attribute name (schema-cased, so the file's header matches the
+ * table's). Derived columns go by their key, which the backend knows them by.
+ */
+const exportColumns = computed<string[]>(() =>
+  visibleColumnKeys.value.map(k =>
+    (k === 'dn' || k === GROUPS_COLUMN || resultLabels.value[k] !== undefined)
+      ? k : attributeDisplayName(k, schemaNames.value)))
 
 // Smart column type detection
 function isDateColumn(col: string, val: unknown): boolean {
-  return DATE_COLUMNS.has(col) || (col.toLowerCase().includes('timestamp') && looksLikeTimestamp(val as string))
+  return DATE_COLUMNS.has(col) || DATE_COLUMNS.has(columnLabel(col))
+    || (col.toLowerCase().includes('timestamp') && looksLikeTimestamp(val as string))
 }
 function isDnColumn(col: string, val: unknown): boolean {
   if (!val) return false
@@ -700,6 +780,7 @@ function buildReportParams(): Record<string, unknown> {
   const params: Record<string, unknown> = { lookbackDays: runForm.value.lookbackDays || 30 }
   if (currentRunType.value?.param) params[currentRunType.value.param] = runForm.value.paramValue
   if (runForm.value.objectType) params.objectType = runForm.value.objectType
+  if (includeOperational.value && ENTRY_REPORT_TYPES.has(runForm.value.reportType)) params.includeOperational = true
   if (currentRunType.value?.groupCount) {
     params.groupCountOp = runForm.value.groupCountOp
     params.groupCountValue = runForm.value.groupCountValue ?? 0
@@ -730,13 +811,16 @@ async function doRun(): Promise<void> {
     if (isIntegrityCheck.value) {
       await runIntegrityCheck()
     } else {
+      loadSchemaNames(dirId.value)
       const { data } = await runOperationalReportData(dirId.value, {
         reportType: runForm.value.reportType,
         reportParams: buildReportParams(),
       })
       resultColumns.value = data.columns || []
+      resultLabels.value = data.labels || {}
       resultRows.value = data.rows || []
     }
+    shownReportType.value = runForm.value.reportType
     hasResults.value = true
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
@@ -752,6 +836,7 @@ async function runIntegrityCheck(): Promise<void> {
   const { data } = await checkIntegrity(dirId.value, '', checks)
   const issues = data.issues || []
   resultColumns.value = ['type', 'dn', 'description']
+  resultLabels.value = {}
   resultRows.value = issues.map((i: { type: string, dn: string, description: string }) => ({
     type: i.type, dn: i.dn, description: i.description,
   }))
@@ -761,8 +846,9 @@ async function doExport(format: 'CSV' | 'PDF'): Promise<void> {
   if (!dirId.value) return
   if (isIntegrityCheck.value) {
     // Export integrity results as CSV from current data
-    const header = resultColumns.value.join(',')
-    const rows = resultRows.value.map(r => resultColumns.value.map(c => {
+    const cols = visibleColumnKeys.value.length ? visibleColumnKeys.value : resultColumns.value
+    const header = cols.join(',')
+    const rows = resultRows.value.map(r => cols.map(c => {
       const v = r[c]
       const s = v == null ? '' : String(v)
       return `"${s.replace(/"/g, '""')}"`
@@ -788,6 +874,10 @@ async function doExport(format: 'CSV' | 'PDF'): Promise<void> {
     const { data } = await runOperationalReport(dirId.value, {
       reportType: runForm.value.reportType,
       reportParams: buildReportParams(),
+      // The file carries the columns on screen, in their order — unless the
+      // form now names a different report than the one shown.
+      ...(shownReportType.value === runForm.value.reportType && exportColumns.value.length
+        ? { columns: exportColumns.value } : {}),
     }, format)
     downloadBlob(data, `${runForm.value.reportType.toLowerCase()}.csv`)
   } catch (e) {

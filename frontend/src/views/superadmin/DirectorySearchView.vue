@@ -657,7 +657,7 @@ const resultAttributes = computed<string[]>(() => {
 })
 
 const tableColumns = computed<ColumnDef[]>(() => [
-  { key: 'dn', label: 'DN', alwaysVisible: true, defaultWidth: 320 },
+  { key: 'dn', label: 'DN', alwaysVisible: true, lockPosition: true, defaultWidth: 320 },
   ...resultAttributes.value.map(a => ({ key: a, label: a })),
 ])
 

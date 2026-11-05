@@ -111,6 +111,9 @@ class ActivityDashboardServiceTest {
                 stateCount(MembershipState.FAILED, 3),
                 stateCount(MembershipState.REVIEW, 2));
         when(membershipRepo.countGroupedByState()).thenReturn(counts);
+        // One of the two review rows is a held delete.
+        when(membershipRepo.countHeldDeletesBySet(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{UUID.randomUUID(), 1L}));
         // One lagging + one stalled link (degraded), five healthy.
         when(syncLinkRepo.countChangelogLinksByHealth()).thenReturn(List.of(
                 new Object[]{SyncChangelogHealth.HEALTHY, 5L},
@@ -122,9 +125,8 @@ class ActivityDashboardServiceTest {
         when(syncLinkRepo.findDegradedChangelogLinkIdsByLagDesc())
                 .thenReturn(List.of(worstLagLinkId, UUID.randomUUID()));
         // One drifted set (3 differences), one clean (verified, zero), one never verified.
-        UUID worstDriftSetId = UUID.randomUUID();
         when(syncSetRepo.findAllByEnabledTrue()).thenReturn(List.of(
-                verifiedSet(worstDriftSetId, 2, 0, 1), verifiedSet(UUID.randomUUID(), 0, 0, 0), neverVerifiedSet()));
+                verifiedSet(UUID.randomUUID(), 2, 0, 1), verifiedSet(UUID.randomUUID(), 0, 0, 0), neverVerifiedSet()));
 
         ActivityDashboardResponse out = service.build(superadmin);
 
@@ -133,6 +135,8 @@ class ActivityDashboardServiceTest {
                 .contains("REPLICATION_DEAD_LETTERED", "SYNC_REVIEW_PENDING");
         assertThat(actionOf(out, "REPLICATION_DEAD_LETTERED").count()).isEqualTo(3);
         assertThat(actionOf(out, "SYNC_REVIEW_PENDING").count()).isEqualTo(2);
+        assertThat(actionOf(out, "SYNC_REVIEW_PENDING").detail())
+                .isEqualTo("1 is a delete waiting for approval; the rest need a correlation decision");
 
         // Lag (degraded changelog links) + drift (cached verify) awareness, each
         // deep-linking to the worst offender so the operator lands on the right row.
@@ -140,8 +144,11 @@ class ActivityDashboardServiceTest {
                 .contains("REPLICATION_LAG_HIGH", "RECONCILIATION_DRIFT_OPEN");
         assertThat(awarenessOf(out, "REPLICATION_LAG_HIGH").link())
                 .isEqualTo("/superadmin/directory-sync?link=" + worstLagLinkId);
+        // Drift links to the list of every drifting set, and says what kind it is.
         assertThat(awarenessOf(out, "RECONCILIATION_DRIFT_OPEN").link())
-                .isEqualTo("/superadmin/directory-sync?set=" + worstDriftSetId);
+                .isEqualTo("/superadmin/directory-sync?drift=1");
+        assertThat(awarenessOf(out, "RECONCILIATION_DRIFT_OPEN").detail())
+                .isEqualTo("Across 1 sync set: 2 missing on target · 1 with different content at the last content verify");
 
         // The dead-letter metric mirrors the FAILED count.
         assertThat(out.metrics().replicationEventsDeadLettered()).isEqualTo(3);

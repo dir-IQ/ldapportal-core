@@ -32,6 +32,7 @@ import {
   sortRows,
   filterRows,
   paginate,
+  orderColumns,
   useTablePreferences,
 } from './useTablePreferences'
 
@@ -172,6 +173,7 @@ describe('defaultPrefs', () => {
       sortKey: '',
       sortAsc: true,
       seenColumns: [],
+      order: [],
     })
   })
 })
@@ -341,5 +343,51 @@ describe('recordSeen — defaultHidden seeding gated on seenColumns', () => {
     recordSeen([{ key: 'dn' }, { key: 'cn' }])
     expect(prefs.value.hidden).toEqual([])
     expect(prefs.value.seenColumns.sort()).toEqual(['cn', 'dn'])
+  })
+})
+
+describe('orderColumns', () => {
+  const cols = [{ key: 'a' }, { key: 'b' }, { key: 'c' }, { key: 'd' }]
+  const keys = (xs: Array<{ key: string }>) => xs.map(x => x.key)
+
+  it('returns the declared order when nothing is saved', () => {
+    expect(keys(orderColumns(cols, []))).toEqual(['a', 'b', 'c', 'd'])
+  })
+
+  it('applies the saved order', () => {
+    expect(keys(orderColumns(cols, ['d', 'c', 'b', 'a']))).toEqual(['d', 'c', 'b', 'a'])
+  })
+
+  it('puts columns missing from the saved order after the saved ones, in declared order', () => {
+    expect(keys(orderColumns(cols, ['c', 'a']))).toEqual(['c', 'a', 'b', 'd'])
+  })
+
+  it('ignores saved keys that no longer exist', () => {
+    expect(keys(orderColumns(cols, ['zz', 'b', 'gone', 'a']))).toEqual(['b', 'a', 'c', 'd'])
+  })
+})
+
+describe('setOrder / resetOrder', () => {
+  beforeEach(clearPrefs)
+
+  it('keeps saved keys for columns absent right now, after the given ones', () => {
+    const { prefs, setOrder } = useTablePreferences('order-test')
+    setOrder(['a', 'b', 'c'])
+    // Next render lacks 'b' (e.g. a discovered attribute this search didn't return).
+    setOrder(['c', 'a'])
+    expect(prefs.value.order).toEqual(['c', 'a', 'b'])
+  })
+
+  it('resetOrder clears the saved order', () => {
+    const { prefs, setOrder, resetOrder } = useTablePreferences('order-test-2')
+    setOrder(['b', 'a'])
+    resetOrder()
+    expect(prefs.value.order).toEqual([])
+  })
+
+  it('normalizes a legacy blob with no order field', () => {
+    seedTablePrefs('legacy-order', { widths: {}, hidden: [] })
+    const { prefs } = useTablePreferences('legacy-order')
+    expect(prefs.value.order).toEqual([])
   })
 })

@@ -48,7 +48,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>The test uses a superadmin of its own, granted the API-token permission,
  * rather than whichever active superadmin the shared test database holds.
  * Superadmin permissions come from grant rows, and the shared H2 schema is
- * recreated ({@code ddl-auto: create-drop}) whenever another test context
+ * recreated ({@code ddl-auto: create}) whenever another test context
  * starts, so a borrowed superadmin can be one with no grants (or a grant-less
  * one inserted as a fallback) — turning every request here into a 403,
  * depending on test order. The account is looked up by name each time, so it

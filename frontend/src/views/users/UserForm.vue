@@ -57,9 +57,9 @@
              attributeConfigs array is empty — both mean we have no
              dynamic fields to render). -->
         <div v-if="!userTemplateConfig?.attributeConfigs?.length" class="grid grid-cols-6 gap-2">
-          <FormField label="RDN Attribute" v-model="local.rdnAttribute" placeholder="uid" required />
+          <FormField no-autofill label="RDN Attribute" v-model="local.rdnAttribute" placeholder="uid" required />
           <div class="col-span-4">
-            <FormField
+            <FormField no-autofill
               label="DN"
               :model-value="effectiveDn"
               @update:model-value="onDnInput"
@@ -74,7 +74,7 @@
         </div>
 
         <!-- RDN Value when using fallback (no dynamic attribute template) -->
-        <FormField v-if="!userTemplateConfig?.attributeConfigs?.length" label="RDN Value" v-model="local.rdnValue" placeholder="jsmith" required />
+        <FormField no-autofill v-if="!userTemplateConfig?.attributeConfigs?.length" label="RDN Value" v-model="local.rdnValue" placeholder="jsmith" required />
 
         <!-- Dynamic fields from user form config (all attributes in layout order) -->
         <template v-if="userTemplateConfig?.attributeConfigs?.length">
@@ -96,7 +96,7 @@
                          reading computedAttrValues directly like the DN field.
                          Binding to local.rdnValue instead would leave it frozen,
                          since that value only reaches the field via a round-trip. -->
-                    <FormField
+                    <FormField no-autofill
                       v-if="attr.computedExpression"
                       :label="fieldLabel(attr)"
                       :model-value="computedAttrValues[attr.attributeName] || ''"
@@ -104,7 +104,7 @@
                       disabled
                       :field-key="attr.attributeName"
                     />
-                    <FormField
+                    <FormField no-autofill
                       v-else
                       :label="fieldLabel(attr)"
                       v-model="local.rdnValue"
@@ -118,7 +118,7 @@
                   <!-- Editable DN (seeded from the computed default / template).
                        Position + width come from the designer-configured layout. -->
                   <div v-else-if="attr.isDn" :style="{ gridColumn: `span ${attr.columnSpan || 4}` }">
-                    <FormField
+                    <FormField no-autofill
                       label="DN"
                       :model-value="effectiveDn"
                       @update:model-value="onDnInput"
@@ -147,6 +147,7 @@
                           :id="`uf-pw-${attr.attributeName}`"
                           :data-field="attr.attributeName"
                           :type="passwordVisible ? 'text' : 'password'"
+                          autocomplete="new-password"
                           :value="local.attributes[attr.attributeName]"
                           @input="local.attributes[attr.attributeName] = ($event.target as HTMLInputElement).value"
                           :required="attr.requiredOnCreate"
@@ -195,7 +196,7 @@
                     <!-- DN Lookup: use DnPicker instead of text input -->
                     <template v-if="attr.inputType === 'DN_LOOKUP'">
                       <label class="block text-sm font-medium text-gray-700 mb-1">{{ attr.customLabel || attr.attributeName }}</label>
-                      <DnPicker
+                      <DnPicker autocomplete="off"
                         :model-value="local.attributes[attr.attributeName]"
                         @update:model-value="v => { local.attributes[attr.attributeName] = v }"
                         :directory-id="dirId ?? undefined"
@@ -204,7 +205,7 @@
                       />
                       <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                     </template>
-                    <FormField
+                    <FormField no-autofill
                       v-else
                       :label="fieldLabel(attr)"
                       :model-value="attr.computedExpression ? computedAttrValues[attr.attributeName] : local.attributes[attr.attributeName]"
@@ -229,10 +230,10 @@
              attribute template — either no config row or
              attributeConfigs empty. -->
         <template v-if="!userTemplateConfig?.attributeConfigs?.length">
-          <FormField label="cn (Common Name)" v-model="local.attributes.cn" required />
-          <FormField label="sn (Surname)" v-model="local.attributes.sn" />
-          <FormField label="mail" v-model="local.attributes.mail" />
-          <FormField label="userPassword" type="password" revealable v-model="local.attributes.userPassword" />
+          <FormField no-autofill label="cn (Common Name)" v-model="local.attributes.cn" required />
+          <FormField no-autofill label="sn (Surname)" v-model="local.attributes.sn" />
+          <FormField no-autofill label="mail" v-model="local.attributes.mail" />
+          <FormField no-autofill label="userPassword" type="password" revealable v-model="local.attributes.userPassword" />
         </template>
       </div>
 
@@ -256,7 +257,7 @@
                        DN that doesn't use the designated attribute keeps this
                        field editable. -->
                   <div v-if="attr.rdn" :style="{ gridColumn: `span ${attr.columnSpan || 6}` }">
-                    <FormField
+                    <FormField no-autofill
                       :label="fieldLabel(attr)"
                       v-model="local.attributes[attr.attributeName]"
                       :type="mapInputType(attr.inputType)"
@@ -269,7 +270,7 @@
                   <!-- Read-only DN. Position + width come from the
                        designer-configured layout, same as create mode. -->
                   <div v-else-if="attr.isDn" :style="{ gridColumn: `span ${attr.columnSpan || 4}` }">
-                    <FormField
+                    <FormField no-autofill
                       label="DN"
                       :model-value="local.dn"
                       disabled
@@ -286,7 +287,7 @@
                     <!-- DN Lookup: use DnPicker instead of text input -->
                     <template v-if="attr.inputType === 'DN_LOOKUP'">
                       <label class="block text-sm font-medium text-gray-700 mb-1">{{ fieldLabel(attr) }}</label>
-                      <DnPicker
+                      <DnPicker autocomplete="off"
                         v-model="local.attributes[attr.attributeName]"
                         :directory-id="dirId ?? undefined"
                         :placeholder="'Select a DN'"
@@ -295,7 +296,7 @@
                       />
                       <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                     </template>
-                    <FormField
+                    <FormField no-autofill
                       v-else
                       :label="fieldLabel(attr)"
                       v-model="local.attributes[attr.attributeName]"
@@ -331,7 +332,7 @@
                    config never mentions (cn in o=0001+cn=Jane Rowe,…), and
                    editing it here would be a server-side naming violation. -->
               <template v-for="(_, key) in extraEditAttributes" :key="key">
-                <FormField :label="isNamingAttr(key) ? `${key} (RDN)` : key"
+                <FormField no-autofill :label="isNamingAttr(key) ? `${key} (RDN)` : key"
                            v-model="local.attributes[key]" type="textarea" :rows="2"
                            :disabled="readOnly || isNamingAttr(key)"
                            :hint="readOnly ? undefined : isNamingAttr(key)
@@ -347,7 +348,7 @@
              here too — same rule as the configured-field path. -->
         <template v-else>
           <template v-for="(_, key) in editableAttributes" :key="key">
-            <FormField :label="isNamingAttr(key) ? `${key} (RDN)` : key"
+            <FormField no-autofill :label="isNamingAttr(key) ? `${key} (RDN)` : key"
                        v-model="local.attributes[key]" type="textarea" :rows="2"
                        :disabled="readOnly || isNamingAttr(key)"
                        :hint="readOnly ? undefined : isNamingAttr(key)
@@ -372,7 +373,7 @@
           </button>
           <div v-if="showIviaAttrs" class="space-y-2 mt-3 pl-3 border-l-2 border-gray-100">
             <template v-for="(val, key) in iviaDisplayAttributes" :key="key">
-              <FormField :label="iviaAttrLabel(key)" :model-value="val" type="textarea" :rows="1" disabled />
+              <FormField no-autofill :label="iviaAttrLabel(key)" :model-value="val" type="textarea" :rows="1" disabled />
             </template>
           </div>
         </div>
@@ -406,7 +407,7 @@
           <p class="text-xs text-gray-500">Stage this user to join every group the selected user belongs to. Groups already shared are skipped; nothing is written until you Save.</p>
           <div class="flex gap-2">
             <div class="flex-1 min-w-0">
-              <DnPicker
+              <DnPicker autocomplete="off"
                 v-model="copySourceDn"
                 :directory-id="dirId ?? undefined"
                 :superadmin="false"
@@ -483,6 +484,7 @@
             <input
               v-model="groupFilter"
               placeholder="Search groups…"
+              autocomplete="off"
               aria-label="Search groups"
               @keyup.enter="searchAvailableGroups"
               class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"

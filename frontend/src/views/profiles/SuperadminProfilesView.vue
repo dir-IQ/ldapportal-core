@@ -6,7 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import {
   listAllProfiles, createProfile, updateProfile, deleteProfile, cloneProfile,
   getApprovalConfig, setApprovalConfig, getApprovers, setApprovers,
-  evaluateGroupChanges, applySelectiveGroupChanges, probeTargetOu
+  evaluateGroupChanges, applySelectiveGroupChanges, probeTargetOu, exportProfile
 } from '@/api/profiles'
 import { listDirectories } from '@/api/directories'
 import { listObjectClasses, getObjectClass } from '@/api/schema'
@@ -23,6 +23,9 @@ import DnPicker from '@/components/DnPicker.vue'
 import DataTable from '@/components/DataTable.vue'
 import IsvaProfileOverrideControl from '@/components/profiles/IsvaProfileOverrideControl.vue'
 import ThemeColorPreview from '@/components/profiles/ThemeColorPreview.vue'
+import CopyFormDialog from '@/components/profiles/CopyFormDialog.vue'
+import ImportProfileDialog from '@/components/profiles/ImportProfileDialog.vue'
+import { downloadBlob } from '@/composables/useApi'
 import { setIsvaProfileOverride } from '@/api/isvaConfig'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -548,6 +551,68 @@ async function doClone() {
     await cloneProfile(cloneTarget.value.directoryId, cloneTarget.value.id, cloneName.value.trim(), targetDirId)
     notif.success(targetDirId ? `Profile cloned into ${dirName(targetDirId)}` : 'Profile cloned')
     await reload()
+  } catch (e) {
+    notif.error(errMsg(e))
+  }
+}
+
+// "Copy form to…": push this profile's user form onto other profiles
+// (e.g. identical dev / test / prod directories sharing one definition).
+const copyFormSource = ref<ProfileRow | null>(null)
+const showCopyForm = ref(false)
+
+function openCopyForm(p: ProfileRow) {
+  copyFormSource.value = p
+  showCopyForm.value = true
+}
+
+// Export / import as a portable JSON file (another directory or install).
+const showImport = ref(false)
+/** Set when the editor's Other tab opens the import on the profile being edited. */
+const importPreset = ref<{ directoryId: string; targetProfileId: string } | null>(null)
+
+/** The saved row of the profile open in the editor; null while creating one. */
+const editingRow = computed<ProfileRow | null>(() =>
+  (editing.value ? profiles.value.find(p => p.id === editing.value) : undefined) ?? null)
+
+function openImportFromList() {
+  importPreset.value = null
+  showImport.value = true
+}
+
+function openImportIntoEditing() {
+  const row = editingRow.value
+  if (!row) return
+  importPreset.value = { directoryId: row.directoryId, targetProfileId: row.id }
+  showImport.value = true
+}
+
+/**
+ * After an import. If it replaced the form of the profile open in the editor,
+ * reopen that profile from the server: the editor's copy is now stale, and
+ * saving it would overwrite what was just imported.
+ */
+async function onImported() {
+  const intoEditing = importPreset.value?.targetProfileId
+  importPreset.value = null
+  await reload()
+  if (intoEditing && showModal.value && editing.value === intoEditing) {
+    const fresh = profiles.value.find(p => p.id === intoEditing)
+    if (fresh) {
+      const tab = modalTab.value
+      await openEdit(fresh)
+      modalTab.value = tab
+    }
+  }
+}
+const importDirectories = computed(() =>
+  directories.value.map(d => ({ id: d.id as string, displayName: (d.displayName ?? d.id) as string })))
+
+async function doExport(p: ProfileRow) {
+  try {
+    const { data } = await exportProfile(p.directoryId, p.id)
+    const file = `${p.name.replace(/[^A-Za-z0-9._-]+/g, '-')}.profile.json`
+    downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), file)
   } catch (e) {
     notif.error(errMsg(e))
   }
@@ -1505,6 +1570,7 @@ const modalTabs = [
   { id: 'layout', label: 'Forms' },
   { id: 'groups', label: 'Groups' },
   { id: 'policy', label: 'Policy' },
+  { id: 'other', label: 'Other' },
 ]
 
 function toggleApprover(accountId: string) {
@@ -1521,7 +1587,10 @@ function toggleApprover(accountId: string) {
         <h1 class="text-2xl font-bold text-gray-900">Provisioning Profiles</h1>
         <p class="text-sm text-gray-500 mt-1">Configure provisioning profiles and attribute mappings</p>
       </div>
-      <button v-if="canManage" class="btn-primary" @click="openCreate">+ Create Profile</button>
+      <div v-if="canManage" class="flex items-center gap-2">
+        <button class="btn-secondary" @click="openImportFromList">Import</button>
+        <button class="btn-primary" @click="openCreate">+ Create Profile</button>
+      </div>
     </div>
 
     <DataTable :columns="profileCols" :rows="profiles" :loading="loading" row-key="id" empty-text="No provisioning profiles configured.">
@@ -1540,6 +1609,8 @@ function toggleApprover(accountId: string) {
       <template #actions="{ row }">
         <ActionMenu :items="[
           { label: 'Clone',  onClick: () => openClone(row as ProfileRow), hidden: !canManage },
+          { label: 'Copy form to…', onClick: () => openCopyForm(row as ProfileRow), hidden: !canManage },
+          { label: 'Export', onClick: () => doExport(row as ProfileRow), hidden: !canManage },
           { label: 'Delete', onClick: () => confirmDelete(row as ProfileRow), danger: true, hidden: !canManage },
         ]">
           <template #primary>
@@ -1587,34 +1658,6 @@ function toggleApprover(accountId: string) {
           <div>
             <label for="sp-description" class="block text-sm font-medium text-gray-700 mb-1">Description</label>
             <textarea id="sp-description" v-model="profile.description" class="input w-full" rows="2"></textarea>
-          </div>
-          <div>
-            <label for="sp-theme-color" class="block text-sm font-medium text-gray-700 mb-1">Theme Color</label>
-            <!-- Picker on the left, light/dark preview (and any advice) to its
-                 right; the help text spans the full width below. Wraps on narrow
-                 screens. -->
-            <div class="flex flex-wrap items-start gap-x-5 gap-y-2">
-              <div class="flex items-center gap-2 shrink-0">
-                <!-- A native colour input can't represent "unset" (it always holds
-                     a value), so bind :value with a display fallback and commit on
-                     @input; the hex field and Clear button own the unset state. -->
-                <input id="sp-theme-color" type="color"
-                  :value="profile.themeColor || '#2563eb'"
-                  @input="profile.themeColor = ($event.target as HTMLInputElement).value"
-                  class="h-9 w-10 rounded border border-gray-300 cursor-pointer p-0.5 shrink-0"
-                  aria-label="Profile theme colour picker" />
-                <input v-model="profile.themeColor" class="input w-28" maxlength="7"
-                  placeholder="(unset)" aria-label="Theme colour hex" />
-                <button v-if="profile.themeColor" type="button" class="btn-neutral text-xs"
-                  @click="profile.themeColor = ''">Clear</button>
-              </div>
-              <ThemeColorPreview class="min-w-0 flex-1 basis-80" :color="profile.themeColor" :name="profile.name" />
-            </div>
-            <p class="mt-2 text-xs text-gray-500">
-              Optional. When set, the profile's tag (on the user and group pages, their
-              new/edit dialogs and the bulk pages) is tinted with this colour, and its
-              name is shaded as needed to stay readable. Leave blank for a neutral tag.
-            </p>
           </div>
           <div v-if="!editing">
             <label for="sp-directory" class="block text-sm font-medium text-gray-700 mb-1">Directory</label>
@@ -2077,6 +2120,72 @@ function toggleApprover(accountId: string) {
           </fieldset>
         </div>
 
+        <!-- Other Tab: appearance, plus actions on the saved profile -->
+        <div v-if="modalTab === 'other'" class="space-y-6">
+          <div>
+            <label for="sp-theme-color" class="block text-sm font-medium text-gray-700 mb-1">Theme Color</label>
+            <!-- Picker on the left, light/dark preview (and any advice) to its
+                 right; the help text spans the full width below. Wraps on narrow
+                 screens. -->
+            <div class="flex flex-wrap items-start gap-x-5 gap-y-2">
+              <div class="flex items-center gap-2 shrink-0">
+                <!-- A native colour input can't represent "unset" (it always holds
+                     a value), so bind :value with a display fallback and commit on
+                     @input; the hex field and Clear button own the unset state. -->
+                <input id="sp-theme-color" type="color"
+                  :value="profile.themeColor || '#2563eb'"
+                  @input="profile.themeColor = ($event.target as HTMLInputElement).value"
+                  class="h-9 w-10 rounded border border-gray-300 cursor-pointer p-0.5 shrink-0"
+                  aria-label="Profile theme colour picker" />
+                <input v-model="profile.themeColor" class="input w-28" maxlength="7"
+                  placeholder="(unset)" aria-label="Theme colour hex" />
+                <button v-if="profile.themeColor" type="button" class="btn-neutral text-xs"
+                  @click="profile.themeColor = ''">Clear</button>
+              </div>
+              <ThemeColorPreview class="min-w-0 flex-1 basis-80" :color="profile.themeColor" :name="profile.name" />
+            </div>
+            <p class="mt-2 text-xs text-gray-500">
+              Optional. When set, the profile's tag (on the user and group pages, their
+              new/edit dialogs and the bulk pages) is tinted with this colour, and its
+              name is shaded as needed to stay readable. Leave blank for a neutral tag.
+            </p>
+          </div>
+
+          <section aria-labelledby="sp-other-copy">
+            <h3 id="sp-other-copy" class="text-sm font-semibold text-gray-800 border-b border-gray-200 pb-1 mb-2">Copy form</h3>
+            <p class="text-xs text-gray-500 mb-2">
+              Copy this profile's user form (its attributes and layout) onto other profiles,
+              e.g. identical dev / test / prod directories sharing one definition.
+            </p>
+            <button type="button" class="btn-secondary" :disabled="!editingRow"
+              :title="editingRow ? undefined : 'Save the profile first'"
+              @click="editingRow && openCopyForm(editingRow)">Copy form to other profiles…</button>
+          </section>
+
+          <section aria-labelledby="sp-other-transfer">
+            <h3 id="sp-other-transfer" class="text-sm font-semibold text-gray-800 border-b border-gray-200 pb-1 mb-2">Export / import</h3>
+            <p class="text-xs text-gray-500 mb-2">
+              Save this profile as a portable JSON file, or load an exported file's user form into it.
+            </p>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" class="btn-secondary" :disabled="!editingRow"
+                :title="editingRow ? undefined : 'Save the profile first'"
+                @click="editingRow && doExport(editingRow)">Export to file</button>
+              <button type="button" class="btn-secondary" :disabled="!editingRow"
+                :title="editingRow ? undefined : 'Save the profile first'"
+                @click="openImportIntoEditing">Import form from file…</button>
+            </div>
+          </section>
+
+          <p class="text-xs text-gray-500">
+            <template v-if="editingRow">
+              Copy and export use the last saved version of this profile; save your changes first
+              to include them. An import replaces this profile's user form and reloads the editor.
+            </template>
+            <template v-else>Save the profile first to copy, export or import its form.</template>
+          </p>
+        </div>
+
         <!-- Policy Tab -->
         <div v-if="modalTab === 'policy'" class="space-y-4">
           <!-- Password Generation Settings -->
@@ -2208,6 +2317,10 @@ function toggleApprover(accountId: string) {
       confirmLabel="Delete" :danger="true" @confirm="doDelete" />
 
     <!-- Group change preview dialog removed — compliance check is now inline on the Groups tab -->
+
+    <CopyFormDialog v-model="showCopyForm" :source="copyFormSource" :profiles="profiles" @copied="reload" />
+    <ImportProfileDialog v-model="showImport" :directories="importDirectories" :profiles="profiles"
+      :preset="importPreset" @imported="onImported" />
 
     <!-- Clone modal -->
     <AppModal v-model="showCloneModal" title="Clone Profile" size="sm">
