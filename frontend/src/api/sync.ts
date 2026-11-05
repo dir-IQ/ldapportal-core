@@ -458,6 +458,53 @@ export interface SyncHeldReferences {
 export const verifyContents = (setId: string) =>
   client.get<SyncVerifyResult>(`/superadmin/sync/sets/${setId}/verify`)
 
+// ── Drift: every item of the last complete content verify ───────────────────
+
+export type SyncDriftCategory = 'MISSING' | 'ORPHAN' | 'MISMATCH'
+
+/** One attribute that differs: what the projected source wants against what the target has. */
+export interface SyncDriftAttribute {
+  attribute: string
+  expected: string[]
+  actual: string[]
+  /** Password material: flagged as differing, values never kept. */
+  hidden: boolean
+  /** A side had more values than were kept. */
+  truncated: boolean
+}
+
+export interface SyncDriftEntry {
+  seq: number
+  category: SyncDriftCategory
+  targetDn: string
+  /** The source member it comes from; null for an orphan. */
+  sourceDn: string | null
+  identity: string | null
+  /** Content drift only. */
+  attributes: SyncDriftAttribute[]
+}
+
+export interface SyncDriftPage {
+  /** The last complete verify; null when there hasn't been one. */
+  verifiedAt: string | null
+  /** A later verify that couldn't read both sides; the items are from the earlier one. */
+  incompleteAt: string | null
+  /** False when the set's counts predate stored items (verifying again records them). */
+  detailsRecorded: boolean
+  counts: Record<SyncDriftCategory, number>
+  matched: number
+  page: number
+  size: number
+  entries: SyncDriftEntry[]
+}
+
+export const getDrift = (setId: string,
+  params: { category?: SyncDriftCategory; q?: string; page?: number; size?: number } = {}) =>
+  client.get<SyncDriftPage>(`/superadmin/sync/sets/${setId}/drift`, { params })
+
+export const downloadDriftCsv = (setId: string) =>
+  client.get<Blob>(`/superadmin/sync/sets/${setId}/drift.csv`, { responseType: 'blob' })
+
 // ── Inventory + operator triggers ───────────────────────────────────────────
 
 /** Spring Data Page envelope (the subset the UI consumes). */

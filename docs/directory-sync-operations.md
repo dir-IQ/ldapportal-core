@@ -340,7 +340,7 @@ same on every replica — but audit sources don't read cookie mode today.)
    `John`) still replicates. Attribute aliases are resolved through the target
    schema (read once per directory, cached 10 minutes). A change of DN form
    alone is not a move either. The same comparison drives the dry-run preview
-   and **Verify contents**.
+   and **Verify now** (Drift tab).
 6. **Commit** the index row: `APPLIED`, `FAILED` (+ reason), or `REVIEW`.
 7. **Closure fan-out** — if the target changed, re-enqueue referrers found by a
    source reverse-query over `referenceAttributes`, hash-terminated. The query
@@ -388,7 +388,7 @@ can't fail it.
   each parent to see which exist, instead of a query and a target read per
   member. A search that finds none of its batch while a sample of it (first,
   middle, last) does exist is not trusted, and that batch is read entry by
-  entry. The same bulk query serves the preview and **Verify contents**;
+  entry. The same bulk query serves the preview and **Verify now**;
 - projecting an entry translates all its reference values (a group's
   members) through the index with one query per 500 values, not one each.
 
@@ -506,7 +506,7 @@ database and the logs keep the `APPLIED` name.
 
 | State | Colour | Meaning | Operator action |
 |---|---|---|---|
-| **Synced** (`APPLIED`) | green | The sync wrote the projected desired state to the target and tracks it. It doesn't re-check the target: **Verify contents** does. | None. |
+| **Synced** (`APPLIED`) | green | The sync wrote the projected desired state to the target and tracks it. It doesn't re-check the target: **Verify now** (Drift tab) does. | None. |
 | **PENDING** | grey | A transition is queued/in-progress. | None unless persistent (see §7). |
 | **FAILED** | red | Last apply failed; this identity is dead-lettered and retried, isolated. The **reason** column carries the server diagnostic. | Fix the cause, then **Retry**. |
 | **REVIEW** | amber | Quarantine: ambiguous correlation or a held delete. | See *Resolving `REVIEW`* below. |
@@ -577,15 +577,23 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   e.g. `5 review (3 deletes)`; the rest are correlation decisions (ambiguous
   match, placement conflict). The dashboard's *sync items awaiting review*
   action says how many are deletes too.
-- **Membership inventory modal** (per set): state-filter chips (All / Synced /
-  Pending / Review / Failed with counts, each with a tooltip saying what it means, and **Not in set**, below), a search box (identity or DN),
-  per-row Identity / State / Source DN / Target DN / **Reason**, and per-row
-  actions named for the row's situation (see §6, *Resolving `REVIEW`*). Header has **Reconcile now**,
-  **Re-check target** (see §9, *Target restored from a backup*) and **Verify contents**;
-  each button's tooltip says how it differs from the other two (see the
-  *Operator triggers cheat-sheet*, §9).
+- **Membership inventory modal** (per set), in two tabs that answer two
+  different questions:
+  - **Reconciliation** — what the sync did and what it manages: the last
+    reconcile and run history, then state-filter chips (All / Synced /
+    Pending / Review / Failed with counts, each with a tooltip saying what it
+    means, and **Not in set**, below), a search box (identity or DN), per-row
+    Identity / State / Source DN / Target DN / **Reason**, and per-row actions
+    named for the row's situation (see §6, *Resolving `REVIEW`*).
+  - **Drift** — whether the target matches the source right now: the last
+    complete content verify, in full (see **Verify now** below). Its tab shows
+    the drift count; the drifting-sets banner's **Open set** opens this tab.
+  The header has **Reconcile now** and **Re-check target** (see §9, *Target
+  restored from a backup*); the Drift tab has **Verify now** and **Compare in
+  Directory Diff**. Each button's tooltip says how it differs from the others
+  (see the *Operator triggers cheat-sheet*, §9).
 - **Progress while they run.** **Reconcile now**, **Re-check target** and
-  **Verify contents** show what's happening, updated about every second
+  **Verify now** show what's happening, updated about every second
   (`ldapportal.sync.reconcile.progress-ms`, `ldapportal.sync.verify.progress-ms`):
   - a reconcile: *scanning the source*, then *applying entries: N of M* with a
     progress bar, then *checking managed entries no longer in the source*, then
@@ -638,11 +646,23 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   (`ldapportal.sync.reconcile.progress-ms`).
 - **Untracked search** — searching a DN/identity that isn't tracked offers
   `Recompute "<term>"` to pull it in on demand.
-- **Verify contents** — a belts-and-suspenders check that re-reads *both*
-  directories and compares them directly (it ignores the membership index, so it
-  catches drift the index believes is already converged). Reports counts of
-  in-sync / **missing on target** / **orphaned on target** / **content drift**
-  entries, with sample DNs for each. Read-only; never writes. When the set
+- **Verify now** (Drift tab; *Verify contents* before) — a belts-and-suspenders
+  check that re-reads *both* directories and compares them directly (it ignores
+  the membership index, so it catches drift the index believes is already
+  converged). Read-only; never writes. It counts in-sync / **missing on
+  target** / **orphaned on target** / **content drift** entries, and a complete
+  check stores **every** drifting entry, replacing the previous check's (only
+  the latest is kept; a check that couldn't read both directories keeps the
+  previous list and says so). The Drift tab lists them: filter by kind with the
+  count cards, search by DN, attribute or value, page through them, open an
+  entry in the Directory Browser, and expand a content drift to see each
+  differing attribute's **source (expected)** and **target (actual)** values
+  (password attributes are flagged but their values never shown; a long value
+  list shows its first 50). **Export CSV** downloads them all
+  (`category,targetDn,sourceDn,identity,attribute,expected,actual`, one row per
+  differing attribute). The list comes from `GET …/sets/{id}/drift` and
+  `…/drift.csv`. Counts from a check made before the list was kept show with
+  a prompt to verify again. When the set
   writes a **source anchor**, only target entries carrying it count as
   orphaned: an entry under the same target base that nothing manages isn't
   this set's drift. Nor is one another set placed: when several sets write
@@ -659,7 +679,7 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   shows them without running a verify.
 - **Drift column and drifting sets.** Each set stores its last *complete*
   content verify (it runs after every scheduled or manual reconcile, and on
-  **Verify contents**). The sets table's **Drift** column shows it — e.g.
+  **Verify now**). The sets table's **Drift** column shows it — e.g.
   *12 orphaned · 1 different*, *In sync* or *Not verified* — with the verify's
   time on hover, and each link rolls up how many of its sets drift. When any
   enabled set drifts, a **drifting sets** banner lists them all with an
@@ -712,7 +732,7 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
     synced yet"* — the usual reason a group's new member doesn't appear on the
     target is that no set has synced (or adopted) that member's entry yet;
     one that merely exists on the target doesn't count.
-    **Verify contents** doesn't count a kept value as drift.
+    **Verify now** doesn't count a kept value as drift.
   - **References follow this plan.** A referent this preview places resolves
     to where the plan puts it, and one the plan takes out of the set doesn't
     resolve, so its groups show the members rewritten or removed as a
@@ -949,7 +969,7 @@ cap it. The audit log grows by one record per target write, whatever the level.
   `FAILED`/`REVIEW` cause.
 - **Reconcile now (set)** — full enumeration + not-seen sweep; the heavy
   "make this set correct" button. Returns the count enumerated.
-- **Verify contents (set)** — independent read-only audit: enumerate + project
+- **Verify now (set, Drift tab)** — independent read-only audit: enumerate + project
   the source scope, enumerate the target base, and compare them directly by
   target DN. Flags entries missing on the target, orphaned on the target, and
   content drift — *without* trusting the membership index. Use to confirm a set
@@ -984,7 +1004,7 @@ Procedure:
 1. **Re-check target** on each affected set (inventory header). Wait for the
    next reconcile (or **Reconcile now**); its run should show the re-adds and
    re-modifies.
-2. **Verify contents** and review **Orphaned on target**: entries the sync had
+2. **Verify now** and review **Orphaned on target** on the Drift tab: entries the sync had
    deleted, and old-DN copies of moved entries. The sync never deletes an entry
    it has no index row for — remove them on the target if they shouldn't exist.
 3. Verify again: missing on target and content drift should be 0.

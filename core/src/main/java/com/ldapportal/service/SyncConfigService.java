@@ -80,6 +80,7 @@ public class SyncConfigService {
     private final AuditService auditService;
     private final com.ldapportal.repository.SyncReconcileRunRepository reconcileRunRepo;
     private final com.ldapportal.ldap.sync.SyncVerifyProgressTracker verifyProgress;
+    private final com.ldapportal.ldap.sync.SyncDriftStore driftStore;
 
     /**
      * Runs the reconciles {@link #startReconcile} starts, off the request thread:
@@ -598,6 +599,97 @@ public class SyncConfigService {
         return reconcileHistory.notInSet(syncSetId, search, page, size);
     }
 
+    /** Largest drift page. */
+    static final int MAX_DRIFT_PAGE = 200;
+
+    /**
+     * One page of the drift items the set's last complete content verify found,
+     * optionally one {@code category} and matching {@code q} (target DN, source
+     * DN or a differing attribute's name or value).
+     */
+    @Transactional(readOnly = true)
+    public com.ldapportal.dto.sync.SyncDriftPage drift(UUID syncSetId,
+                                                     com.ldapportal.entity.enums.SyncDriftCategory category,
+                                                     String q, int page, int size) {
+        SyncSet set = requireSet(syncSetId);
+        int pageSize = Math.max(1, Math.min(MAX_DRIFT_PAGE, size));
+        int pageNo = Math.max(0, page);
+        var counts = driftStore.countsByCategory(syncSetId);
+        long stored = counts.values().stream().mapToLong(Long::longValue).sum();
+        long recordedDrift = nz(set.getVerifyMissingCount()) + nz(set.getVerifyOrphanCount())
+                + nz(set.getVerifyMismatchCount());
+        // Counts from a verify before items were kept, with nothing stored yet.
+        boolean detailsRecorded = set.getLastVerifiedAt() != null && (stored > 0 || recordedDrift == 0);
+        long matched = driftStore.count(syncSetId, category, q);
+        var entries = driftStore.page(syncSetId, category, q, pageNo * pageSize, pageSize).stream()
+                .map(r -> new com.ldapportal.dto.sync.SyncDriftPage.Entry(r.seq(), r.item().category(),
+                        r.item().targetDn(), r.item().sourceDn(), r.item().identity(), r.item().attributes()))
+                .toList();
+        return new com.ldapportal.dto.sync.SyncDriftPage(set.getLastVerifiedAt(), set.getVerifyIncompleteAt(),
+                detailsRecorded, counts, matched, pageNo, pageSize, entries);
+    }
+
+    private static long nz(Integer n) {
+        return n == null ? 0 : n;
+    }
+
+    /**
+     * Every stored drift item as CSV
+     * ({@code category,targetDn,sourceDn,identity,attribute,expected,actual}): a
+     * content drift gives one row per differing attribute, with its values
+     * {@code |}-joined; secret attributes show {@code (hidden)}. A cell starting
+     * with a formula character is neutralised, since values come from the directory.
+     */
+    public void writeDriftCsv(UUID syncSetId, java.io.Writer out) {
+        requireSet(syncSetId);
+        List<String> headers = List.of("category", "targetDn", "sourceDn", "identity", "attribute", "expected", "actual");
+        try {
+            com.ldapportal.util.CsvUtils.writeHeader(out, headers);
+            driftStore.forEach(syncSetId, r -> {
+                var it = r.item();
+                if (it.attributes().isEmpty()) {
+                    writeDriftRow(out, headers, it, null, "", "");
+                } else {
+                    for (var a : it.attributes()) {
+                        writeDriftRow(out, headers, it, a.attribute(),
+                                a.hidden() ? "(hidden)" : com.ldapportal.util.CsvUtils.joinMultiValue(a.expected()),
+                                a.hidden() ? "(hidden)" : com.ldapportal.util.CsvUtils.joinMultiValue(a.actual()));
+                    }
+                }
+            });
+            out.flush();
+        } catch (java.io.IOException ex) {
+            throw new java.io.UncheckedIOException(ex);
+        }
+    }
+
+    private static void writeDriftRow(java.io.Writer out, List<String> headers,
+                                      com.ldapportal.dto.sync.SyncDriftItem it, String attribute,
+                                      String expected, String actual) {
+        Map<String, String> row = new java.util.HashMap<>();
+        row.put("category", it.category().name());
+        row.put("targetDn", safeCell(it.targetDn()));
+        row.put("sourceDn", safeCell(it.sourceDn()));
+        row.put("identity", safeCell(it.identity()));
+        row.put("attribute", safeCell(attribute));
+        row.put("expected", safeCell(expected));
+        row.put("actual", safeCell(actual));
+        try {
+            com.ldapportal.util.CsvUtils.writeRow(out, headers, row);
+        } catch (java.io.IOException ex) {
+            throw new java.io.UncheckedIOException(ex);
+        }
+    }
+
+    /** A cell a spreadsheet won't evaluate: a leading formula character gets a quote. */
+    static String safeCell(String v) {
+        if (v == null || v.isEmpty()) {
+            return "";
+        }
+        char c = v.charAt(0);
+        return c == '=' || c == '+' || c == '-' || c == '@' || c == '\t' || c == '\r' ? "'" + v : v;
+    }
+
     /** Check a run's entries can be downloaded (see {@link #writeRunEntriesCsv}), before streaming them. */
     public void requireRunEntries(UUID syncSetId, UUID runId) {
         requireSet(syncSetId);
@@ -686,6 +778,8 @@ public class SyncConfigService {
         if (result.sourceComplete() && result.targetComplete()) {
             setRepo.recordVerifyResult(syncSetId, java.time.OffsetDateTime.now(),
                     result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
+            // Every item, for the Drift tab: only the latest complete verify is kept.
+            driftStore.replace(syncSetId, result.items());
             if (afterReconcile) {
                 reconcileHistory.recordDrift(syncSetId,
                         result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());

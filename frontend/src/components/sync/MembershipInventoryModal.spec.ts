@@ -34,7 +34,21 @@ const notInSetPage = vi.hoisted(() => (over: Record<string, unknown> = {}) => ({
   ...over,
 }))
 
+const driftPage = vi.hoisted(() => (over: Record<string, unknown> = {}) => ({
+  verifiedAt: '2026-11-05T08:00:00Z', incompleteAt: null, detailsRecorded: true,
+  counts: { MISSING: 1, ORPHAN: 0, MISMATCH: 1 }, matched: 2, page: 0, size: 25,
+  entries: [
+    { seq: 0, category: 'MISSING', targetDn: 'uid=gone,ou=Users,dc=dst', sourceDn: 'uid=gone,ou=people,dc=src',
+      identity: 'gone', attributes: [] },
+    { seq: 1, category: 'MISMATCH', targetDn: 'uid=drift,ou=Users,dc=dst', sourceDn: 'uid=drift,ou=people,dc=src',
+      identity: 'drift', attributes: [{ attribute: 'title', expected: ['Lead'], actual: ['Engineer'], hidden: false, truncated: false }] },
+  ],
+  ...over,
+}))
+
 vi.mock('@/api/sync', () => ({
+  getDrift: vi.fn(() => Promise.resolve({ data: driftPage() })),
+  downloadDriftCsv: vi.fn(() => Promise.resolve({ data: new Blob() })),
   listMemberships: vi.fn(() => Promise.resolve(page([membership]))),
   startReconcile: vi.fn(() => Promise.resolve({ data: { started: true } })),
   recheckTarget: vi.fn(() => Promise.resolve({ data: { entries: 5, reconcileQueued: true } })),
@@ -78,6 +92,12 @@ const byText = (t: string) =>
   Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.includes(t))
 const byExactText = (t: string) =>
   Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === t)
+const tabButton = (label: string) =>
+  Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((b) => b.textContent?.includes(label))!
+async function openDriftTab() {
+  tabButton('Drift').click()
+  await flushPromises()
+}
 
 describe('MembershipInventoryModal', () => {
   beforeEach(() => {
@@ -99,11 +119,13 @@ describe('MembershipInventoryModal', () => {
       return w
     }
     let w = await mountWith()
+    await openDriftTab()
     expect(document.querySelector('.diff-link')).toBeNull()
     w.unmount()
 
     auth.principal = { superadminPermissions: ['superadmin.manage_directory_diff'] } as never
     w = await mountWith()
+    await openDriftTab()
     const link = document.querySelector('.diff-link')!
     expect(link.textContent).toContain('Compare in Directory Diff')
     expect(JSON.parse(link.getAttribute('data-to')!)).toEqual(
@@ -423,10 +445,11 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
-  it('explains how Verify contents, Reconcile now and Re-check target differ', async () => {
+  it('explains how Verify now, Reconcile now and Re-check target differ', async () => {
     const wrapper = open()
     await flushPromises()
-    expect(byText('Verify contents')!.title).toMatch(/never writes/)
+    await openDriftTab()
+    expect(byText('Verify now')!.title).toMatch(/never writes/)
     expect(byText('Reconcile now')!.title).toMatch(/Skips entries whose source hasn't changed/)
     expect(byText('Re-check target')!.title).toMatch(/re-reads every target entry/)
     wrapper.unmount()
@@ -452,20 +475,44 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
-  it('Verify contents calls the API and renders the mismatch summary', async () => {
+  it('Verify now runs the check, then reloads the Drift tab and tells the page the counts changed', async () => {
     const wrapper = open()
     await flushPromises()
-    byText('Verify contents')!.click()
+    await openDriftTab()
+    expect(syncApi.getDrift).toHaveBeenCalledTimes(1)
+    byText('Verify now')!.click()
     await flushPromises()
     expect(syncApi.verifyContents).toHaveBeenCalledWith('set-1')
+    expect(syncApi.getDrift).toHaveBeenCalledTimes(2)
+    expect(wrapper.emitted('changed')).toBeTruthy()
     const txt = document.body.textContent ?? ''
-    expect(txt).toContain('Content verification')
-    expect(txt).toContain('uid=gone,ou=Users,dc=dst') // sample missing DN
-    expect(txt).toContain('uid=drift,ou=Users,dc=dst') // sample drift DN
+    expect(txt).toContain('Just now: source 5 members')
+    expect(txt).toContain('uid=gone,ou=Users,dc=dst')
+    expect(txt).toContain('uid=drift,ou=Users,dc=dst')
     wrapper.unmount()
   })
 
-  it('Verify contents lists held references, telling dangling ones from unsynced ones', async () => {
+  it('opens on the Reconciliation tab, or on Drift when asked, badged with the last check’s drift', async () => {
+    const drifting = { ...set, verify: { at: '2026-11-05T08:00:00Z', missing: 2, orphan: 1, mismatch: 4,
+      incompleteAt: null, held: null, dangling: null } }
+    let w = mount(MembershipInventoryModal, { attachTo: document.body,
+      props: { show: true, set: drifting, sourceName: 'S', targetName: 'T' } })
+    await flushPromises()
+    expect(tabButton('Reconciliation').getAttribute('aria-selected')).toBe('true')
+    expect(tabButton('Drift').textContent).toContain('7')
+    expect(syncApi.getDrift).not.toHaveBeenCalled() // only loaded when the tab is opened
+    w.unmount()
+    document.body.innerHTML = ''
+
+    w = mount(MembershipInventoryModal, { attachTo: document.body,
+      props: { show: true, set: drifting, sourceName: 'S', targetName: 'T', initialTab: 'drift' } })
+    await flushPromises()
+    expect(tabButton('Drift').getAttribute('aria-selected')).toBe('true')
+    expect(syncApi.getDrift).toHaveBeenCalledWith('set-1', expect.objectContaining({ page: 0, size: 25 }))
+    w.unmount()
+  })
+
+  it('Verify now lists held references, telling dangling ones from unsynced ones', async () => {
     vi.mocked(syncApi.verifyContents).mockResolvedValueOnce({ data: {
       sourceMembers: 2, targetEntries: 2, inSync: 2, missingOnTarget: 0, orphanOnTarget: 0, contentMismatches: 0,
       sampleMissing: [], sampleOrphans: [], sampleMismatches: [], sourceComplete: true, targetComplete: true,
@@ -477,7 +524,8 @@ describe('MembershipInventoryModal', () => {
     } } as never)
     const wrapper = open()
     await flushPromises()
-    byText('Verify contents')!.click()
+    await openDriftTab()
+    byText('Verify now')!.click()
     await flushPromises()
     const held = document.querySelector('[data-testid="held-references"]')!.textContent!.replace(/\s+/g, ' ')
     expect(held).toContain('Held references: 2 entries have a reference the sync holds back')
@@ -672,7 +720,7 @@ describe('MembershipInventoryModal', () => {
     vi.useRealTimers()
   })
 
-  it('Verify contents shows which phase the check is in and how far it has got', async () => {
+  it('Verify now shows which phase the check is in and how far it has got', async () => {
     vi.useFakeTimers()
     const now = new Date().toISOString()
     const pending = deferred<unknown>()
@@ -685,8 +733,10 @@ describe('MembershipInventoryModal', () => {
     } } as never)
     const wrapper = open()
     await flushPromises()
+    tabButton('Drift').click()
+    await vi.advanceTimersByTimeAsync(0)
 
-    byText('Verify contents')!.click()
+    byText('Verify now')!.click()
     await vi.advanceTimersByTimeAsync(1500)
 
     const txt = document.body.textContent ?? ''

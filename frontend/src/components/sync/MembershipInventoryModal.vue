@@ -12,16 +12,6 @@
       <div class="flex items-center justify-between gap-2 flex-wrap -mt-1">
         <p class="text-xs text-gray-500 font-mono">{{ sourceName }} → {{ targetName }}</p>
         <div class="flex items-center gap-2">
-          <RouterLink v-if="set && canDiff" :to="{ path: '/superadmin/directory-diff', query: { verifySet: set.id } }"
-                      class="btn-secondary btn-compact"
-                      title="Compare the set's source and target entry by entry in Directory Diff, independently of the sync's own comparison: every attribute's values side by side, with a live re-read per entry">
-            Compare in Directory Diff
-          </RouterLink>
-          <button class="btn-secondary btn-compact" :disabled="verifying"
-                  title="Check only, never writes: reads both directories and compares them directly, without trusting the sync's records. Lists entries missing on the target, orphaned on the target, and with content drift"
-                  @click="verify">
-            {{ verifying ? 'Verifying…' : 'Verify contents' }}
-          </button>
           <button class="btn-secondary btn-compact" :disabled="reconciling || reconcileRunning"
                   title="Sync the whole set now instead of waiting for the schedule. Skips entries whose source hasn't changed since the sync last wrote them, so it doesn't repair entries changed or deleted directly on the target"
                   @click="reconcile">
@@ -38,84 +28,35 @@
       <!-- Live progress of Reconcile now / Re-check target / Verify contents (and a reconcile already running). -->
       <SyncActivityProgress v-if="progress" v-bind="progress" />
 
+      <!--
+        Two questions, two tabs. Reconciliation: what the sync did and what it
+        manages (its runs, the membership index, what's not in the set). Drift:
+        whether the target actually matches the source right now (a live
+        comparison of both directories, independent of the index).
+      -->
+      <div class="flex gap-1 border-b border-gray-200" role="tablist" aria-label="Sync set views">
+        <button v-for="t in tabs" :id="`sync-tab-${t.id}`" :key="t.id" type="button" role="tab"
+                :aria-selected="tab === t.id" :aria-controls="`sync-panel-${t.id}`"
+                :class="['px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors inline-flex items-center gap-1.5',
+                         tab === t.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700']"
+                @click="tab = t.id">
+          {{ t.label }}
+          <span v-if="t.id === 'drift' && driftTotal" class="badge-amber tabular-nums"
+                :title="`${driftTotal} drifting at the last content check`">{{ driftTotal }}</span>
+        </button>
+      </div>
+
+      <div v-if="tab === 'drift' && set" id="sync-panel-drift" role="tabpanel" aria-labelledby="sync-tab-drift">
+        <SyncDriftPanel :set="set" :live="verifyResult" :verifying="verifying" :refresh-key="driftKey"
+                        :can-diff="canDiff" :source-directory-id="sourceDirectoryId ?? null"
+                        :target-directory-id="targetDirectoryId ?? null" @verify="verify" />
+      </div>
+
+      <div v-show="tab === 'reconciliation'" id="sync-panel-reconciliation" role="tabpanel"
+           aria-labelledby="sync-tab-reconciliation" class="space-y-3">
       <!-- What the set's last reconcile runs did (counts, warnings, recent history). -->
       <ReconcileRunHistory :set-id="set?.id ?? null" :refresh-key="historyKey"
                            @show-not-in-set="setStateFilter(NOT_IN_SET)" />
-
-      <!--
-        Independent verification: re-reads both directories and compares them
-        directly (no membership index), surfacing drift the index thinks is
-        converged. Belts-and-suspenders beyond the inventory above.
-      -->
-      <div v-if="verifyResult" class="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm space-y-1.5">
-        <div class="flex items-center justify-between">
-          <span class="text-base font-semibold text-gray-800">Content verification</span>
-          <button type="button" class="text-gray-400 hover:text-gray-600" aria-label="Dismiss verification"
-                  @click="verifyResult = null">✕</button>
-        </div>
-        <p class="text-gray-600">
-          Source members: <span class="font-medium tabular-nums">{{ verifyResult.sourceMembers }}</span> ·
-          Target entries: <span class="font-medium tabular-nums">{{ verifyResult.targetEntries }}</span> ·
-          In sync: <span class="font-medium tabular-nums text-emerald-700">{{ verifyResult.inSync }}</span>
-        </p>
-        <p :class="hasMismatches ? 'text-rose-700' : 'text-emerald-700'">
-          <template v-if="hasMismatches">
-            Missing on target: <span class="font-medium tabular-nums">{{ verifyResult.missingOnTarget }}</span> ·
-            Orphaned on target: <span class="font-medium tabular-nums">{{ verifyResult.orphanOnTarget }}</span> ·
-            Content drift: <span class="font-medium tabular-nums">{{ verifyResult.contentMismatches }}</span>
-          </template>
-          <template v-else>✓ Source and target agree — no mismatches found.</template>
-        </p>
-        <p v-if="hasMismatches && verifyResult.orphanOnTarget" class="text-xs text-gray-500" data-testid="orphan-scope">
-          {{ verifyResult.orphansAnchored
-            ? 'Orphans are entries carrying the set’s source anchor that no source entry accounts for; entries without it, or that another set places there, aren’t counted.'
-            : 'This set writes no source anchor, so every entry under the target base that matches its filter counts, including ones another set or nothing manages.' }}
-        </p>
-        <p v-if="verifyResult.note" class="text-amber-700">{{ verifyResult.note }}</p>
-        <p v-if="!verifyResult.sourceComplete || !verifyResult.targetComplete" class="text-amber-600">
-          Enumeration was incomplete (a directory read failed); counts may be partial.
-        </p>
-        <div v-if="verifyResult.heldReferences?.entries" data-testid="held-references" class="text-gray-600">
-          <p>
-            Held references: <span class="font-medium tabular-nums">{{ verifyResult.heldReferences.entries }}</span>
-            {{ verifyResult.heldReferences.entries === 1 ? 'entry has' : 'entries have' }} a reference the sync holds back
-            (not counted as drift).
-            <template v-if="verifyResult.heldReferences.dangling">
-              <span class="text-amber-700">{{ verifyResult.heldReferences.dangling }} of them
-                {{ verifyResult.heldReferences.dangling === 1 ? 'names' : 'name' }} an entry that doesn’t exist on the
-                source</span>: fix those on the source; a reconcile can’t.
-            </template>
-            The rest name entries not synced yet, and fill in once those are.
-            <template v-if="verifyResult.heldReferences.unchecked"> Not every referenced entry was looked up.</template>
-          </p>
-          <ul class="font-mono text-xs text-gray-500 list-disc pl-4">
-            <li v-for="h in verifyResult.heldReferences.samples" :key="h.entryDn + h.attribute + h.reference">
-              {{ h.entryDn }}: {{ h.attribute }} → {{ h.reference }}
-              <span class="font-sans" :class="h.dangling ? 'text-amber-700' : 'text-gray-500'">
-                ({{ h.dangling ? 'doesn’t exist' : 'not synced yet' }})
-              </span>
-            </li>
-          </ul>
-        </div>
-        <div v-for="g in sampleGroups" :key="g.label">
-          <template v-if="g.dns.length">
-            <p class="text-gray-500">{{ g.label }}:</p>
-            <ul class="font-mono text-xs text-gray-500 list-disc pl-4">
-              <li v-for="dn in g.dns" :key="dn">{{ dn }}</li>
-            </ul>
-          </template>
-        </div>
-      </div>
-
-      <!-- Held references at the last complete verify (stored with its drift
-           counts), so they show without running Verify contents. -->
-      <p v-if="!verifyResult && set?.verify?.held" class="text-xs text-gray-600" data-testid="held-snapshot">
-        At the last content verify, {{ set.verify.held }}
-        {{ set.verify.held === 1 ? 'entry had' : 'entries had' }} a held reference (a value naming an entry the sync
-        hasn’t placed)<template v-if="set.verify.dangling">; <span class="text-amber-700">{{ set.verify.dangling }}
-          {{ set.verify.dangling === 1 ? 'names' : 'name' }} an entry that doesn’t exist on the source</span></template>.
-        Verify contents lists them.
-      </p>
 
       <!-- State filter chips with counts -->
       <div class="flex flex-wrap items-center gap-1.5">
@@ -245,6 +186,7 @@
           <button class="btn-neutral btn-compact" :disabled="page >= totalPages - 1" @click="page++">Next</button>
         </div>
       </div>
+      </div>
     </div>
   </AppModal>
 </template>
@@ -254,6 +196,7 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import AppModal from '@/components/AppModal.vue'
 import DataTable from '@/components/DataTable.vue'
 import ReconcileRunHistory from '@/components/sync/ReconcileRunHistory.vue'
+import SyncDriftPanel from '@/components/sync/SyncDriftPanel.vue'
 import SyncActivityProgress from '@/components/sync/SyncActivityProgress.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
 import { useNotificationStore } from '@/stores/notifications'
@@ -274,6 +217,11 @@ const props = defineProps<{
   sourceName: string
   targetName: string
   initialState?: '' | MembershipState
+  /** The tab to open on (the drifting-sets list opens on Drift). */
+  initialTab?: 'reconciliation' | 'drift'
+  /** For links to entries in the Directory Browser from the Drift tab. */
+  sourceDirectoryId?: string | null
+  targetDirectoryId?: string | null
 }>()
 const emit = defineEmits<{ changed: [] }>()
 
@@ -319,20 +267,22 @@ let batchSeq = 0
 let unmounted = false
 const verifying = ref(false)
 const verifyResult = ref<SyncVerifyResult | null>(null)
+
+type Tab = 'reconciliation' | 'drift'
+const tab = ref<Tab>('reconciliation')
+const tabs: Array<{ id: Tab; label: string }> = [
+  { id: 'reconciliation', label: 'Reconciliation' },
+  { id: 'drift', label: 'Drift' },
+]
+// Bumped when a content check finishes, so the Drift tab reloads its stored items.
+const driftKey = ref(0)
+/** Drift at the last complete content check, for the tab's badge. */
+const driftTotal = computed<number>(() => {
+  const v = props.set?.verify
+  return v?.at ? (v.missing ?? 0) + (v.orphan ?? 0) + (v.mismatch ?? 0) : 0
+})
 // Bumped to make ReconcileRunHistory reload (on open, and after a reconcile).
 const historyKey = ref(0)
-
-const hasMismatches = computed(() =>
-  !!verifyResult.value
-  && (verifyResult.value.missingOnTarget
-    + verifyResult.value.orphanOnTarget
-    + verifyResult.value.contentMismatches) > 0)
-
-const sampleGroups = computed(() => [
-  { label: 'Missing on target', dns: verifyResult.value?.sampleMissing ?? [] },
-  { label: 'Orphaned on target', dns: verifyResult.value?.sampleOrphans ?? [] },
-  { label: 'Content drift', dns: verifyResult.value?.sampleMismatches ?? [] },
-])
 
 const cols = [
   { key: 'identity', label: 'Identity' },
@@ -544,6 +494,9 @@ async function verify() {
     } else {
       notif.success('Verification passed — source and target agree')
     }
+    // The set's counts and the Drift tab's stored items changed.
+    driftKey.value++
+    emit('changed')
   } catch (e) {
     notif.error(errMsg(e))
   } finally {
@@ -702,6 +655,7 @@ const progress = computed(() => {
 watch([show, () => props.set?.id], ([open]) => {
   if (open && props.set) {
     stateFilter.value = props.initialState ?? ''
+    tab.value = props.initialTab ?? 'reconciliation'
     search.value = ''
     page.value = 0
     verifyResult.value = null

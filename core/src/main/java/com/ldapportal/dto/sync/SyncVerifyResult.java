@@ -35,6 +35,10 @@ import java.util.List;
  * @param heldReferences    members with a reference value the sync holds back (it
  *                          names an entry the sync hasn't placed), or null when not
  *                          counted; the sync's checks don't count these as drift
+ * @param items             every drift item (not only the samples), with each
+ *                          content drift's differing attributes. Stored for the
+ *                          Drift tab ({@code SyncDriftStore}) rather than sent
+ *                          with this result, which can be large.
  */
 public record SyncVerifyResult(
         int sourceMembers,
@@ -50,7 +54,23 @@ public record SyncVerifyResult(
         boolean targetComplete,
         String note,
         boolean orphansAnchored,
-        HeldReferences heldReferences) {
+        HeldReferences heldReferences,
+        @com.fasterxml.jackson.annotation.JsonIgnore List<SyncDriftItem> items) {
+
+    public SyncVerifyResult {
+        items = items == null ? List.of() : items;
+    }
+
+    /** As the canonical constructor, without drift items. */
+    public SyncVerifyResult(int sourceMembers, int targetEntries, int inSync, int missingOnTarget,
+                            int orphanOnTarget, int contentMismatches, List<String> sampleMissing,
+                            List<String> sampleOrphans, List<String> sampleMismatches,
+                            boolean sourceComplete, boolean targetComplete, String note, boolean orphansAnchored,
+                            HeldReferences heldReferences) {
+        this(sourceMembers, targetEntries, inSync, missingOnTarget, orphanOnTarget, contentMismatches,
+                sampleMissing, sampleOrphans, sampleMismatches, sourceComplete, targetComplete, note,
+                orphansAnchored, heldReferences, List.of());
+    }
 
     /**
      * Members whose reference values (a {@code secDN}, a group {@code member}) the
@@ -81,7 +101,7 @@ public record SyncVerifyResult(
     public SyncVerifyResult withHeldReferences(HeldReferences held) {
         return new SyncVerifyResult(sourceMembers, targetEntries, inSync, missingOnTarget, orphanOnTarget,
                 contentMismatches, sampleMissing, sampleOrphans, sampleMismatches, sourceComplete, targetComplete,
-                note, orphansAnchored, held);
+                note, orphansAnchored, held, items);
     }
 
     /** A result whose orphans weren't limited to anchored entries. */

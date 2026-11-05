@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.dto.sync.SyncDriftItem;
 import com.ldapportal.dto.sync.SyncVerifyResult;
+import com.ldapportal.entity.enums.SyncDriftCategory;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.SyncLink;
@@ -78,6 +80,12 @@ public class SyncContentVerifier {
     /** Cap on how many sample DNs each mismatch category returns. */
     static final int SAMPLE_LIMIT = 25;
 
+    /** Values kept per side of one differing attribute in a drift item (a big group's members). */
+    static final int VALUE_LIMIT = 50;
+
+    /** Attributes whose values a drift item never shows (password material). */
+    static final Set<String> SECRET_ATTRIBUTES = com.ldapportal.ldap.diff.DirectoryDiffEngine.SECRET_ATTRIBUTES;
+
     private final SyncSetRepository syncSetRepo;
     private final SyncLinkRepository syncLinkRepo;
     private final DirectoryConnectionRepository directoryRepo;
@@ -119,6 +127,7 @@ public class SyncContentVerifier {
         // so the desired image matches what was actually applied (see class doc).
         ReferenceResolver resolver = referenceResolvers.snapshot(ctx.link);
         Map<String, MembershipDecision> members = new LinkedHashMap<>();
+        Map<String, String> sourceDns = new HashMap<>();
         boolean sourceComplete = true;
         try {
             int read = 0;
@@ -126,6 +135,7 @@ public class SyncContentVerifier {
                 var decision = membershipFunction.evaluate(ctx.set, ctx.strategy, e, resolver);
                 if (decision.member() && decision.targetDn() != null) {
                     members.put(normDn(decision.targetDn()), decision);
+                    sourceDns.put(normDn(decision.targetDn()), e.getDN());
                 }
                 tracking.processed(++read);
             }
@@ -158,7 +168,8 @@ public class SyncContentVerifier {
                 || exists.computeIfAbsent(normDn(dn), k -> readExists(ctx, dn));
         Map<String, Expected> expected = new LinkedHashMap<>();
         members.forEach((key, d) -> expected.put(key, new Expected(d.targetDn(), d.desiredAttrs(),
-                d.heldAttributeNames(), lookup.candidates(d.unresolvedReferences(), targetExists))));
+                d.heldAttributeNames(), lookup.candidates(d.unresolvedReferences(), targetExists),
+                sourceDns.get(key), d.identity())));
 
         Set<String> excluded = SyncExcludedAttributes.effectiveFor(ctx.set);
         tracking.phase(SyncVerifyPhase.COMPARING);
@@ -331,11 +342,16 @@ public class SyncContentVerifier {
         int compared = 0;
         List<String> missing = new ArrayList<>();
         List<String> mismatches = new ArrayList<>();
+        List<SyncDriftItem> missingItems = new ArrayList<>();
+        List<SyncDriftItem> mismatchItems = new ArrayList<>();
         for (Map.Entry<String, Expected> en : expected.entrySet()) {
-            progress.at(compared++, en.getValue().displayDn());
+            Expected exp = en.getValue();
+            progress.at(compared++, exp.displayDn());
             Entry target = actual.get(en.getKey());
             if (target == null) {
-                missing.add(en.getValue().displayDn());
+                missing.add(exp.displayDn());
+                missingItems.add(new SyncDriftItem(SyncDriftCategory.MISSING, exp.displayDn(), exp.sourceDn(),
+                        exp.identity(), List.of()));
                 continue;
             }
             // A held reference (its referent isn't synced yet) is kept on the
@@ -349,25 +365,87 @@ public class SyncContentVerifier {
             if (mods.isEmpty()) {
                 inSync++;
             } else {
-                mismatches.add(en.getValue().displayDn());
+                mismatches.add(exp.displayDn());
+                mismatchItems.add(new SyncDriftItem(SyncDriftCategory.MISMATCH, target.getDN(), exp.sourceDn(),
+                        exp.identity(), attributeDiffs(mods, desired, target)));
             }
         }
 
         // With an anchor, only entries carrying it are the set's to account for:
         // an unanchored entry under the target base is someone else's.
         List<String> orphans = new ArrayList<>();
+        List<SyncDriftItem> orphanItems = new ArrayList<>();
         for (Map.Entry<String, Entry> en : actual.entrySet()) {
             if (!expected.containsKey(en.getKey())
                     && (anchorAttr == null || isOwnOrphan(en.getValue(), anchorAttr, managedElsewhere))) {
                 orphans.add(en.getValue().getDN());
+                orphanItems.add(new SyncDriftItem(SyncDriftCategory.ORPHAN, en.getValue().getDN(), null, null,
+                        List.of()));
             }
         }
 
+        List<SyncDriftItem> items = new ArrayList<>(missingItems.size() + orphanItems.size() + mismatchItems.size());
+        items.addAll(missingItems);
+        items.addAll(orphanItems);
+        items.addAll(mismatchItems);
         return new SyncVerifyResult(
                 expected.size(), actual.size(), inSync,
                 missing.size(), orphans.size(), mismatches.size(),
                 sample(missing), sample(orphans), sample(mismatches),
-                sourceComplete, targetComplete, null, anchorAttr != null);
+                sourceComplete, targetComplete, null, anchorAttr != null, null, items);
+    }
+
+    /**
+     * One {@link SyncDriftItem.AttributeDiff} per attribute the engine would
+     * modify: what the projected source wants against what the target has.
+     * Password material shows no values; each side keeps at most
+     * {@link #VALUE_LIMIT} values, and a binary value shows as its size.
+     */
+    static List<SyncDriftItem.AttributeDiff> attributeDiffs(List<Modification> mods, List<Attribute> desired,
+                                                            Entry target) {
+        Map<String, SyncDriftItem.AttributeDiff> out = new LinkedHashMap<>();
+        for (Modification m : mods) {
+            String name = m.getAttributeName();
+            String key = name.toLowerCase(Locale.ROOT);
+            if (out.containsKey(key)) {
+                continue;
+            }
+            int semi = key.indexOf(';');
+            boolean hidden = SECRET_ATTRIBUTES.contains(semi < 0 ? key : key.substring(0, semi));
+            List<String> want = values(desired.stream().filter(a -> a.getName().equalsIgnoreCase(name)).findFirst()
+                    .orElse(null));
+            List<String> have = values(target.getAttribute(name));
+            boolean truncated = want.size() > VALUE_LIMIT || have.size() > VALUE_LIMIT;
+            out.put(key, new SyncDriftItem.AttributeDiff(name,
+                    hidden ? List.of() : limit(want), hidden ? List.of() : limit(have), hidden, truncated));
+        }
+        return List.copyOf(out.values());
+    }
+
+    private static List<String> values(Attribute a) {
+        if (a == null || !a.hasValue()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>(a.size());
+        for (byte[] raw : a.getValueByteArrays()) {
+            out.add(printable(raw) ? new String(raw, java.nio.charset.StandardCharsets.UTF_8)
+                    : "(binary, " + raw.length + " bytes)");
+        }
+        return out;
+    }
+
+    private static boolean printable(byte[] raw) {
+        java.nio.charset.CharsetDecoder dec = java.nio.charset.StandardCharsets.UTF_8.newDecoder();
+        try {
+            String s = dec.decode(java.nio.ByteBuffer.wrap(raw)).toString();
+            return s.chars().noneMatch(c -> c < 0x20 && c != '\t' && c != '\n' && c != '\r');
+        } catch (java.nio.charset.CharacterCodingException ex) {
+            return false;
+        }
+    }
+
+    private static List<String> limit(List<String> v) {
+        return v.size() <= VALUE_LIMIT ? v : List.copyOf(v.subList(0, VALUE_LIMIT));
     }
 
     /** Anchored, and not placed at its DN by another set under any of its anchor values. */
@@ -502,7 +580,13 @@ public class SyncContentVerifier {
      * has it (see {@link UntranslatedReferenceTargets}).
      */
     record Expected(String displayDn, List<Attribute> desired, Set<String> held,
-                    Map<String, Map<String, String>> keepCandidates) {
+                    Map<String, Map<String, String>> keepCandidates, String sourceDn, String identity) {
+
+        /** Without the source member's DN and identity (they only label drift items). */
+        Expected(String displayDn, List<Attribute> desired, Set<String> held,
+                 Map<String, Map<String, String>> keepCandidates) {
+            this(displayDn, desired, held, keepCandidates, null, null);
+        }
     }
 
     private static Set<String> union(Set<String> a, Set<String> b) {
