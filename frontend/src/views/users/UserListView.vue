@@ -73,8 +73,14 @@
       v-model:selectedKeys="selectedDns"
       :loading="loading"
       empty-text="No users found"
+      @visible-columns-change="visibleColumnKeys = $event"
     >
       <template #toolbar>
+        <label class="flex items-center gap-1.5 text-xs text-gray-600"
+               title="Also fetch operational attributes (createTimestamp, entryUUID, …). They appear in the Columns menu.">
+          <input v-model="includeOperational" type="checkbox" class="rounded border-gray-300" />
+          Operational attributes
+        </label>
         <button
           v-if="can.exportCsv"
           @click="doExportUsers"
@@ -511,6 +517,10 @@ import { IVIA_ABBR, isIviaAttr, iviaAttrLabel } from '@/constants/productNames'
 import * as usersApi from '@/api/users'
 import * as groupsApi from '@/api/groups'
 import { exportCsv as exportUsersCsv } from '@/api/csvTemplates'
+import { listAttributeTypes } from '@/api/schema'
+import {
+  buildUserAttributeColumns, exportAttributeNames, useOperationalAttributesToggle,
+} from '@/composables/useUserAttributeColumns'
 import { listProfiles, getProfile } from '@/api/profiles'
 import { listEnabled as listEnabledPlaybooks, previewPlaybook, executePlaybook, rollbackExecution } from '@/api/playbooks'
 import { usePermissions } from '@/composables/usePermissions'
@@ -800,28 +810,10 @@ const pwStrengthTextColor = computed(() => {
   return 'text-green-600'
 })
 
-// Curated default-visible attributes for user lists. Anything in this
-// list shows by default if the search returned it; everything else
-// the search surfaces is registered as a column too but starts
-// hidden — users can opt in via the column picker. Order here is
-// also the column order shown in the table.
-const DEFAULT_USER_COLUMNS = [
-  'cn', 'sn', 'givenName', 'displayName', 'mail', 'uid', 'title',
-]
-
-// Lower-cased lookup. LDAP attributes are case-insensitive at the
-// protocol level but servers may return mixed case (givenName vs
-// givenname). The backend lower-cases keys, so we compare against
-// the lower-case form.
-const DEFAULT_USER_COLUMNS_LC = new Set(DEFAULT_USER_COLUMNS.map(s => s.toLowerCase()))
-
 /**
- * Union of attribute keys appearing on any returned user row. The
- * page used to flatten to four hard-coded fields (cn / mail /
- * enabled / dn) and discard the rest, which left the column picker
- * with nothing to offer. Now every attribute the search surfaces
- * becomes a column, ordered: dn → curated defaults → other
- * discovered → actions.
+ * Union of attribute keys appearing on any returned user row. Every attribute
+ * the search surfaces becomes a column (see buildUserAttributeColumns for the
+ * order, defaults and what's left out — the same rules the user reports use).
  */
 const discoveredAttrs = computed<string[]>(() => {
   const seen = new Set<string>()
@@ -833,53 +825,52 @@ const discoveredAttrs = computed<string[]>(() => {
   return [...seen]
 })
 
-// ResultsTable doesn't expose a per-row `actions` slot the way the
-// thinner DataTable did; the row-action menu renders via a synthetic
-// `actions` column. alwaysVisible keeps it from being hidden by the
-// column picker; sortable=false because there's nothing to sort on.
-const cols = computed(() => {
-  // Match the curated order; only emit a column if the search
-  // actually returned it (so picker doesn't list attributes the user
-  // can never populate).
-  const discoveredSet = new Set(discoveredAttrs.value.map(s => s.toLowerCase()))
-  const defaults = DEFAULT_USER_COLUMNS.filter(k => discoveredSet.has(k.toLowerCase()))
-  // memberOf surfaces through the dedicated, pretty 'Groups' column
-  // below, so drop the raw (joined-DN) discovered column to avoid a
-  // duplicate.
-  const extras = discoveredAttrs.value.filter(k =>
-    !DEFAULT_USER_COLUMNS_LC.has(k.toLowerCase()) && k.toLowerCase() !== 'memberof')
-  // Every column carries an explicit defaultWidth. ResultsTable is
-  // table-layout:fixed and renders columns at exactly their set widths (a
-  // single trailing filler column soaks up any slack), so a column without a
-  // width would fall back to width:auto and compete with that filler for the
-  // leftover space — sizing unpredictably. Giving each column a real width
-  // means every column (including one the user just enabled in the picker)
-  // renders at a known size; the table scrolls horizontally when the columns
-  // outgrow the container and parks any spare width to the right otherwise.
-  return [
-    { key: 'dn', label: 'DN', alwaysVisible: true, lockPosition: true, defaultWidth: 360 },
-    // Row cells are keyed by the backend's lower-cased attribute names
-    // (see load(): `row[attr]` where attr comes straight from the
-    // server, which lower-cases keys). DEFAULT_USER_COLUMNS keeps the
-    // pretty mixed case (givenName / displayName) for the header label,
-    // so the column key must be lower-cased to match the row data —
-    // otherwise `row['givenName']` is undefined and the cell renders
-    // blank even though the attribute is populated.
-    ...defaults.map(k => ({ key: k.toLowerCase(), label: k, defaultWidth: 180 })),
-    // Group membership as name pills. Default-hidden (opt-in via the
-    // column picker); not sortable (a list has no natural order).
-    { key: '__groups', label: 'Groups', sortable: false, defaultHidden: true, defaultWidth: 280 },
+/** Fetch operational attributes too (`+`); remembered per browser. */
+const includeOperational = useOperationalAttributesToggle('users-list')
+
+/**
+ * Lower-cased attribute name → schema spelling, so headings read `givenName`
+ * rather than the backend's lower-cased `givenname`. Best effort: without
+ * schema access the headings fall back to the known defaults' casing.
+ */
+const schemaNames = ref<Map<string, string>>(new Map())
+async function loadSchemaNames(): Promise<void> {
+  try {
+    const { data } = await listAttributeTypes(dirId)
+    const map = new Map<string, string>()
+    for (const a of (Array.isArray(data) ? data : []) as Array<{ name?: string }>) {
+      if (a.name) map.set(a.name.toLowerCase(), a.name)
+    }
+    schemaNames.value = map
+  } catch {
+    schemaNames.value = new Map()
+  }
+}
+
+/** Visible column keys in display order, reported by ResultsTable; the CSV export follows them. */
+const visibleColumnKeys = ref<string[]>([])
+
+// Every column carries an explicit defaultWidth. ResultsTable is
+// table-layout:fixed and renders columns at exactly their set widths (a
+// single trailing filler column soaks up any slack), so a column without a
+// width would fall back to width:auto and compete with that filler for the
+// leftover space — sizing unpredictably. Row cells are keyed by the backend's
+// lower-cased attribute names, which the column keys keep; only the heading
+// is re-cased. The row-action menu renders via a synthetic `actions` column
+// (alwaysVisible, pinned to the right edge so it stays reachable).
+const cols = computed(() => [
+  ...buildUserAttributeColumns(discoveredAttrs.value, {
+    groupsKey: '__groups',
+    groupsDefaultHidden: true,
+    schemaNames: schemaNames.value,
     // IVIA enrichment columns (keyed `isva.*` by the backend) keep their
     // stable internal key but display the marketing `ivia.` prefix.
-    ...extras.map(k => ({ key: k, label: iviaAttrLabel(k), defaultHidden: true, defaultWidth: 180 })),
-    // The actions cell renders just two elements side-by-side now: the
-    // primary Edit button and the kebab dropdown trigger (Disable and the
-    // rest live inside the kebab — see inlineThreshold below). 120px fits
-    // both comfortably. `pinned` keeps the column stuck to the right edge so
-    // the row actions stay reachable no matter how far the table is scrolled.
-    { key: 'actions', label: '', alwaysVisible: true, sortable: false, defaultWidth: 120, pinned: true },
-  ]
-})
+    labelOverride: k => (isIviaAttr(k) ? iviaAttrLabel(k) : undefined),
+    columnDefaults: { defaultWidth: 180 },
+    dnColumn: { defaultWidth: 360 },
+  }).map(c => (c.key === '__groups' ? { ...c, defaultWidth: 280 } : c)),
+  { key: 'actions', label: '', alwaysVisible: true, sortable: false, defaultWidth: 120, pinned: true },
+])
 
 const allProfiles       = ref<ProfileLite[]>([])
 const selectedProfileId = ref('')
@@ -1012,7 +1003,7 @@ async function load(all: boolean = searchMeta.value?.all === true) {
       // (OpenLDAP memberof overlay) or `isMemberOf` (OUD/OpenDJ) — not just
       // where it's a plain attribute (AD). Directories that expose neither
       // yield an empty Groups cell.
-      attributes: '*,memberOf,isMemberOf',
+      attributes: includeOperational.value ? '*,+,memberOf,isMemberOf' : '*,memberOf,isMemberOf',
     }
     const { data } = await usersApi.searchUsersPage(dirId, params)
     const page = (data ?? {}) as UserSearchPage
@@ -1075,9 +1066,18 @@ async function doExportUsers() {
   if (exporting.value) return
   exporting.value = true
   try {
+    // The file carries the columns on screen, in their order: dn (always
+    // first in the export), the visible attributes by their real names, and
+    // the groups column when it's shown. IVIA enrichment columns aren't
+    // directory attributes, so the raw export can't carry them.
+    const attrs = exportAttributeNames(visibleColumnKeys.value, cols.value,
+      ['dn', '__groups', 'actions', ...visibleColumnKeys.value.filter(isIviaAttr)])
     const params = {
       filter: filterText.value || undefined,
       baseDn: profileData.value?.targetUserDn || undefined,
+      // An empty list would mean "every attribute"; ask for dn alone instead.
+      attributes: attrs.length ? attrs.join(',') : 'dn',
+      includeGroups: visibleColumnKeys.value.includes('__groups') || undefined,
     }
     const { data } = await exportUsersCsv(dirId, params)
     downloadBlob(data, 'users.csv')
@@ -1668,7 +1668,10 @@ useUnsavedChangesGuard('Users', () =>
   (showModal.value && !viewOnly.value) || showBulkUpdate.value || showBulkMembership.value
   || showMove.value || showResetPassword.value || showPlaybookModal.value)
 
+watch(includeOperational, () => load())
+
 onMounted(async () => {
+  loadSchemaNames()
   await loadProfiles()
   load()
 })

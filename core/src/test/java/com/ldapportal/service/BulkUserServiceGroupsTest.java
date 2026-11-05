@@ -311,4 +311,21 @@ class BulkUserServiceGroupsTest {
         assertThat(out).startsWith("\"dn\",\"mail\",\"groups\"\r\n");
         assertThat(out).contains("\"j@x\",\"admins|Support|devs\"");
     }
+
+    @Test
+    void export_askedForDnAlone_writesASingleDnColumn() throws IOException {
+        var user = new com.ldapportal.ldap.model.LdapUser("uid=jsmith," + PARENT,
+                Map.of("mail", List.of("j@x")));
+        org.mockito.Mockito.doAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            java.util.function.Consumer<com.ldapportal.ldap.model.LdapUser> c = inv.getArgument(3);
+            c.accept(user);
+            return null;
+        }).when(userService).processUsersRaw(eq(dc), anyString(), eq(PARENT), any(), eq("dn"));
+
+        byte[] csv = service.exportCsvFromBases(dc, null, List.of(PARENT), List.of("dn"), null);
+
+        assertThat(new String(csv, StandardCharsets.UTF_8))
+                .isEqualTo("\"dn\"\r\n\"uid=jsmith," + PARENT + "\"\r\n");
+    }
 }
