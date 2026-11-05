@@ -38,6 +38,7 @@ public class SyncReconcileScheduler {
     private final MembershipReconciler reconciler;
     private final SyncContentVerifier verifier;
     private final SyncReconcileHistory history;
+    private final SyncDriftStore driftStore;
     private final EntitlementService entitlementService;
     private final long defaultCadenceSeconds;
     /** Minimum gap between retries of a reconcile request an incomplete run didn't handle. */
@@ -47,6 +48,7 @@ public class SyncReconcileScheduler {
                                   MembershipReconciler reconciler,
                                   SyncContentVerifier verifier,
                                   SyncReconcileHistory history,
+                                  SyncDriftStore driftStore,
                                   EntitlementService entitlementService,
                                   @Value("${ldapportal.sync.reconcile.default-cadence-seconds:3600}")
                                   long defaultCadenceSeconds) {
@@ -54,6 +56,7 @@ public class SyncReconcileScheduler {
         this.reconciler = reconciler;
         this.verifier = verifier;
         this.history = history;
+        this.driftStore = driftStore;
         this.entitlementService = entitlementService;
         this.defaultCadenceSeconds = defaultCadenceSeconds;
     }
@@ -101,6 +104,7 @@ public class SyncReconcileScheduler {
                 syncSetRepo.recordVerifyResult(setId, OffsetDateTime.now(),
                         v.missingOnTarget(), v.orphanOnTarget(), v.contentMismatches());
                 history.recordDrift(setId, v.missingOnTarget(), v.orphanOnTarget(), v.contentMismatches());
+                driftStore.replace(setId, v.items());
                 if (v.heldReferences() != null) {
                     syncSetRepo.recordVerifyHeld(setId, v.heldReferences().entries(), v.heldReferences().dangling());
                 }

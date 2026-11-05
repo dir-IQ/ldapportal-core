@@ -43,6 +43,8 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -344,6 +346,58 @@ class SyncControllerTest extends BaseControllerTest {
                 .andExpect(jsonPath("$.total").value(3))
                 .andExpect(jsonPath("$.entries[0].sourceDn").value("uid=bob,ou=people,dc=src"))
                 .andExpect(jsonPath("$.entries[0].label").value("Doesn't match the applicability filter"));
+    }
+
+    @Test
+    void drift_returnsThePage_forTheCategoryAndSearch() throws Exception {
+        var counts = new java.util.EnumMap<com.ldapportal.entity.enums.SyncDriftCategory, Long>(
+                java.util.Map.of(com.ldapportal.entity.enums.SyncDriftCategory.MISSING, 0L,
+                        com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, 0L,
+                        com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, 1L));
+        given(service.drift(SET, com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, "jo", 1, 25))
+                .willReturn(new com.ldapportal.dto.sync.SyncDriftPage(OffsetDateTime.now(), null, true, counts, 1,
+                        1, 25, List.of(new com.ldapportal.dto.sync.SyncDriftPage.Entry(7,
+                        com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, "uid=jo,dc=dst", "uid=jo,dc=src", "jo",
+                        List.of(new com.ldapportal.dto.sync.SyncDriftItem.AttributeDiff("title", List.of("Lead"),
+                                List.of("Eng"), false, false))))));
+
+        mockMvc.perform(get(SETS + "/" + SET + "/drift").param("category", "MISMATCH").param("q", "jo")
+                        .param("page", "1").param("size", "25").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.counts.MISMATCH").value(1))
+                .andExpect(jsonPath("$.entries[0].seq").value(7))
+                .andExpect(jsonPath("$.entries[0].attributes[0].expected[0]").value("Lead"));
+    }
+
+    @Test
+    void drift_unknownCategory_is400() throws Exception {
+        mockMvc.perform(get(SETS + "/" + SET + "/drift").param("category", "BOGUS")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void drift_adminWithoutSuperadmin_isForbidden() throws Exception {
+        mockMvc.perform(get(SETS + "/" + SET + "/drift").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get(SETS + "/" + SET + "/drift.csv").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void driftCsv_isAnAttachment() throws Exception {
+        org.mockito.Mockito.doAnswer(inv -> {
+            java.io.Writer w = inv.getArgument(1);
+            w.write("\"category\"\r\n");
+            w.flush();
+            return null;
+        }).when(service).writeDriftCsv(eq(SET), any());
+
+        mockMvc.perform(get(SETS + "/" + SET + "/drift.csv").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("sync-drift-" + SET + ".csv")))
+                .andExpect(content().string("\"category\"\r\n"));
     }
 
     @Test

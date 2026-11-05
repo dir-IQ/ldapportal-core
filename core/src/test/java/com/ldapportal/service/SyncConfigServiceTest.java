@@ -73,6 +73,7 @@ class SyncConfigServiceTest {
     @Mock private com.ldapportal.ldap.sync.RecomputeEngine engine;
     @Mock private AuditService auditService;
     @Mock private com.ldapportal.repository.SyncReconcileRunRepository reconcileRunRepo;
+    @Mock private com.ldapportal.ldap.sync.SyncDriftStore driftStore;
 
     private SyncConfigService service;
 
@@ -80,7 +81,7 @@ class SyncConfigServiceTest {
     void setUp() {
         service = new SyncConfigService(linkRepo, setRepo, membershipRepo, directoryRepo,
                 reconciler, verifier, enqueuer, previewService, reconcileHistory, engine, auditService,
-                reconcileRunRepo, verifyProgress);
+                reconcileRunRepo, verifyProgress, driftStore);
     }
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
@@ -248,6 +249,8 @@ class SyncConfigServiceTest {
         assertThat(out.missingOnTarget()).isEqualTo(2);
         // The drift counts are cached on the set so the dashboard can read them cheaply.
         verify(setRepo).recordVerifyResult(eq(setId), any(), eq(2), eq(1), eq(0));
+        // Every item replaces the set's stored ones (only the latest verify is kept).
+        verify(driftStore).replace(eq(setId), eq(out.items()));
         // No held references counted (none in the result): nothing stored for them.
         verify(setRepo, never()).recordVerifyHeld(any(), anyInt(), anyInt());
     }
@@ -278,8 +281,74 @@ class SyncConfigServiceTest {
 
         // A partial scan must not overwrite a previously good snapshot with low counts...
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+        // ...nor replace the stored items with a partial list...
+        verify(driftStore, never()).replace(any(), any());
         // ...but it's noted, so the UI can say the snapshot may be out of date.
         verify(setRepo).recordVerifyIncomplete(eq(setId), any());
+    }
+
+    @Test
+    void drift_pagesTheStoredItems_andSaysWhenTheCountsPredateThem() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setLastVerifiedAt(java.time.OffsetDateTime.now());
+        set.setVerifyMissingCount(2);
+        set.setVerifyOrphanCount(0);
+        set.setVerifyMismatchCount(0);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        var none = new java.util.EnumMap<com.ldapportal.entity.enums.SyncDriftCategory, Long>(
+                com.ldapportal.entity.enums.SyncDriftCategory.class);
+        for (var c : com.ldapportal.entity.enums.SyncDriftCategory.values()) none.put(c, 0L);
+        when(driftStore.countsByCategory(setId)).thenReturn(none);
+
+        // Counts on the set, nothing stored: from a verify before items were kept.
+        assertThat(service.drift(setId, null, null, 0, 50).detailsRecorded()).isFalse();
+
+        var stored = new java.util.EnumMap<>(none);
+        stored.put(com.ldapportal.entity.enums.SyncDriftCategory.MISSING, 2L);
+        when(driftStore.countsByCategory(setId)).thenReturn(stored);
+        when(driftStore.count(setId, com.ldapportal.entity.enums.SyncDriftCategory.MISSING, "jo")).thenReturn(1L);
+        when(driftStore.page(setId, com.ldapportal.entity.enums.SyncDriftCategory.MISSING, "jo", 400, 200))
+                .thenReturn(List.of(new com.ldapportal.ldap.sync.SyncDriftStore.Row(3,
+                        new com.ldapportal.dto.sync.SyncDriftItem(com.ldapportal.entity.enums.SyncDriftCategory.MISSING,
+                                "uid=jo,dc=t", "uid=jo,dc=s", "jo", List.of()))));
+
+        var page = service.drift(setId, com.ldapportal.entity.enums.SyncDriftCategory.MISSING, "jo", 2, 999);
+
+        assertThat(page.detailsRecorded()).isTrue();
+        assertThat(page.size()).isEqualTo(200); // clamped
+        assertThat(page.matched()).isEqualTo(1);
+        assertThat(page.entries()).singleElement().satisfies(e -> {
+            assertThat(e.seq()).isEqualTo(3);
+            assertThat(e.sourceDn()).isEqualTo("uid=jo,dc=s");
+        });
+    }
+
+    @Test
+    void driftCsv_writesARowPerDifferingAttribute_hidesSecrets_andNeutralisesFormulas() throws Exception {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        org.mockito.Mockito.doAnswer(inv -> {
+            java.util.function.Consumer<com.ldapportal.ldap.sync.SyncDriftStore.Row> sink = inv.getArgument(1);
+            sink.accept(new com.ldapportal.ldap.sync.SyncDriftStore.Row(0, new com.ldapportal.dto.sync.SyncDriftItem(
+                    com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, "uid=old,dc=t", null, null, List.of())));
+            sink.accept(new com.ldapportal.ldap.sync.SyncDriftStore.Row(1, new com.ldapportal.dto.sync.SyncDriftItem(
+                    com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, "uid=jo,dc=t", "uid=jo,dc=s", "jo", List.of(
+                    new com.ldapportal.dto.sync.SyncDriftItem.AttributeDiff("title", List.of("=HYPERLINK(1)"),
+                            List.of("Eng", "Lead"), false, false),
+                    new com.ldapportal.dto.sync.SyncDriftItem.AttributeDiff("userPassword", List.of(), List.of(),
+                            true, false)))));
+            return null;
+        }).when(driftStore).forEach(eq(setId), any());
+        java.io.StringWriter out = new java.io.StringWriter();
+
+        service.writeDriftCsv(setId, out);
+
+        assertThat(out.toString()).isEqualTo(
+                "\"category\",\"targetDn\",\"sourceDn\",\"identity\",\"attribute\",\"expected\",\"actual\"\r\n"
+                + "\"ORPHAN\",\"uid=old,dc=t\",\"\",\"\",\"\",\"\",\"\"\r\n"
+                + "\"MISMATCH\",\"uid=jo,dc=t\",\"uid=jo,dc=s\",\"jo\",\"title\",\"'=HYPERLINK(1)\",\"Eng|Lead\"\r\n"
+                + "\"MISMATCH\",\"uid=jo,dc=t\",\"uid=jo,dc=s\",\"jo\",\"userPassword\",\"(hidden)\",\"(hidden)\"\r\n");
     }
 
     @Test

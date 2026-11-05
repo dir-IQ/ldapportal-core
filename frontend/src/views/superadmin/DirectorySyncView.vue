@@ -33,7 +33,7 @@
               {{ driftSummary(s).label }} · verified {{ verifiedAt(s) }}
             </span>
           </div>
-          <button type="button" class="btn-secondary btn-compact" @click="openSetById(s.id)">Open set</button>
+          <button type="button" class="btn-secondary btn-compact" @click="openSetById(s.id, '', 'drift')">Open set</button>
         </li>
       </ul>
     </section>
@@ -133,6 +133,9 @@
                               :source-name="dirName(selectedLink?.sourceDirId)"
                               :target-name="dirName(selectedLink?.targetDirId)"
                               :initial-state="pendingState"
+                              :initial-tab="pendingTab"
+                              :source-directory-id="selectedLink?.sourceDirId ?? null"
+                              :target-directory-id="selectedLink?.targetDirId ?? null"
                               @changed="refreshHealth" />
 
     <!-- ── Link editor ─────────────────────────────────────────────────────── -->
@@ -406,6 +409,8 @@ const showMembershipModal = ref(false)
 // Seeds the inventory modal's state filter; '' for a normal open, a state for a
 // dashboard deep link (e.g. ?state=FAILED). Reset on every manual selection.
 const pendingState = ref<'' | MembershipState>('')
+/** The membership dialog's tab to open on (the drifting-sets list opens on Drift). */
+const pendingTab = ref<'reconciliation' | 'drift'>('reconciliation')
 const loadingLinks = ref(false)
 const loadingSets = ref(false)
 
@@ -994,6 +999,7 @@ async function removeSet(s: SyncSet) {
 // A manual click always opens unfiltered — deep links go through openSetById.
 function selectSet(id: string) {
   pendingState.value = ''
+  pendingTab.value = 'reconciliation'
   selectedSetId.value = id
   showMembershipModal.value = true
 }
@@ -1001,11 +1007,13 @@ function selectSet(id: string) {
 // ── Dashboard deep links ──
 // Open a set's inventory by id, expanding its parent link first so the row is
 // visible behind the modal; optionally seed the inventory's state filter.
-async function openSetById(setId: string, state: '' | MembershipState = '') {
+async function openSetById(setId: string, state: '' | MembershipState = '',
+  tab: 'reconciliation' | 'drift' = 'reconciliation') {
   const target = allSets.value.find((s) => s.id === setId)
   if (!target) return
   if (selectedLinkId.value !== target.linkId) await selectLink(target.linkId)
   pendingState.value = state
+  pendingTab.value = tab
   selectedSetId.value = setId
   showMembershipModal.value = true
 }

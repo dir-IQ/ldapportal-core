@@ -289,6 +289,46 @@ public class SyncSetController {
         return service.verifyContents(id);
     }
 
+    /**
+     * Every drift item the set's last complete content verify found (only the
+     * latest is kept), a page at a time: optionally one {@code category}
+     * (MISSING, ORPHAN, MISMATCH) and matching {@code q}.
+     */
+    @GetMapping("/{id}/drift")
+    public com.ldapportal.dto.sync.SyncDriftPage drift(@PathVariable UUID id,
+                                                     @RequestParam(required = false) String category,
+                                                     @RequestParam(required = false) String q,
+                                                     @RequestParam(defaultValue = "0") int page,
+                                                     @RequestParam(defaultValue = "50") int size) {
+        return service.drift(id, driftCategory(category), q, page, size);
+    }
+
+    /** The {@code category} param: blank for every category; an unknown name is a 400. */
+    private static com.ldapportal.entity.enums.SyncDriftCategory driftCategory(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return com.ldapportal.entity.enums.SyncDriftCategory.valueOf(raw.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Unknown drift category: " + raw
+                    + " (expected MISSING, ORPHAN or MISMATCH)");
+        }
+    }
+
+    /** The stored drift items as CSV (see {@code SyncConfigService.writeDriftCsv}). */
+    @GetMapping(value = "/{id}/drift.csv", produces = "text/csv")
+    public ResponseEntity<byte[]> driftCsv(@PathVariable UUID id) {
+        // In memory, like the run-entries CSV: an async streaming body isn't authorized.
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        Writer writer = new OutputStreamWriter(bytes, StandardCharsets.UTF_8);
+        service.writeDriftCsv(id, writer);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"sync-drift-" + id + ".csv\"")
+                .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                .body(bytes.toByteArray());
+    }
+
     @PostMapping("/{id}/recompute")
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public ResponseEntity<Void> recompute(@PathVariable UUID id, @Valid @RequestBody RecomputeKeyRequest req) {
