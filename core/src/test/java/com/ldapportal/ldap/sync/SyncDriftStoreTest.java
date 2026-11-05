@@ -134,8 +134,22 @@ class SyncDriftStoreTest {
         assertThat(store.bySeq(set, List.of(2, 0, 9))).extracting(SyncDriftStore.Row::seq).containsExactly(0, 2);
         assertThat(store.bySeq(set, List.of())).isEmpty();
 
-        store.delete(set, List.of(0, 2));
+        store.delete(set, store.bySeq(set, List.of(0, 2)));
 
         assertThat(store.page(set, null, null, 0, 10)).extracting(SyncDriftStore.Row::seq).containsExactly(1);
+    }
+
+    @Test
+    void delete_leavesANewerVerifysRowsAtTheSamePositionsAlone() {
+        UUID set = UUID.randomUUID();
+        store.replace(set, List.of(orphan("a"), orphan("b")));
+        var chosen = store.bySeq(set, List.of(0));
+
+        // A newer verify renumbers: position 0 is now another entry.
+        store.replace(set, List.of(orphan("z"), orphan("a")));
+        store.delete(set, chosen);
+
+        assertThat(store.page(set, null, null, 0, 10)).extracting(r -> r.item().targetDn())
+                .containsExactly(orphan("z").targetDn(), orphan("a").targetDn());
     }
 }

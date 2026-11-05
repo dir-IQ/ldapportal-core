@@ -73,6 +73,11 @@ public class ObjectGuidIdentityStrategy implements IdentityStrategy {
         return rawValue == null ? null : rawValue.trim().toLowerCase(Locale.ROOT);
     }
 
+    @Override
+    public boolean isWellFormed(String normalized) {
+        return isCanonical(normalized);
+    }
+
     /** {@code true} when {@code value} is already a canonical lowercase GUID string. */
     public static boolean isCanonical(String value) {
         return value != null && CANONICAL.matcher(value).matches();

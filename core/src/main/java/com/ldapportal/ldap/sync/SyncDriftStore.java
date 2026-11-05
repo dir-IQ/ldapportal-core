@@ -124,16 +124,18 @@ public class SyncDriftStore {
                 + "WHERE sync_set_id = ? AND seq IN (" + in + ") ORDER BY seq", rowMapper(), args.toArray());
     }
 
-    /** Drop the set's items at these positions (repaired since the verify found them). */
-    public void delete(UUID syncSetId, java.util.Collection<Integer> seqs) {
-        if (seqs.isEmpty()) {
+    /**
+     * Drop these stored items (repaired or deleted since the verify found
+     * them). Each is matched by position and target DN, so if a newer verify
+     * has replaced the set's items meanwhile, its rows at the same positions
+     * are left alone.
+     */
+    public void delete(UUID syncSetId, java.util.Collection<Row> rows) {
+        if (rows.isEmpty()) {
             return;
         }
-        String in = String.join(",", java.util.Collections.nCopies(seqs.size(), "?"));
-        List<Object> args = new ArrayList<>();
-        args.add(syncSetId);
-        args.addAll(seqs);
-        jdbc.update("DELETE FROM sync_verify_entry WHERE sync_set_id = ? AND seq IN (" + in + ")", args.toArray());
+        jdbc.batchUpdate("DELETE FROM sync_verify_entry WHERE sync_set_id = ? AND seq = ? AND target_dn = ?",
+                rows.stream().map(r -> new Object[] {syncSetId, r.seq(), r.item().targetDn()}).toList());
     }
 
     /** Hand each of the set's items to {@code sink}, in verify order. */

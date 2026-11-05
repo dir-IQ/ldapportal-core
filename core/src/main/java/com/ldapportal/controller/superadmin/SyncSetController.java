@@ -338,7 +338,7 @@ public class SyncSetController {
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public com.ldapportal.dto.sync.SyncDriftRepairPreview previewDriftRepair(
             @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncDriftRepairRequest req) {
-        return service.previewDriftRepair(id, req.seqs());
+        return service.previewDriftRepair(id, req.seqs(), req.verifiedAt());
     }
 
     /**
@@ -350,7 +350,7 @@ public class SyncSetController {
     public com.ldapportal.dto.sync.SyncDriftRepairResult repairDrift(
             @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncDriftRepairRequest req,
             @AuthenticationPrincipal AuthPrincipal principal) {
-        return service.repairDrift(id, req.seqs(), principal);
+        return service.repairDrift(id, req.seqs(), req.verifiedAt(), principal);
     }
 
     /**
@@ -361,7 +361,7 @@ public class SyncSetController {
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public com.ldapportal.dto.sync.SyncOrphanDeletePreview previewOrphanDelete(
             @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncOrphanDeleteRequest req) {
-        return service.previewOrphanDelete(id, req.seqs());
+        return service.previewOrphanDelete(id, req.seqs(), req.verifiedAt());
     }
 
     /**
@@ -373,7 +373,7 @@ public class SyncSetController {
     public com.ldapportal.dto.sync.SyncOrphanDeleteResult deleteOrphans(
             @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncOrphanDeleteRequest req,
             @AuthenticationPrincipal AuthPrincipal principal) {
-        return service.deleteOrphans(id, req.seqs(), req.confirm(), principal);
+        return service.deleteOrphans(id, req.seqs(), req.verifiedAt(), req.confirm(), principal);
     }
 
     @PostMapping("/{id}/recompute")

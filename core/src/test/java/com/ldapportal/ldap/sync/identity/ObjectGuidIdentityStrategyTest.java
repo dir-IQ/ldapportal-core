@@ -68,4 +68,12 @@ class ObjectGuidIdentityStrategyTest {
         assertThat(strategy.extract(e, "employeeID")).isEqualTo("e-1001");
         assertThat(strategy.identityFilter("employeeID", "e-1001").getAssertionValue()).isEqualTo("e-1001");
     }
+
+    @Test
+    void isWellFormed_acceptsOnlyACanonicalGuid() {
+        assertThat(strategy.isWellFormed(CANONICAL)).isTrue();
+        assertThat(strategy.isWellFormed(strategy.normalize(" " + CANONICAL.toUpperCase() + " "))).isTrue();
+        assertThat(strategy.isWellFormed("2nd floor")).isFalse();
+        assertThat(strategy.isWellFormed(null)).isFalse();
+    }
 }

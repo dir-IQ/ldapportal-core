@@ -492,13 +492,13 @@ class SyncEngineIntegrationTest {
         assertThat(drift.matched()).isEqualTo(2);
         List<Integer> seqs = drift.entries().stream().map(e -> e.seq()).toList();
 
-        var preview = syncConfigService.previewDriftRepair(peopleSet.getId(), seqs);
+        var preview = syncConfigService.previewDriftRepair(peopleSet.getId(), seqs, drift.verifiedAt());
         assertThat(preview.items()).extracting(i -> i.action().name())
                 .containsExactlyInAnyOrder("CREATE", "REAPPLY");
         // A preview writes nothing.
         assertThat(target.getEntry("uid=bob," + DST_USERS)).isNull();
 
-        var result = syncConfigService.repairDrift(peopleSet.getId(), seqs, null);
+        var result = syncConfigService.repairDrift(peopleSet.getId(), seqs, drift.verifiedAt(), null);
 
         assertThat(result.created()).isEqualTo(1);
         assertThat(result.reapplied()).isEqualTo(1);
@@ -731,6 +731,68 @@ class SyncEngineIntegrationTest {
     }
 
     @Test
+    void orphanDelete_leavesAnEntryWhoseAnchorValueIsntAnIdentity() throws Exception {
+        peopleSet.setSourceAnchorAttribute("description");
+        setRepo.save(peopleSet);
+        addTargetPerson("printer", "2nd floor"); // hand-made, unrelated data in the anchor attribute
+
+        var r = engine.orphanDelete(peopleSet.getId(), "uid=printer," + DST_USERS, true);
+
+        assertThat(r.outcome()).isEqualTo(com.ldapportal.dto.sync.SyncPreviewAction.UNCHANGED);
+        assertThat(r.message()).contains("isn't a source identity this set writes");
+        assertThat(target.getEntry("uid=printer," + DST_USERS)).isNotNull();
+    }
+
+    @Test
+    void orphanDelete_neverDeletesForACustomIdentityAttribute() throws Exception {
+        peopleSet.setSourceAnchorAttribute("description");
+        peopleSet.setIdentityKey("uid");
+        setRepo.save(peopleSet);
+        addTargetPerson("ghost", "ghost");
+
+        var r = engine.orphanDelete(peopleSet.getId(), "uid=ghost," + DST_USERS, true);
+
+        assertThat(r.outcome()).isEqualTo(com.ldapportal.dto.sync.SyncPreviewAction.UNCHANGED);
+        assertThat(r.message()).contains("custom identity attribute (uid)");
+        assertThat(target.getEntry("uid=ghost," + DST_USERS)).isNotNull();
+    }
+
+    @Test
+    void orphanDelete_leavesItAloneWhenTheSourceBaseIsGone() throws Exception {
+        peopleSet.setSourceAnchorAttribute("description");
+        // A renamed or missing source OU: every identity search finds nothing.
+        peopleSet.setObjectScopeBaseDn("ou=renamed," + SRC_BASE);
+        setRepo.save(peopleSet);
+        addTargetPerson("ghost", "11111111-2222-3333-4444-555555555555");
+
+        var r = engine.orphanDelete(peopleSet.getId(), "uid=ghost," + DST_USERS, true);
+
+        assertThat(r.outcome()).isEqualTo(com.ldapportal.dto.sync.SyncPreviewAction.UNCHANGED);
+        assertThat(r.message()).contains("ou=renamed," + SRC_BASE).contains("isn't on the source");
+        assertThat(target.getEntry("uid=ghost," + DST_USERS)).isNotNull();
+    }
+
+    @Test
+    void orphanDelete_refusesASelectionFromAnOlderVerify() throws Exception {
+        peopleSet.setSourceAnchorAttribute("description");
+        setRepo.save(peopleSet);
+        addTargetPerson("ghost", "11111111-2222-3333-4444-555555555555");
+        syncConfigService.verifyContents(peopleSet.getId());
+        var chosen = syncConfigService.drift(peopleSet.getId(), null, null, 0, 50);
+        List<Integer> seqs = List.of(chosen.entries().get(0).seq());
+        // A newer verify lands (e.g. the post-reconcile check), with another orphan at the same position.
+        target.delete("uid=ghost," + DST_USERS);
+        addTargetPerson("other", "66666666-7777-8888-9999-000000000000");
+        Thread.sleep(5);
+        syncConfigService.verifyContents(peopleSet.getId());
+
+        assertThatThrownBy(() -> syncConfigService.deleteOrphans(peopleSet.getId(), seqs, chosen.verifiedAt(),
+                "DELETE", null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("drift list changed");
+        assertThat(target.getEntry("uid=other," + DST_USERS)).isNotNull();
+    }
+
+    @Test
     void orphanDelete_withoutAnAnchor_neverDeletes() throws Exception {
         addTargetPerson("ghost", "whatever");
 
@@ -754,14 +816,14 @@ class SyncEngineIntegrationTest {
         assertThat(drift.entries()).singleElement().satisfies(e -> assertThat(e.targetDn()).containsIgnoringCase("ghost"));
         List<Integer> seqs = List.of(drift.entries().get(0).seq());
 
-        assertThat(syncConfigService.previewOrphanDelete(peopleSet.getId(), seqs).items())
+        assertThat(syncConfigService.previewOrphanDelete(peopleSet.getId(), seqs, drift.verifiedAt()).items())
                 .singleElement().satisfies(i -> assertThat(i.action().name()).isEqualTo("DELETE"));
         // Without the typed confirmation nothing happens.
-        assertThatThrownBy(() -> syncConfigService.deleteOrphans(peopleSet.getId(), seqs, "delete", null))
+        assertThatThrownBy(() -> syncConfigService.deleteOrphans(peopleSet.getId(), seqs, drift.verifiedAt(), "delete", null))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(target.getEntry("uid=ghost," + DST_USERS)).isNotNull();
 
-        var result = syncConfigService.deleteOrphans(peopleSet.getId(), seqs, "DELETE", null);
+        var result = syncConfigService.deleteOrphans(peopleSet.getId(), seqs, drift.verifiedAt(), "DELETE", null);
 
         assertThat(result.deleted()).isEqualTo(1);
         assertThat(target.getEntry("uid=ghost," + DST_USERS)).isNull();

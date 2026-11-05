@@ -44,6 +44,17 @@ public interface IdentityStrategy {
     }
 
     /**
+     * Whether a normalized value has the shape of an identity this strategy
+     * produces (e.g. a UUID for {@code entryUUID}). Used where a value read
+     * back off a target entry must be told apart from unrelated data in the
+     * same attribute, such as before deleting an entry as a set's orphan.
+     * The default only requires a non-blank value.
+     */
+    default boolean isWellFormed(String normalized) {
+        return normalized != null && !normalized.isBlank();
+    }
+
+    /**
      * Extract and normalize the stable identity from a source entry, or
      * {@code null} when the entry doesn't carry it. The {@link #identityAttribute()}
      * is operational for most directories, so callers must request it explicitly

@@ -372,9 +372,25 @@ class SyncConfigServiceTest {
                         ? "The source entry no longer belongs to this set." : null);
     }
 
+    /** The stored verify's time a drift action is made against. */
+    private static final java.time.OffsetDateTime AT = java.time.OffsetDateTime.parse("2026-11-05T08:00:00Z");
+
+    /** A set whose stored verify ran at {@link #AT}. */
+    private static SyncSet verifiedSet() {
+        SyncSet set = new SyncSet();
+        set.setLastVerifiedAt(AT);
+        return set;
+    }
+
+    /** Matches a store delete of the rows at exactly these positions. */
+    private static org.mockito.ArgumentMatcher<java.util.Collection<com.ldapportal.ldap.sync.SyncDriftStore.Row>> rowsAt(
+            Integer... seqs) {
+        return rows -> rows.stream().map(com.ldapportal.ldap.sync.SyncDriftStore.Row::seq).toList().equals(List.of(seqs));
+    }
+
     private UUID driftFixture() {
         UUID setId = UUID.randomUUID();
-        SyncSet set = new SyncSet();
+        SyncSet set = verifiedSet();
         set.setId(setId);
         set.setLinkId(UUID.randomUUID());
         when(setRepo.findById(setId)).thenReturn(Optional.of(set));
@@ -397,7 +413,7 @@ class SyncConfigServiceTest {
     void previewDriftRepair_saysWhatEachItemWouldGet_afterALiveRecheck() {
         UUID setId = driftFixture();
 
-        var items = service.previewDriftRepair(setId, List.of(0, 1, 2, 3, 4)).items();
+        var items = service.previewDriftRepair(setId, List.of(0, 1, 2, 3, 4), AT).items();
 
         assertThat(items).extracting(i -> i.seq() + ":" + i.action())
                 .containsExactly("0:CREATE", "1:REAPPLY", "2:SKIP", "3:SKIP", "4:SKIP");
@@ -432,7 +448,7 @@ class SyncConfigServiceTest {
         var principal = new com.ldapportal.auth.AuthPrincipal(com.ldapportal.auth.PrincipalType.SUPERADMIN,
                 UUID.randomUUID(), "ops");
 
-        var r = service.repairDrift(setId, List.of(0, 1, 2, 3, 4), principal);
+        var r = service.repairDrift(setId, List.of(0, 1, 2, 3, 4), AT, principal);
 
         assertThat(r.created()).isEqualTo(1);
         assertThat(r.reapplied()).isEqualTo(1);
@@ -448,7 +464,7 @@ class SyncConfigServiceTest {
                 eq(com.ldapportal.entity.enums.AuditAction.ENTRY_UPDATE), eq("uid=drift,dc=dst"), detail.capture());
         assertThat(detail.getValue()).containsEntry("operation", "drift-repair").containsEntry("attributes", List.of("mail"));
         // Created, re-applied, and found already fixed leave the stored verify; counts restated.
-        verify(driftStore).delete(setId, List.of(0, 1, 3));
+        verify(driftStore).delete(eq(setId), org.mockito.ArgumentMatchers.argThat(rowsAt(0, 1, 3)));
         verify(setRepo).restateVerifyCounts(setId, 1, 1, 0);
     }
 
@@ -460,32 +476,32 @@ class SyncConfigServiceTest {
                 com.ldapportal.dto.sync.SyncPreviewAction.REVIEW, "uid=new,dc=dst", "placement conflict"));
         when(engine.process(setId, "uid=drift,dc=src", false)).thenThrow(new IllegalStateException("contended"));
 
-        var r = service.repairDrift(setId, List.of(0, 1), null);
+        var r = service.repairDrift(setId, List.of(0, 1), AT, null);
 
         assertThat(r.held()).isEqualTo(1);
         assertThat(r.failed()).isEqualTo(1);
         assertThat(r.items()).extracting(i -> i.outcome().name()).contains("HELD", "FAILED");
         verify(auditService, never()).record(any(), any(), any(), any(), any());
-        verify(driftStore).delete(setId, List.of(3)); // only the one found already in sync
+        verify(driftStore).delete(eq(setId), org.mockito.ArgumentMatchers.argThat(rowsAt(3))); // only the one found already in sync
     }
 
     @Test
     void repairDrift_refusesAnEmptyOrOversizedSelection() {
         UUID setId = UUID.randomUUID();
-        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
-        assertThatThrownBy(() -> service.repairDrift(setId, List.of(), null))
+        when(setRepo.findById(setId)).thenReturn(Optional.of(verifiedSet()));
+        assertThatThrownBy(() -> service.repairDrift(setId, List.of(), AT, null))
                 .isInstanceOf(IllegalArgumentException.class);
         List<Integer> many = new java.util.ArrayList<>();
         for (int i = 0; i < 201; i++) many.add(i);
-        assertThatThrownBy(() -> service.previewDriftRepair(setId, many))
+        assertThatThrownBy(() -> service.previewDriftRepair(setId, many, AT))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("At most 200");
     }
 
     @Test
     void deleteOrphans_needsTheTypedConfirmation() {
         UUID setId = UUID.randomUUID();
-        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
-        assertThatThrownBy(() -> service.deleteOrphans(setId, List.of(1), "yes", null))
+        when(setRepo.findById(setId)).thenReturn(Optional.of(verifiedSet()));
+        assertThatThrownBy(() -> service.deleteOrphans(setId, List.of(1), AT, "yes", null))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Type DELETE");
         verify(engine, never()).orphanDelete(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
     }
@@ -493,7 +509,7 @@ class SyncConfigServiceTest {
     @Test
     void deleteOrphans_deletesThroughTheEngine_auditsIt_andLeavesNonOrphansAlone() {
         UUID setId = UUID.randomUUID();
-        SyncSet set = new SyncSet();
+        SyncSet set = verifiedSet();
         set.setId(setId);
         set.setLinkId(UUID.randomUUID());
         when(setRepo.findById(setId)).thenReturn(Optional.of(set));
@@ -515,7 +531,7 @@ class SyncConfigServiceTest {
         var principal = new com.ldapportal.auth.AuthPrincipal(com.ldapportal.auth.PrincipalType.SUPERADMIN,
                 UUID.randomUUID(), "ops");
 
-        var r = service.deleteOrphans(setId, List.of(0, 1, 2, 3, 4), "DELETE", principal);
+        var r = service.deleteOrphans(setId, List.of(0, 1, 2, 3, 4), AT, "DELETE", principal);
 
         assertThat(r.deleted()).isEqualTo(1);
         assertThat(r.failed()).isEqualTo(1);
@@ -527,19 +543,42 @@ class SyncConfigServiceTest {
                         d -> "orphan-delete".equals(((java.util.Map<?, ?>) d).get("operation"))));
         verify(auditService, org.mockito.Mockito.times(1)).record(any(), any(), any(), any(), any());
         // The deleted one and the one already gone leave the stored verify.
-        verify(driftStore).delete(setId, List.of(0, 1));
+        verify(driftStore).delete(eq(setId), org.mockito.ArgumentMatchers.argThat(rowsAt(0, 1)));
+    }
+
+    @Test
+    void driftActions_refuseASelectionFromAnOlderVerify() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(verifiedSet()));
+        var older = AT.minusMinutes(5);
+
+        assertThatThrownBy(() -> service.deleteOrphans(setId, List.of(1), older, "DELETE", null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("drift list changed");
+        assertThatThrownBy(() -> service.previewOrphanDelete(setId, List.of(1), null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("drift list changed");
+        assertThatThrownBy(() -> service.repairDrift(setId, List.of(1), older, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("drift list changed");
+        assertThatThrownBy(() -> service.previewDriftRepair(setId, List.of(1), older))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("drift list changed");
+        // The same instant in another offset is the same verify.
+        when(driftStore.bySeq(eq(setId), any())).thenReturn(List.of());
+        assertThatThrownBy(() -> service.previewOrphanDelete(setId, List.of(1),
+                AT.withOffsetSameInstant(java.time.ZoneOffset.ofHours(2))))
+                .hasMessageContaining("no longer stored");
+        verify(engine, never()).orphanDelete(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(verifier, never()).recheck(any(), any());
     }
 
     @Test
     void previewOrphanDelete_checksWithoutApplying() {
         UUID setId = UUID.randomUUID();
-        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(setRepo.findById(setId)).thenReturn(Optional.of(verifiedSet()));
         when(driftStore.bySeq(eq(setId), any())).thenReturn(List.of(
                 driftRow(0, com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, "ghost")));
         when(engine.orphanDelete(setId, "uid=ghost,dc=dst", false)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
                 com.ldapportal.dto.sync.SyncPreviewAction.DELETE, null, "uid=ghost,dc=dst", null));
 
-        var items = service.previewOrphanDelete(setId, List.of(0)).items();
+        var items = service.previewOrphanDelete(setId, List.of(0), AT).items();
 
         assertThat(items).singleElement().satisfies(i -> assertThat(i.action().name()).isEqualTo("DELETE"));
         verify(engine, never()).orphanDelete(setId, "uid=ghost,dc=dst", true);
