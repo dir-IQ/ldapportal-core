@@ -11,6 +11,13 @@ profiles* permission.
 | Push one profile's form onto other profiles in this install | **Copy form to…** |
 | Move a profile to another install, keep it in Git, or create it in another directory | **Export** / **Import** |
 
+Both are also on the **Other** tab of the profile editor, where they act on the
+profile you're editing: **Copy form to other profiles…**, **Export to file**
+and **Import form from file…** (which replaces this profile's form and then
+reloads the editor with it). They use the last saved version of the profile,
+so save your changes first; while you're creating a new profile they're
+disabled. The Other tab also holds the profile's **Theme Color**.
+
 ## Copy form to…
 
 In a profile's row menu, **Copy form to…** lists every other profile, grouped

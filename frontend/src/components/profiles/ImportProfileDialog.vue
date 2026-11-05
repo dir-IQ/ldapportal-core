@@ -37,6 +37,11 @@ const props = defineProps<{
   modelValue: boolean
   directories: ImportDirectory[]
   profiles: ImportProfileRow[]
+  /**
+   * Open on "replace the user form" of this profile (the profile editor's
+   * Other tab). The operator can still change any choice.
+   */
+  preset?: { directoryId: string; targetProfileId: string } | null
 }>()
 
 const emit = defineEmits<{
@@ -73,6 +78,11 @@ watch(() => props.modelValue, (open) => {
   baseDnTo.value = ''
   force.value = false
   preview.value = null
+  if (props.preset) {
+    directoryId.value = props.preset.directoryId
+    mode.value = 'REPLACE_FORM'
+    targetProfileId.value = props.preset.targetProfileId
+  }
 })
 
 // Any change to the inputs makes an earlier preview stale.

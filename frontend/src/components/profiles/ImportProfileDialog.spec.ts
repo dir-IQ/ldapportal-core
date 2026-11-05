@@ -134,4 +134,25 @@ describe('ImportProfileDialog', () => {
     expect(w.emitted('update:modelValue')).toBeUndefined()
     w.unmount()
   })
+
+  it('opens on replacing the preset profile\'s form, and still lets the operator change it', async () => {
+    const w = mount(ImportProfileDialog, {
+      props: { modelValue: false, directories, profiles, preset: { directoryId: 'd-test', targetProfileId: 'p-test' } },
+      global: { stubs: { Teleport: true } },
+      attachTo: document.body,
+    })
+    await w.setProps({ modelValue: true })
+    await chooseFile(w, exportFile)
+
+    expect((w.find('#ip-directory').element as HTMLSelectElement).value).toBe('d-test')
+    expect((w.find('input[value="REPLACE_FORM"]').element as HTMLInputElement).checked).toBe(true)
+    expect((w.find('#ip-target').element as HTMLSelectElement).value).toBe('p-test')
+
+    await button(w, 'Import').trigger('click')
+    await flushPromises()
+    expect(importProfile).toHaveBeenCalledWith('d-test', expect.objectContaining({
+      mode: 'REPLACE_FORM', targetProfileId: 'p-test', dryRun: false,
+    }))
+    w.unmount()
+  })
 })
