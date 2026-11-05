@@ -326,7 +326,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import RelativeTime from '@/components/RelativeTime.vue'
 import AppModal from '@/components/AppModal.vue'
 import { useNotificationStore } from '@/stores/notifications'
@@ -357,6 +357,8 @@ const notif = useNotificationStore()
 type CategoryFilter = '' | SyncDriftCategory
 const category = ref<CategoryFilter>('')
 const search = ref('')
+/** The search as sent: `search`, trimmed, once typing pauses. */
+const query = ref('')
 const page = ref(0)
 const size = ref(25)
 const data = ref<SyncDriftPage | null>(null)
@@ -396,8 +398,6 @@ const cards = computed<Card[]>(() => [
 
 function setCategory(c: CategoryFilter): void {
   category.value = c
-  page.value = 0
-  void load()
 }
 
 // ── Repair ──────────────────────────────────────────────────────────────────
@@ -624,7 +624,7 @@ async function load(): Promise<void> {
   try {
     const { data: d } = await getDrift(props.set.id, {
       category: category.value || undefined,
-      q: search.value.trim() || undefined,
+      q: query.value || undefined,
       page: page.value,
       size: size.value,
     })
@@ -651,17 +651,29 @@ async function exportCsv(): Promise<void> {
   }
 }
 
+// One loader: every change below lands in a single reload, however many of
+// them one action makes. The watchers that only adjust state are registered
+// first, so they run before it in the same flush.
 let searchTimer: ReturnType<typeof setTimeout> | null = null
-watch(search, () => {
+function stopSearchTimer(): void {
   if (searchTimer) clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => { page.value = 0; void load() }, 300)
+  searchTimer = null
+}
+watch(search, v => {
+  stopSearchTimer()
+  searchTimer = setTimeout(() => { query.value = v.trim() }, 300)
 })
-watch(page, () => { void load() })
-watch(size, () => { page.value = 0; void load() })
+// Another set, or a finished check: start over.
 watch([() => props.set.id, () => props.refreshKey], () => {
+  stopSearchTimer()
   category.value = ''
   search.value = ''
+  query.value = ''
   page.value = 0
-  void load()
-}, { immediate: true })
+})
+// A new filter or page size starts at its first page.
+watch([category, query, size], () => { page.value = 0 })
+watch([() => props.set.id, () => props.refreshKey, category, query, page, size], () => { void load() },
+  { immediate: true })
+onBeforeUnmount(stopSearchTimer)
 </script>

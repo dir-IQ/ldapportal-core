@@ -793,6 +793,22 @@ class SyncEngineIntegrationTest {
     }
 
     @Test
+    void restatedCounts_neverOverwriteANewerVerifys() throws Exception {
+        peopleSet.setSourceAnchorAttribute("description");
+        setRepo.save(peopleSet);
+        addTargetPerson("ghost", "11111111-2222-3333-4444-555555555555");
+        syncConfigService.verifyContents(peopleSet.getId());
+        var verifiedAt = setRepo.findById(peopleSet.getId()).orElseThrow().getLastVerifiedAt();
+
+        // Counts taken from an older verify's items: refused.
+        assertThat(setRepo.restateVerifyCounts(peopleSet.getId(), verifiedAt.minusSeconds(60), 9, 9, 9)).isZero();
+        assertThat(setRepo.findById(peopleSet.getId()).orElseThrow().getVerifyOrphanCount()).isEqualTo(1);
+        // From the stored verify's own items: applied.
+        assertThat(setRepo.restateVerifyCounts(peopleSet.getId(), verifiedAt, 0, 0, 0)).isEqualTo(1);
+        assertThat(setRepo.findById(peopleSet.getId()).orElseThrow().getVerifyOrphanCount()).isZero();
+    }
+
+    @Test
     void orphanDelete_withoutAnAnchor_neverDeletes() throws Exception {
         addTargetPerson("ghost", "whatever");
 

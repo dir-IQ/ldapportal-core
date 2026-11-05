@@ -81,6 +81,7 @@ public class SyncConfigService {
     private final com.ldapportal.repository.SyncReconcileRunRepository reconcileRunRepo;
     private final com.ldapportal.ldap.sync.SyncVerifyProgressTracker verifyProgress;
     private final com.ldapportal.ldap.sync.SyncDriftStore driftStore;
+    private final com.ldapportal.ldap.sync.SyncVerifySnapshot verifySnapshot;
 
     /**
      * Runs the reconciles {@link #startReconcile} starts, off the request thread:
@@ -735,12 +736,6 @@ public class SyncConfigService {
         List<PlannedRepair> plan = planRepair(syncSetId, seqs);
         var toRun = plan.stream().filter(p -> p.action() != com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.SKIP)
                 .toList();
-        List<String> identities = toRun.stream().map(p -> p.recheck().identity())
-                .filter(java.util.Objects::nonNull).distinct().toList();
-        if (!identities.isEmpty()) {
-            // Past the hash gate: an unchanged projection must still re-read the target.
-            membershipRepo.forgetAppliedContentOf(syncSetId, identities, new byte[0]);
-        }
         UUID targetDirectoryId = linkRepo.findById(set.getLinkId()).map(SyncLink::getTargetDirId).orElse(null);
         SyncAuditLabels labels = toRun.isEmpty() ? null : SyncAuditLabels.of(set, linkRepo, directoryRepo);
 
@@ -761,6 +756,12 @@ public class SyncConfigService {
             }
             com.ldapportal.ldap.sync.RecomputeOutcome outcome;
             try {
+                if (p.recheck().identity() != null) {
+                    // Past the hash gate, just before this entry's recompute (so a
+                    // repair cut short leaves the rest as they were): an unchanged
+                    // projection must still re-read the target.
+                    membershipRepo.forgetAppliedContentOf(syncSetId, List.of(p.recheck().identity()), new byte[0]);
+                }
                 outcome = engine.process(syncSetId, p.row().item().sourceDn(), false);
             } catch (RuntimeException ex) {
                 log.warn("Sync set {}: drift repair of [{}] failed: {}", syncSetId, p.row().item().sourceDn(), ex.toString());
@@ -817,7 +818,7 @@ public class SyncConfigService {
         }
         if (!fixed.isEmpty()) {
             driftStore.delete(syncSetId, fixed);
-            restateFromStore(syncSetId);
+            restateFromStore(syncSetId, set.getLastVerifiedAt());
         }
         log.info("Sync set {}: drift repair by {}: {} created, {} re-applied, {} already in sync, {} skipped, "
                         + "{} held, {} failed", syncSetId, principal != null ? principal.username() : "system",
@@ -912,7 +913,7 @@ public class SyncConfigService {
                     skipped++;
                     items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(row.seq(),
                             com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.SKIPPED, dn, r.message()));
-                    if (com.ldapportal.ldap.sync.RecomputeEngine.ORPHAN_GONE.equals(r.message())) {
+                    if (r.alreadyGone()) {
                         gone.add(row);
                     }
                 }
@@ -920,7 +921,7 @@ public class SyncConfigService {
         }
         if (!gone.isEmpty()) {
             driftStore.delete(syncSetId, gone);
-            restateFromStore(syncSetId);
+            restateFromStore(syncSetId, set.getLastVerifiedAt());
         }
         log.info("Sync set {}: orphan delete by {}: {} deleted, {} skipped, {} failed", syncSetId,
                 principal != null ? principal.username() : "system", deleted, skipped, failed);
@@ -939,7 +940,10 @@ public class SyncConfigService {
         }
     }
 
-    /** The stored rows for a selection, validated as {@link #planRepair} does. */
+    /**
+     * The stored rows for a repair or delete selection: at least one item, at
+     * most {@value #MAX_DRIFT_REPAIR}, and still stored.
+     */
     private List<com.ldapportal.ldap.sync.SyncDriftStore.Row> storedRows(UUID syncSetId, List<Integer> seqs) {
         List<Integer> wanted = seqs == null ? List.of() : seqs.stream().filter(java.util.Objects::nonNull).distinct().toList();
         if (wanted.isEmpty()) {
@@ -969,27 +973,20 @@ public class SyncConfigService {
         }
     }
 
-    /** Restate the set's drift counts from the items still stored. */
-    private void restateFromStore(UUID syncSetId) {
+    /**
+     * Restate the set's drift counts from the items still stored, unless a
+     * newer verify than the one at {@code verifiedAt} has replaced them meanwhile.
+     */
+    private void restateFromStore(UUID syncSetId, java.time.OffsetDateTime verifiedAt) {
         var left = driftStore.countsByCategory(syncSetId);
-        setRepo.restateVerifyCounts(syncSetId,
+        setRepo.restateVerifyCounts(syncSetId, verifiedAt,
                 left.getOrDefault(com.ldapportal.entity.enums.SyncDriftCategory.MISSING, 0L).intValue(),
                 left.getOrDefault(com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, 0L).intValue(),
                 left.getOrDefault(com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, 0L).intValue());
     }
 
     private List<PlannedRepair> planRepair(UUID syncSetId, List<Integer> seqs) {
-        List<Integer> wanted = seqs == null ? List.of() : seqs.stream().filter(java.util.Objects::nonNull).distinct().toList();
-        if (wanted.isEmpty()) {
-            throw new IllegalArgumentException("Choose at least one drift item to repair.");
-        }
-        if (wanted.size() > MAX_DRIFT_REPAIR) {
-            throw new IllegalArgumentException("At most " + MAX_DRIFT_REPAIR + " drift items can be repaired at once.");
-        }
-        List<com.ldapportal.ldap.sync.SyncDriftStore.Row> rows = driftStore.bySeq(syncSetId, wanted);
-        if (rows.isEmpty()) {
-            throw new IllegalArgumentException("Those drift items are no longer stored; verify again and retry.");
-        }
+        List<com.ldapportal.ldap.sync.SyncDriftStore.Row> rows = storedRows(syncSetId, seqs);
         var repairable = rows.stream().filter(r -> r.item().category() != com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN
                 && r.item().sourceDn() != null).toList();
         var rechecks = verifier.recheck(syncSetId, repairable.stream().map(r -> r.item().sourceDn()).toList());
@@ -1108,17 +1105,11 @@ public class SyncConfigService {
             throw ex;
         }
         if (result.sourceComplete() && result.targetComplete()) {
-            setRepo.recordVerifyResult(syncSetId, java.time.OffsetDateTime.now(),
-                    result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
-            // Every item, for the Drift tab: only the latest complete verify is kept.
-            driftStore.replace(syncSetId, result.items());
+            // Counts, held references and every item (for the Drift tab), together.
+            verifySnapshot.record(syncSetId, result);
             if (afterReconcile) {
                 reconcileHistory.recordDrift(syncSetId,
                         result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
-            }
-            if (result.heldReferences() != null) {
-                setRepo.recordVerifyHeld(syncSetId, result.heldReferences().entries(),
-                        result.heldReferences().dangling());
             }
         } else if (result.note() == null) {
             // It ran but couldn't read a side completely (an unavailable set

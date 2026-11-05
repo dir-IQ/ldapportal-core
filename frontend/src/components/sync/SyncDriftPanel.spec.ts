@@ -147,6 +147,49 @@ describe('SyncDriftPanel', () => {
     expect(syncApi.getDrift).toHaveBeenLastCalledWith('set-1', expect.objectContaining({ page: 1 }))
   })
 
+  it('makes one request per change, back on the first page', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(syncApi.getDrift).mockResolvedValue({ data: page({ matched: 60 }) } as never)
+      const w = mountPanel()
+      await flushPromises()
+      await btn(w, 'Next').trigger('click')
+      await flushPromises()
+      await btn(w, 'Next').trigger('click')
+      await flushPromises()
+      const calls = () => vi.mocked(syncApi.getDrift).mock.calls.length
+      const lastArgs = () => vi.mocked(syncApi.getDrift).mock.lastCall?.[1]
+
+      let before = calls()
+      await btn(w, 'Orphaned on target').trigger('click')
+      await flushPromises()
+      expect(calls() - before).toBe(1)
+      expect(lastArgs()).toMatchObject({ category: 'ORPHAN', page: 0 })
+
+      await btn(w, 'Next').trigger('click')
+      await flushPromises()
+      before = calls()
+      await w.find('select[aria-label="Drift rows per page"]').setValue('100')
+      await flushPromises()
+      expect(calls() - before).toBe(1)
+      expect(lastArgs()).toMatchObject({ size: 100, page: 0 })
+
+      // A finished check with a search typed: one reload, nothing stale after it.
+      await w.find('input[aria-label="Filter drift"]').setValue('senior')
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+      before = calls()
+      await w.setProps({ refreshKey: 1 })
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+      expect(calls() - before).toBe(1)
+      expect(lastArgs()).toMatchObject({ category: undefined, q: undefined, page: 0 })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('exports the stored items as CSV', async () => {
     const w = mountPanel()
     await flushPromises()

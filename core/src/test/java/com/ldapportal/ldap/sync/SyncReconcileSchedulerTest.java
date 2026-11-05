@@ -48,7 +48,8 @@ class SyncReconcileSchedulerTest {
 
     @BeforeEach
     void setUp() {
-        scheduler = new SyncReconcileScheduler(syncSetRepo, reconciler, verifier, history, driftStore, entitlementService, 3600L);
+        scheduler = new SyncReconcileScheduler(syncSetRepo, reconciler, verifier, history,
+                new SyncVerifySnapshot(syncSetRepo, driftStore), entitlementService, 3600L);
         when(entitlementService.has(Entitlement.DIRECTORY_SYNC)).thenReturn(true);
     }
 

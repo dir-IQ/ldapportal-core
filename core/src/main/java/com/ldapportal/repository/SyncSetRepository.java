@@ -47,13 +47,19 @@ public interface SyncSetRepository extends JpaRepository<SyncSet, UUID> {
 
     /**
      * Restate the last complete verify's drift counts after some of its items
-     * were repaired (its time and incomplete flag stay). Targeted, as above.
+     * were repaired or deleted (its time and incomplete flag stay), but only
+     * while that verify, the one at {@code verifiedAt}, is still the stored
+     * one: counts taken from its items must never overwrite a newer verify's.
+     * Targeted, as above.
+     *
+     * @return 1 if restated, 0 if a newer verify has replaced it
      */
     @Transactional
     @Modifying
     @Query("update SyncSet s set s.verifyMissingCount = :missing, s.verifyOrphanCount = :orphan, "
-            + "s.verifyMismatchCount = :mismatch where s.id = :id")
-    int restateVerifyCounts(@Param("id") UUID id, @Param("missing") int missing, @Param("orphan") int orphan,
+            + "s.verifyMismatchCount = :mismatch where s.id = :id and s.lastVerifiedAt = :verifiedAt")
+    int restateVerifyCounts(@Param("id") UUID id, @Param("verifiedAt") OffsetDateTime verifiedAt,
+                            @Param("missing") int missing, @Param("orphan") int orphan,
                             @Param("mismatch") int mismatch);
 
     /** A complete verify's held-reference counts, stored beside its drift counts. Targeted, as above. */
