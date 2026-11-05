@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.core.reports.schedule;
 
+import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.core.reports.ReportData;
 import com.ldapportal.entity.DirectoryConnection;
 
@@ -48,4 +49,20 @@ public interface ScheduledReportContentProvider {
      */
     ReportData run(DirectoryConnection dir, String reportType,
                    Map<String, Object> params, String scopeBaseDn);
+
+    /**
+     * Produces the report data with the authority of {@code runAs} — the
+     * account that created the job — so a scheduled run returns what that
+     * account would get running the same report on demand. {@code runAs} is
+     * {@code null} when the job has no creator to scope by (a superadmin's
+     * job, or one whose creator is unknown); the run is then unbounded apart
+     * from {@code scopeBaseDn}.
+     *
+     * <p>The default ignores {@code runAs}; a provider whose content depends
+     * on the caller's OU scope must override it.</p>
+     */
+    default ReportData run(DirectoryConnection dir, String reportType,
+                           Map<String, Object> params, String scopeBaseDn, AuthPrincipal runAs) {
+        return run(dir, reportType, params, scopeBaseDn);
+    }
 }

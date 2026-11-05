@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.core.reports.schedule;
 
+import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.core.reports.OperationalReportProvider;
 import com.ldapportal.core.reports.OperationalReportService;
 import com.ldapportal.core.reports.OperationalReportType;
@@ -108,5 +110,35 @@ class OperationalScheduledReportContentProviderTest {
         ArgumentCaptor<Map<String, Object>> params = ArgumentCaptor.forClass(Map.class);
         org.mockito.Mockito.verify(service).run(eq(dir), eq("AUDIT_ENTRIES"), params.capture(), eq(dirId));
         assertThat(params.getValue()).containsEntry("lookbackHours", 6).doesNotContainKey("scopeBaseDn");
+    }
+    @Test
+    void run_asAnAdmin_goesThroughTheServicesInteractiveEntryPoint() {
+        DirectoryConnection dir = mock(DirectoryConnection.class);
+        UUID dirId = UUID.randomUUID();
+        when(dir.getId()).thenReturn(dirId);
+        AuthPrincipal alice = new AuthPrincipal(PrincipalType.ADMIN, UUID.randomUUID(), "alice");
+        ReportData expected = new ReportData(List.of("c"), List.of());
+        when(service.run(eq(dir), eq("AUDIT_ENTRIES"), any(), eq(dirId), eq(alice))).thenReturn(expected);
+
+        ReportData out = provider().run(dir, "AUDIT_ENTRIES", Map.of(), "ou=scope", alice);
+
+        assertThat(out).isSameAs(expected);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> params = ArgumentCaptor.forClass(Map.class);
+        org.mockito.Mockito.verify(service).run(eq(dir), eq("AUDIT_ENTRIES"), params.capture(), eq(dirId), eq(alice));
+        assertThat(params.getValue()).containsEntry("scopeBaseDn", "ou=scope");
+        org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).run(any(), any(), any(), any());
+    }
+
+    @Test
+    void run_withoutRunAs_isTheSystemEntryPoint() {
+        DirectoryConnection dir = mock(DirectoryConnection.class);
+        UUID dirId = UUID.randomUUID();
+        when(dir.getId()).thenReturn(dirId);
+        when(service.run(any(), any(), any(), any())).thenReturn(new ReportData(List.of(), List.of()));
+
+        provider().run(dir, "AUDIT_ENTRIES", Map.of(), "ou=scope", null);
+
+        org.mockito.Mockito.verify(service).run(eq(dir), eq("AUDIT_ENTRIES"), any(), eq(dirId));
     }
 }

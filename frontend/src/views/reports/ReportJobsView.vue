@@ -383,6 +383,23 @@
                 <p class="text-xs text-gray-400 mt-1">Leave empty for all actions.</p>
               </div>
             </template>
+            <!-- Entry reports: fetch operational attributes too, as the
+                 runner's "Operational attributes" switch does. -->
+            <div v-if="jobFormIsEntryReport" class="flex items-center gap-2">
+              <input type="checkbox" id="rj-job-include-operational" v-model="jobForm.includeOperational" class="rounded" />
+              <label for="rj-job-include-operational" class="text-sm text-gray-700">Include operational attributes</label>
+            </div>
+            <!-- The columns the delivered file carries, in order — the same
+                 choice a CSV export of the on-screen table makes. -->
+            <div>
+              <label for="rj-job-columns" class="block text-sm font-medium text-gray-700 mb-1">Columns</label>
+              <input id="rj-job-columns" v-model="jobForm.columns" type="text" class="input w-full" placeholder="All columns" />
+              <div class="flex items-center justify-between mt-1 gap-2">
+                <p class="text-xs text-gray-400">Comma-separated, in order. Leave empty for every column.</p>
+                <button v-if="canUseOnScreenColumns" type="button" class="btn-secondary text-xs"
+                        @click="useOnScreenColumns">Use on-screen columns</button>
+              </div>
+            </div>
             <div class="flex items-center gap-2">
               <input type="checkbox" id="jobEnabled" v-model="jobForm.enabled" class="rounded" />
               <label for="jobEnabled" class="text-sm text-gray-700">Enabled</label>
@@ -641,6 +658,16 @@ const needsAuditFilters = computed(() => !!currentRunType.value?.auditFilters)
 const needsAttributes = computed(() => !!currentRunType.value?.attributes)
 
 /** "mail, sn,,manager" → ['mail', 'sn', 'manager'] (trimmed, de-duplicated, order kept). */
+/**
+ * Download name for a report file — the backend's rule
+ * (ReportFileNames.forReportId), so an exported file is named like the
+ * scheduled delivery of the same report: DISABLED_ACCOUNTS → disabled-accounts.csv.
+ */
+function reportFileName(reportType: string, ext: string): string {
+  const slug = reportType.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  return `${slug || 'report'}.${ext}`
+}
+
 function splitAttributes(raw: string): string[] {
   const seen = new Set<string>()
   const out: string[] = []
@@ -868,7 +895,7 @@ async function doExport(format: 'CSV' | 'PDF'): Promise<void> {
         reportType: runForm.value.reportType,
         reportParams: buildReportParams(),
       })
-      downloadBlob(data, `${runForm.value.reportType.toLowerCase()}.pdf`)
+      downloadBlob(data, reportFileName(runForm.value.reportType, 'pdf'))
       return
     }
     const { data } = await runOperationalReport(dirId.value, {
@@ -879,7 +906,7 @@ async function doExport(format: 'CSV' | 'PDF'): Promise<void> {
       ...(shownReportType.value === runForm.value.reportType && exportColumns.value.length
         ? { columns: exportColumns.value } : {}),
     }, format)
-    downloadBlob(data, `${runForm.value.reportType.toLowerCase()}.csv`)
+    downloadBlob(data, reportFileName(runForm.value.reportType, 'csv'))
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
     notif.error(err.response?.data?.detail || err.message || 'Export failed')
@@ -915,6 +942,9 @@ interface JobForm {
   auditActions: string[]
   attributes: string
   objectType: string
+  includeOperational: boolean
+  /** Comma-separated columns the delivered file carries; empty = every column. */
+  columns: string
   enabled: boolean
 }
 
@@ -953,6 +983,7 @@ function blankJobForm(): JobForm {
     groupCountOp: '=', groupCountValue: 0,
     lookbackHours: 24, auditActions: [],
     attributes: '', objectType: '',
+    includeOperational: false, columns: '',
     enabled: true,
   }
 }
@@ -968,6 +999,14 @@ const jobFormNeedsGroupCount = computed(() => !!currentJobFormType.value?.groupC
 const jobFormNeedsAudit      = computed(() => !!currentJobFormType.value?.auditFilters)
 const jobFormNeedsAttributes = computed(() => !!currentJobFormType.value?.attributes)
 const jobFormNeedsObjectType = computed(() => OBJECT_TYPE_REPORTS.has(jobForm.value.reportType))
+const jobFormIsEntryReport   = computed(() => ENTRY_REPORT_TYPES.has(jobForm.value.reportType))
+
+/** The on-screen table shows this job's report, so its visible columns can be copied. */
+const canUseOnScreenColumns = computed(() =>
+  hasResults.value && shownReportType.value === jobForm.value.reportType && exportColumns.value.length > 0)
+function useOnScreenColumns(): void {
+  jobForm.value.columns = exportColumns.value.join(', ')
+}
 
 // Action multi-select for a scheduled Audit Entries job — same picker as the
 // runner above, but with its own open/ref state so the two menus don't fight.
@@ -1011,6 +1050,10 @@ function openEditJob(job: Job): void {
       ? (job.reportParams!.attributes as string[]).join(', ')
       : String(job.reportParams?.attributes ?? ''),
     objectType: (job.reportParams?.objectType as string) ?? '',
+    includeOperational: job.reportParams?.includeOperational === true,
+    columns: Array.isArray(job.reportParams?.columns)
+      ? (job.reportParams!.columns as string[]).join(', ')
+      : String(job.reportParams?.columns ?? ''),
     enabled: job.enabled,
   }
   showJobForm.value = true
@@ -1035,6 +1078,11 @@ function buildJobPayload(): Record<string, unknown> {
   }
   if (currentJobFormType.value?.attributes) params.attributes = splitAttributes(jobForm.value.attributes)
   if (jobFormNeedsObjectType.value && jobForm.value.objectType) params.objectType = jobForm.value.objectType
+  // Same params an on-demand run of this report sends, so the delivered file
+  // matches what the operator sees: operational attributes, and the columns.
+  if (jobFormIsEntryReport.value && jobForm.value.includeOperational) params.includeOperational = true
+  const columns = splitAttributes(jobForm.value.columns)
+  if (columns.length) params.columns = columns
   // Scheduled jobs run as the system, so the backend pins each one to a
   // single OU at save time. Branch-based types (USERS_IN_BRANCH,
   // MISSING_DATA) leave scopeBaseDn off — the backend derives it from the
