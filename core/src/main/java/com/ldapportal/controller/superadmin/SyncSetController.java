@@ -329,6 +329,30 @@ public class SyncSetController {
                 .body(bytes.toByteArray());
     }
 
+    /**
+     * What repairing these drift items would do, each re-checked live now
+     * (create a missing entry, re-apply a drifted one, or skip it and why).
+     * Read-only; needs the manage permission because it previews a write.
+     */
+    @PostMapping("/{id}/drift/repair/preview")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncDriftRepairPreview previewDriftRepair(
+            @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncDriftRepairRequest req) {
+        return service.previewDriftRepair(id, req.seqs());
+    }
+
+    /**
+     * Repair these drift items through the sync engine: create the missing,
+     * re-apply the drifted, each re-checked first; audited with the operator.
+     */
+    @PostMapping("/{id}/drift/repair")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncDriftRepairResult repairDrift(
+            @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncDriftRepairRequest req,
+            @AuthenticationPrincipal AuthPrincipal principal) {
+        return service.repairDrift(id, req.seqs(), principal);
+    }
+
     @PostMapping("/{id}/recompute")
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public ResponseEntity<Void> recompute(@PathVariable UUID id, @Valid @RequestBody RecomputeKeyRequest req) {

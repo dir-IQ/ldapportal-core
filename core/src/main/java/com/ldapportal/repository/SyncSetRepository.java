@@ -45,6 +45,17 @@ public interface SyncSetRepository extends JpaRepository<SyncSet, UUID> {
     @Query("update SyncSet s set s.verifyIncompleteAt = :at where s.id = :id")
     int recordVerifyIncomplete(@Param("id") UUID id, @Param("at") OffsetDateTime at);
 
+    /**
+     * Restate the last complete verify's drift counts after some of its items
+     * were repaired (its time and incomplete flag stay). Targeted, as above.
+     */
+    @Transactional
+    @Modifying
+    @Query("update SyncSet s set s.verifyMissingCount = :missing, s.verifyOrphanCount = :orphan, "
+            + "s.verifyMismatchCount = :mismatch where s.id = :id")
+    int restateVerifyCounts(@Param("id") UUID id, @Param("missing") int missing, @Param("orphan") int orphan,
+                            @Param("mismatch") int mismatch);
+
     /** A complete verify's held-reference counts, stored beside its drift counts. Targeted, as above. */
     @Transactional
     @Modifying

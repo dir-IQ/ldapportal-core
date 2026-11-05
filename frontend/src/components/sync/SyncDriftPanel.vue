@@ -104,23 +104,49 @@
         </button>
       </div>
 
+      <!-- Repair: missing and drifted entries, through the sync engine, after a live re-check and a preview. -->
+      <div v-if="canManage && repairableOnPage.length" class="flex items-center gap-2 flex-wrap" data-testid="drift-bulk">
+        <span class="text-xs text-gray-600 tabular-nums mr-1">
+          {{ selected.size ? `${selected.size} selected` : 'Select missing or drifted entries to repair them' }}
+        </span>
+        <button type="button" class="btn-secondary btn-compact" :disabled="!selected.size"
+                title="Re-check the selected entries live, then show what a repair would create or re-apply before anything is written"
+                @click="openRepair([...selected])">
+          Repair<template v-if="selected.size"> ({{ selected.size }})</template>…
+        </button>
+        <button v-if="selected.size" type="button" class="btn-neutral btn-compact" @click="selected = new Set()">
+          Clear selection
+        </button>
+      </div>
+
       <div class="overflow-x-auto border border-gray-200 rounded-lg">
         <table class="min-w-full text-sm">
           <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wider">
             <tr>
+              <th v-if="canManage" scope="col" class="w-8 pl-3">
+                <input type="checkbox" class="rounded border-gray-300" :checked="allSelected"
+                       :disabled="!repairableOnPage.length" aria-label="Select every repairable entry on this page"
+                       @change="toggleAll(($event.target as HTMLInputElement).checked)" />
+              </th>
               <th scope="col" class="w-8"><span class="sr-only">Details</span></th>
               <th scope="col" class="px-3 py-2 text-left">Kind</th>
               <th scope="col" class="px-3 py-2 text-left">Target DN</th>
               <th scope="col" class="px-3 py-2 text-left">Detail</th>
+              <th v-if="canManage" scope="col" class="px-3 py-2"><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100">
-            <tr v-if="loading && !entries.length"><td colspan="4" class="px-3 py-4 text-center text-gray-500">Loading…</td></tr>
+            <tr v-if="loading && !entries.length"><td :colspan="colCount" class="px-3 py-4 text-center text-gray-500">Loading…</td></tr>
             <tr v-else-if="!entries.length">
-              <td colspan="4" class="px-3 py-4 text-center text-gray-500">No drift matches.</td>
+              <td :colspan="colCount" class="px-3 py-4 text-center text-gray-500">No drift matches.</td>
             </tr>
             <template v-for="e in entries" :key="e.seq">
               <tr :data-testid="`drift-row-${e.seq}`">
+                <td v-if="canManage" class="pl-3 align-top py-2">
+                  <input v-if="repairable(e)" type="checkbox" class="rounded border-gray-300"
+                         :checked="selected.has(e.seq)" :aria-label="`Select ${e.targetDn}`"
+                         @change="toggleSelected(e.seq)" />
+                </td>
                 <td class="pl-2 align-top py-2">
                   <button v-if="expandable(e)" type="button" class="text-gray-500 hover:text-gray-700 px-1"
                           :aria-expanded="expanded.has(e.seq)"
@@ -138,10 +164,17 @@
                   <span v-else>{{ e.targetDn }}</span>
                 </td>
                 <td class="px-3 py-2 align-top text-xs text-gray-600">{{ detail(e) }}</td>
+                <td v-if="canManage" class="px-3 py-2 align-top text-right whitespace-nowrap">
+                  <button v-if="repairable(e)" type="button" class="btn-secondary btn-compact"
+                          :title="e.category === 'MISSING' ? 'Create the entry on the target from its source, after a live re-check and a preview' : 'Bring the target entry back to its source, after a live re-check and a preview'"
+                          @click="openRepair([e.seq])">
+                    {{ e.category === 'MISSING' ? 'Create' : 'Re-apply' }}…
+                  </button>
+                </td>
               </tr>
               <tr v-if="expanded.has(e.seq)" :data-testid="`drift-detail-${e.seq}`" class="bg-gray-50">
-                <td></td>
-                <td colspan="3" class="px-3 py-2 space-y-2">
+                <td :colspan="canManage ? 2 : 1"></td>
+                <td :colspan="canManage ? 4 : 3" class="px-3 py-2 space-y-2">
                   <table v-if="e.attributes.length" class="text-xs w-full">
                     <thead class="text-gray-500">
                       <tr>
@@ -205,6 +238,36 @@
       ✓ Source and target agree: no drift at the last check.
     </p>
 
+    <AppModal v-model="showRepair" title="Repair drift" size="lg">
+      <div class="space-y-3 text-sm" data-testid="repair-preview">
+        <p v-if="previewing" class="text-gray-600">Re-checking the selected entries against both directories…</p>
+        <template v-else-if="preview">
+          <p class="text-gray-600">Each entry was re-checked just now. A repair goes through the sync engine, as a
+            reconcile would, and is recorded in the audit log under your name.</p>
+          <div v-for="g in previewGroups" :key="g.key" :data-testid="`repair-group-${g.key}`">
+            <template v-if="g.items.length">
+              <p class="font-medium" :class="g.tone">{{ g.label(g.items.length) }}</p>
+              <ul class="mt-1 space-y-1 text-xs">
+                <li v-for="i in g.items" :key="i.seq">
+                  <span class="font-mono break-all">{{ i.targetDn }}</span>
+                  <span v-if="i.action === 'REAPPLY' && i.attributes.length" class="text-gray-500">
+                    — {{ i.attributes.map(a => a.attribute).join(', ') }}</span>
+                  <span v-if="i.reason" class="text-gray-500"> — {{ i.reason }}</span>
+                </li>
+              </ul>
+            </template>
+          </div>
+        </template>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-neutral" :disabled="repairing" @click="showRepair = false">Cancel</button>
+        <button type="button" class="btn-primary" :disabled="repairing || previewing || !toApply.length"
+                @click="applyRepair">
+          {{ repairing ? 'Repairing…' : `Repair ${toApply.length}` }}
+        </button>
+      </template>
+    </AppModal>
+
     <p class="text-xs text-gray-500">
       Drift is a live comparison of the source and target, independent of what the reconciliation history says was
       applied. It’s checked after every reconcile and whenever you verify.
@@ -215,11 +278,13 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import RelativeTime from '@/components/RelativeTime.vue'
+import AppModal from '@/components/AppModal.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { downloadBlob } from '@/composables/useApi'
 import {
-  getDrift, downloadDriftCsv,
+  getDrift, downloadDriftCsv, previewDriftRepair, repairDrift,
   type SyncSet, type SyncVerifyResult, type SyncDriftPage, type SyncDriftEntry, type SyncDriftCategory,
+  type SyncDriftRepairPreviewItem,
 } from '@/api/sync'
 
 const props = defineProps<{
@@ -232,8 +297,10 @@ const props = defineProps<{
   canDiff: boolean
   sourceDirectoryId?: string | null
   targetDirectoryId?: string | null
+  /** May repair drift (Manage directory sync). */
+  canManage?: boolean
 }>()
-const emit = defineEmits<{ verify: [] }>()
+const emit = defineEmits<{ verify: []; changed: [] }>()
 
 const notif = useNotificationStore()
 
@@ -283,6 +350,105 @@ function setCategory(c: CategoryFilter): void {
   void load()
 }
 
+// ── Repair ──────────────────────────────────────────────────────────────────
+// Missing and drifted entries can be repaired (an orphan has no source member).
+// The preview re-checks each live; Repair re-checks again and writes through
+// the sync engine.
+
+const selected = ref<Set<number>>(new Set())
+const showRepair = ref(false)
+const previewing = ref(false)
+const repairing = ref(false)
+const preview = ref<SyncDriftRepairPreviewItem[] | null>(null)
+
+function repairable(e: SyncDriftEntry): boolean {
+  return e.category !== 'ORPHAN' && !!e.sourceDn
+}
+const repairableOnPage = computed<SyncDriftEntry[]>(() => entries.value.filter(repairable))
+const allSelected = computed<boolean>(() =>
+  repairableOnPage.value.length > 0 && repairableOnPage.value.every(e => selected.value.has(e.seq)))
+const colCount = computed<number>(() => (props.canManage ? 6 : 4))
+
+function toggleSelected(seq: number): void {
+  const next = new Set(selected.value)
+  if (next.has(seq)) next.delete(seq)
+  else next.add(seq)
+  selected.value = next
+}
+
+function toggleAll(on: boolean): void {
+  selected.value = on ? new Set(repairableOnPage.value.map(e => e.seq)) : new Set()
+}
+
+const toApply = computed<SyncDriftRepairPreviewItem[]>(() =>
+  (preview.value ?? []).filter(i => i.action !== 'SKIP'))
+
+interface PreviewGroup {
+  key: string
+  items: SyncDriftRepairPreviewItem[]
+  label: (n: number) => string
+  tone: string
+}
+const previewGroups = computed<PreviewGroup[]>(() => {
+  const items = preview.value ?? []
+  return [
+    { key: 'create', items: items.filter(i => i.action === 'CREATE'), tone: 'text-gray-900',
+      label: (n: number) => `${n} to create on the target` },
+    { key: 'reapply', items: items.filter(i => i.action === 'REAPPLY'), tone: 'text-gray-900',
+      label: (n: number) => `${n} to re-apply from the source` },
+    { key: 'skip', items: items.filter(i => i.action === 'SKIP'), tone: 'text-gray-500',
+      label: (n: number) => `${n} skipped` },
+  ]
+})
+
+async function openRepair(seqs: number[]): Promise<void> {
+  if (!seqs.length) return
+  preview.value = null
+  showRepair.value = true
+  previewing.value = true
+  try {
+    const { data: d } = await previewDriftRepair(props.set.id, seqs)
+    preview.value = d.items
+  } catch (e) {
+    notif.error(errMsg(e))
+    showRepair.value = false
+  } finally {
+    previewing.value = false
+  }
+}
+
+async function applyRepair(): Promise<void> {
+  const seqs = toApply.value.map(i => i.seq)
+  if (!seqs.length) return
+  repairing.value = true
+  try {
+    const { data: r } = await repairDrift(props.set.id, seqs)
+    const parts = [
+      r.created ? `${r.created} created` : '',
+      r.reapplied ? `${r.reapplied} re-applied` : '',
+      r.alreadyInSync ? `${r.alreadyInSync} already matched` : '',
+      r.skipped ? `${r.skipped} skipped` : '',
+      r.held ? `${r.held} held for review` : '',
+      r.failed ? `${r.failed} failed` : '',
+    ].filter(Boolean)
+    const msg = `Repair finished: ${parts.join(', ') || 'nothing to do'}`
+    if (r.failed || r.held) {
+      const why = r.items.find(i => (i.outcome === 'FAILED' || i.outcome === 'HELD') && i.message)?.message
+      notif.warning(why ? `${msg}. ${why}` : msg)
+    } else {
+      notif.success(msg)
+    }
+    showRepair.value = false
+    selected.value = new Set()
+    emit('changed')
+    await load()
+  } catch (e) {
+    notif.error(errMsg(e))
+  } finally {
+    repairing.value = false
+  }
+}
+
 function expandable(e: SyncDriftEntry): boolean {
   return e.attributes.length > 0 || !!e.sourceDn
 }
@@ -323,6 +489,7 @@ async function load(): Promise<void> {
     if (seq !== loadSeq) return
     data.value = d
     expanded.value = new Set()
+    selected.value = new Set()
   } catch (e) {
     if (seq === loadSeq) notif.error(errMsg(e))
   } finally {

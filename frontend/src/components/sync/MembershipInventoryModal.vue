@@ -49,7 +49,8 @@
       <div v-if="tab === 'drift' && set" id="sync-panel-drift" role="tabpanel" aria-labelledby="sync-tab-drift">
         <SyncDriftPanel :set="set" :live="verifyResult" :verifying="verifying" :refresh-key="driftKey"
                         :can-diff="canDiff" :source-directory-id="sourceDirectoryId ?? null"
-                        :target-directory-id="targetDirectoryId ?? null" @verify="verify" />
+                        :target-directory-id="targetDirectoryId ?? null" :can-manage="canManageSync"
+                        @verify="verify" @changed="emit('changed')" />
       </div>
 
       <div v-show="tab === 'reconciliation'" id="sync-panel-reconciliation" role="tabpanel"
@@ -230,6 +231,8 @@ const confirm = useConfirm()
 const auth = useAuthStore()
 /** Directory Diff is gated by its own superadmin permission. */
 const canDiff = computed(() => auth.hasSuperadminPermission('superadmin.manage_directory_diff'))
+/** Repairing drift writes to the target: Manage directory sync. */
+const canManageSync = computed(() => auth.hasSuperadminPermission('superadmin.manage_directory_sync'))
 
 const rows = ref<Membership[]>([])
 const total = ref(0)

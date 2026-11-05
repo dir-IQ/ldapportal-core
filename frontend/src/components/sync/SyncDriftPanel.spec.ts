@@ -23,12 +23,22 @@ const page = vi.hoisted(() => (over: Record<string, unknown> = {}) => ({
 vi.mock('@/api/sync', () => ({
   getDrift: vi.fn(() => Promise.resolve({ data: page() })),
   downloadDriftCsv: vi.fn(() => Promise.resolve({ data: new Blob(['x']) })),
+  previewDriftRepair: vi.fn(() => Promise.resolve({ data: { items: [
+    { seq: 0, action: 'CREATE', targetDn: 'uid=pn,ou=people,dc=hr', sourceDn: 'uid=pn,ou=staff,dc=corp', attributes: [], reason: null },
+    { seq: 2, action: 'REAPPLY', targetDn: 'uid=js,ou=people,dc=hr', sourceDn: 'uid=js,ou=staff,dc=corp',
+      attributes: [{ attribute: 'title', expected: ['Senior Engineer'], actual: ['Engineer'], hidden: false, truncated: false }], reason: null },
+    { seq: 5, action: 'SKIP', targetDn: 'uid=ok,ou=people,dc=hr', sourceDn: 'uid=ok,ou=staff,dc=corp', attributes: [], reason: 'It no longer drifts.' },
+  ] } })),
+  repairDrift: vi.fn(() => Promise.resolve({ data: {
+    created: 1, reapplied: 1, alreadyInSync: 0, skipped: 0, held: 0, failed: 0, items: [],
+  } })),
 }))
 vi.mock('@/composables/useApi', () => ({ downloadBlob: vi.fn() }))
 
 import SyncDriftPanel from './SyncDriftPanel.vue'
 import * as syncApi from '@/api/sync'
 import { downloadBlob } from '@/composables/useApi'
+import { useNotificationStore } from '@/stores/notifications'
 
 const set = { id: 'set-1', name: 'People → HR', sourceAnchorAttribute: 'employeeNumber', verify: null }
 
@@ -37,6 +47,7 @@ function mountPanel(props: Record<string, unknown> = {}) {
     props: { set, live: null, verifying: false, refreshKey: 0, canDiff: true,
       sourceDirectoryId: 'dir-src', targetDirectoryId: 'dir-hr', ...props } as never,
     global: { stubs: {
+      AppModal: { props: ['modelValue', 'title'], template: '<div v-if="modelValue" class="modal"><slot /><slot name="footer" /></div>' },
       RouterLink: { props: ['to'], template: '<a class="rl" :data-to="JSON.stringify(to)"><slot /></a>' },
       RelativeTime: { props: ['value'], template: '<span>{{ value }}</span>' },
     } },
@@ -49,6 +60,8 @@ describe('SyncDriftPanel', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    // Some tests override the page with mockResolvedValue, which outlives clearAllMocks.
+    vi.mocked(syncApi.getDrift).mockImplementation(() => Promise.resolve({ data: page() }) as never)
   })
 
   it('lists every stored item with its kind, and counts per kind', async () => {
@@ -170,5 +183,85 @@ describe('SyncDriftPanel', () => {
     const w = mountPanel({ canDiff: false })
     await flushPromises()
     expect(w.text()).not.toContain('Compare in Directory Diff')
+  })
+
+  describe('repair', () => {
+    it('offers repair only to managers, and only on missing and drifted entries', async () => {
+      let w = mountPanel({ canManage: false })
+      await flushPromises()
+      expect(w.find('[data-testid="drift-bulk"]').exists()).toBe(false)
+      expect(w.findAll('tbody input[type="checkbox"]')).toHaveLength(0)
+
+      w = mountPanel({ canManage: true })
+      await flushPromises()
+      expect(w.find('[data-testid="drift-row-0"] input[type="checkbox"]').exists()).toBe(true)
+      expect(w.find('[data-testid="drift-row-1"] input[type="checkbox"]').exists()).toBe(false) // orphan
+      expect(w.find('[data-testid="drift-row-0"]').text()).toContain('Create…')
+      expect(w.find('[data-testid="drift-row-2"]').text()).toContain('Re-apply…')
+      expect(w.find('[data-testid="drift-row-1"]').text()).not.toMatch(/Create|Re-apply/)
+    })
+
+    it('previews a row\'s repair after a live re-check, then repairs what isn\'t skipped', async () => {
+      const w = mountPanel({ canManage: true })
+      await flushPromises()
+      const success = vi.spyOn(useNotificationStore(), 'success')
+
+      await btn(w, 'Re-apply…').trigger('click')
+      await flushPromises()
+      expect(syncApi.previewDriftRepair).toHaveBeenCalledWith('set-1', [2])
+      const groups = (k: string) => w.find(`[data-testid="repair-group-${k}"]`).text().replace(/\s+/g, ' ')
+      expect(groups('create')).toContain('1 to create on the target')
+      expect(groups('reapply')).toContain('1 to re-apply from the source')
+      expect(groups('reapply')).toContain('— title')
+      expect(groups('skip')).toContain('It no longer drifts.')
+      expect(syncApi.repairDrift).not.toHaveBeenCalled()
+
+      await btn(w, 'Repair 2').trigger('click')
+      await flushPromises()
+
+      expect(syncApi.repairDrift).toHaveBeenCalledWith('set-1', [0, 2])
+      expect(success).toHaveBeenCalledWith('Repair finished: 1 created, 1 re-applied')
+      expect(w.emitted('changed')).toHaveLength(1)
+      expect(syncApi.getDrift).toHaveBeenCalledTimes(2) // reloaded
+      expect(w.find('[data-testid="repair-preview"]').exists()).toBe(false)
+    })
+
+    it('repairs the selection from the bulk bar; select-all takes the page\'s repairable rows', async () => {
+      const w = mountPanel({ canManage: true })
+      await flushPromises()
+      await w.find('thead input[type="checkbox"]').setValue(true)
+      expect(w.find('[data-testid="drift-bulk"]').text()).toContain('2 selected')
+
+      await btn(w, 'Repair (2)').trigger('click')
+      await flushPromises()
+      expect(syncApi.previewDriftRepair).toHaveBeenCalledWith('set-1', [0, 2])
+    })
+
+    it('warns with the reason when something was held or failed', async () => {
+      vi.mocked(syncApi.repairDrift).mockResolvedValueOnce({ data: {
+        created: 0, reapplied: 1, alreadyInSync: 0, skipped: 0, held: 1, failed: 0,
+        items: [{ seq: 0, outcome: 'HELD', targetDn: 'uid=pn,ou=people,dc=hr', message: 'Placement conflict at uid=pn' }],
+      } } as never)
+      const w = mountPanel({ canManage: true })
+      await flushPromises()
+      const warning = vi.spyOn(useNotificationStore(), 'warning')
+      await btn(w, 'Create…').trigger('click')
+      await flushPromises()
+      await btn(w, 'Repair 2').trigger('click')
+      await flushPromises()
+
+      expect(warning).toHaveBeenCalledWith('Repair finished: 1 re-applied, 1 held for review. Placement conflict at uid=pn')
+    })
+
+    it('can\'t apply when the re-check leaves nothing to repair', async () => {
+      vi.mocked(syncApi.previewDriftRepair).mockResolvedValueOnce({ data: { items: [
+        { seq: 0, action: 'SKIP', targetDn: 'uid=pn,ou=people,dc=hr', sourceDn: null, attributes: [], reason: 'It no longer drifts.' },
+      ] } } as never)
+      const w = mountPanel({ canManage: true })
+      await flushPromises()
+      await btn(w, 'Create…').trigger('click')
+      await flushPromises()
+      expect(btn(w, 'Repair 0').attributes('disabled')).toBeDefined()
+    })
   })
 })

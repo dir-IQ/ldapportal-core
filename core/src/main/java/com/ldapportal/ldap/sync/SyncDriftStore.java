@@ -111,6 +111,31 @@ public class SyncDriftStore {
         return out;
     }
 
+    /** The set's stored items at these positions, in verify order (unknown positions skipped). */
+    public List<Row> bySeq(UUID syncSetId, java.util.Collection<Integer> seqs) {
+        if (seqs.isEmpty()) {
+            return List.of();
+        }
+        String in = String.join(",", java.util.Collections.nCopies(seqs.size(), "?"));
+        List<Object> args = new ArrayList<>();
+        args.add(syncSetId);
+        args.addAll(seqs);
+        return jdbc.query("SELECT seq, category, target_dn, source_dn, identity, attributes FROM sync_verify_entry "
+                + "WHERE sync_set_id = ? AND seq IN (" + in + ") ORDER BY seq", rowMapper(), args.toArray());
+    }
+
+    /** Drop the set's items at these positions (repaired since the verify found them). */
+    public void delete(UUID syncSetId, java.util.Collection<Integer> seqs) {
+        if (seqs.isEmpty()) {
+            return;
+        }
+        String in = String.join(",", java.util.Collections.nCopies(seqs.size(), "?"));
+        List<Object> args = new ArrayList<>();
+        args.add(syncSetId);
+        args.addAll(seqs);
+        jdbc.update("DELETE FROM sync_verify_entry WHERE sync_set_id = ? AND seq IN (" + in + ")", args.toArray());
+    }
+
     /** Hand each of the set's items to {@code sink}, in verify order. */
     public void forEach(UUID syncSetId, Consumer<Row> sink) {
         RowMapper<Row> mapper = rowMapper();

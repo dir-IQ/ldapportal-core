@@ -505,6 +505,36 @@ export const getDrift = (setId: string,
 export const downloadDriftCsv = (setId: string) =>
   client.get<Blob>(`/superadmin/sync/sets/${setId}/drift.csv`, { responseType: 'blob' })
 
+/** What repairing one drift item would do, re-checked live. */
+export interface SyncDriftRepairPreviewItem {
+  seq: number
+  action: 'CREATE' | 'REAPPLY' | 'SKIP'
+  targetDn: string
+  sourceDn: string | null
+  /** For a REAPPLY: the attributes that differ now. */
+  attributes: SyncDriftAttribute[]
+  /** For a SKIP: why. */
+  reason: string | null
+}
+
+export type SyncDriftRepairOutcome = 'CREATED' | 'REAPPLIED' | 'ALREADY_IN_SYNC' | 'SKIPPED' | 'HELD' | 'FAILED'
+
+export interface SyncDriftRepairResult {
+  created: number
+  reapplied: number
+  alreadyInSync: number
+  skipped: number
+  held: number
+  failed: number
+  items: { seq: number; outcome: SyncDriftRepairOutcome; targetDn: string | null; message: string | null }[]
+}
+
+export const previewDriftRepair = (setId: string, seqs: number[]) =>
+  client.post<{ items: SyncDriftRepairPreviewItem[] }>(`/superadmin/sync/sets/${setId}/drift/repair/preview`, { seqs })
+
+export const repairDrift = (setId: string, seqs: number[]) =>
+  client.post<SyncDriftRepairResult>(`/superadmin/sync/sets/${setId}/drift/repair`, { seqs })
+
 // ── Inventory + operator triggers ───────────────────────────────────────────
 
 /** Spring Data Page envelope (the subset the UI consumes). */
