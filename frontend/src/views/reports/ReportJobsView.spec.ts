@@ -34,6 +34,11 @@ vi.mock('@/api/reports', () => ({
 }))
 vi.mock('@/api/directories', () => ({ listDirectories: vi.fn().mockResolvedValue({ data: [] }) }))
 vi.mock('@/api/audit', () => ({ getAuditActions: vi.fn().mockResolvedValue({ data: [] }) }))
+vi.mock('@/api/schema', () => ({
+  listAttributeTypes: vi.fn().mockResolvedValue({ data: [
+    { name: 'givenName' }, { name: 'employeeNumber' }, { name: 'createTimestamp' },
+  ] }),
+}))
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
@@ -219,30 +224,72 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect(body.reportParams).toHaveProperty('branchDn')
   })
 
-  it('passes every column to the table, labelled, showing the first ten and groups, hiding the rest', async () => {
+  async function runReport(type: string, data: Record<string, unknown>) {
     const reports = await import('@/api/reports')
-    const attrs = ['cn', 'mail', 'sn', 'givenname', 'uid', 'title', 'ou', 'l', 'st', 'employeenumber', 'street']
-    ;(reports.runOperationalReportData as unknown as Mock).mockResolvedValueOnce({
-      data: {
-        columns: ['dn', ...attrs, 'groups'],
-        labels: { dn: 'DN', cn: 'Name', groups: 'Groups' },
-        rows: [],
-      },
-    })
+    ;(reports.runOperationalReportData as unknown as Mock).mockResolvedValueOnce({ data })
     const wrapper = mountView()
     await flushPromises()
+    await wrapper.find('#rj-report-type').setValue(type)
     await wrapper.findAll('button').find(b => b.text() === 'Run Report')!.trigger('click')
     await flushPromises()
+    return { wrapper, reports }
+  }
+  type Col = { key: string, label: string, defaultHidden?: boolean }
+  const tableColumnsOf = (w: Awaited<ReturnType<typeof runReport>>['wrapper']) =>
+    w.findComponent({ name: 'ResultsTable' }).props('columns') as Col[]
 
-    const columns = wrapper.findComponent({ name: 'ResultsTable' }).props('columns') as
-      { key: string, label: string, defaultHidden?: boolean }[]
-    expect(columns.map(c => c.key)).toEqual(['dn', ...attrs, 'groups'])
-    // Backend label first, else the friendly LDAP name matched ignoring case.
-    expect(columns.find(c => c.key === 'cn')!.label).toBe('Name')
-    expect(columns.find(c => c.key === 'givenname')!.label).toBe('First Name')
-    expect(columns.find(c => c.key === 'employeenumber')!.label).toBe('Employee #')
-    expect(columns.filter(c => !c.defaultHidden).map(c => c.key)).toEqual(['dn', ...attrs.slice(0, 9), 'groups'])
-    expect(columns.find(c => c.key === 'groups')!.label).toBe('Groups')
+  it('gives entry reports the Users page columns: real attribute names, the same defaults and order', async () => {
+    const attrs = ['cn', 'mail', 'sn', 'givenname', 'uid', 'title', 'ou', 'l', 'employeenumber', 'userpassword']
+    const { wrapper } = await runReport('USERS_IN_BRANCH',
+      { columns: ['dn', ...attrs, 'groups'], labels: {}, rows: [] })
+
+    const columns = tableColumnsOf(wrapper)
+    // dn → defaults present (their fixed order) → groups → the rest A–Z; secrets dropped.
+    expect(columns.map(c => c.key)).toEqual(
+      ['dn', 'cn', 'sn', 'givenname', 'mail', 'uid', 'title', 'groups', 'employeenumber', 'l', 'ou'])
+    // Headed by the attribute name, schema-cased — no friendly names.
+    expect(columns.find(c => c.key === 'cn')!.label).toBe('cn')
+    expect(columns.find(c => c.key === 'givenname')!.label).toBe('givenName')
+    expect(columns.find(c => c.key === 'employeenumber')!.label).toBe('employeeNumber')
+    expect(columns.find(c => c.key === 'groups')!.label).toBe('groups')
+    expect(columns.filter(c => !c.defaultHidden).map(c => c.key))
+      .toEqual(['dn', 'cn', 'sn', 'givenname', 'mail', 'uid', 'title', 'groups'])
+  })
+
+  it('keeps other reports in the backend order, headed by the backend label or the key', async () => {
+    const { wrapper } = await runReport('MISSING_DATA', {
+      columns: ['dn', 'missingAttributes', 'objectClass', 'mail'],
+      labels: { missingAttributes: 'Missing Attributes' }, rows: [],
+    })
+
+    expect(tableColumnsOf(wrapper).map(c => [c.key, c.label])).toEqual([
+      ['dn', 'dn'], ['missingAttributes', 'Missing Attributes'], ['objectClass', 'objectClass'], ['mail', 'mail'],
+    ])
+  })
+
+  it('exports the visible columns, in order, by their schema-cased names', async () => {
+    const { wrapper, reports } = await runReport('USERS_IN_BRANCH',
+      { columns: ['dn', 'cn', 'givenname', 'groups'], labels: {}, rows: [] })
+    wrapper.findComponent({ name: 'ResultsTable' }).vm.$emit('visible-columns-change', ['dn', 'givenname', 'groups'])
+    await flushPromises()
+
+    // ResultsTable is stubbed (no toolbar), so call what its Export CSV button calls.
+    await (wrapper.vm as unknown as { doExport: (f: string) => Promise<void> }).doExport('CSV')
+
+    expect(reports.runOperationalReport).toHaveBeenCalledWith('dir-1',
+      expect.objectContaining({ columns: ['dn', 'givenName', 'groups'] }), 'CSV')
+  })
+
+  it('asks entry reports for operational attributes when the switch is on', async () => {
+    localStorage.setItem('ldapportal:operational-attributes:report-jobs', 'true')
+    try {
+      const { reports } = await runReport('USERS_IN_BRANCH', { columns: ['dn'], labels: {}, rows: [] })
+      expect(reports.runOperationalReportData).toHaveBeenLastCalledWith('dir-1', expect.objectContaining({
+        reportParams: expect.objectContaining({ includeOperational: true }),
+      }))
+    } finally {
+      localStorage.removeItem('ldapportal:operational-attributes:report-jobs')
+    }
   })
 
   it.each(['USERS_IN_BRANCH', 'MISSING_DATA'])(

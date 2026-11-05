@@ -6,7 +6,15 @@ spring:
     driver-class-name: org.h2.Driver
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      # `create`, not `create-drop`: every test context shares this one
+      # in-memory database (DB_CLOSE_DELAY=-1), and Spring's test-context cache
+      # closes its least-recently-used context once it holds 32. With
+      # create-drop that close dropped the whole shared schema, so whichever
+      # still-cached context ran next found "Table … not found (this database
+      # is empty)" — which tests broke depended on how many contexts the suite
+      # had. `create` still rebuilds the schema when a context starts; nothing
+      # drops it when one closes.
+      ddl-auto: create
     properties:
       hibernate:
         dialect: org.hibernate.dialect.H2Dialect

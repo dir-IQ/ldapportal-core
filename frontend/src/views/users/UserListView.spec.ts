@@ -40,7 +40,10 @@ vi.mock('@/api/users', () => ({
   bulkUpdateAttributes: vi.fn(), getPasswordStatus: vi.fn(), applyMemberships: vi.fn(),
 }))
 vi.mock('@/api/groups', () => ({ addGroupMember: vi.fn(), removeGroupMember: vi.fn(), searchGroups: vi.fn() }))
-vi.mock('@/api/csvTemplates', () => ({ exportCsv: vi.fn() }))
+vi.mock('@/api/csvTemplates', () => ({ exportCsv: vi.fn().mockResolvedValue({ data: new Blob() }) }))
+vi.mock('@/api/schema', () => ({
+  listAttributeTypes: vi.fn().mockResolvedValue({ data: [{ name: 'employeeNumber' }, { name: 'createTimestamp' }] }),
+}))
 vi.mock('@/api/profiles', () => ({ listProfiles: vi.fn().mockResolvedValue({ data: [] }), getProfile: vi.fn() }))
 vi.mock('@/api/playbooks', () => ({
   listEnabled: vi.fn().mockResolvedValue({ data: [] }),
@@ -55,6 +58,7 @@ import UserListView from './UserListView.vue'
 import * as usersApi from '@/api/users'
 import { useUnsavedChangesStore } from '@/stores/unsavedChanges'
 import { listProfiles, getProfile } from '@/api/profiles'
+import { exportCsv } from '@/api/csvTemplates'
 
 const stubs = {
   LdapFilterBuilder: true,
@@ -201,6 +205,62 @@ describe('UserListView feature gating', () => {
       'd1',
       expect.objectContaining({ attributes: '*,memberOf,isMemberOf' }),
     )
+  })
+
+  it('also requests operational attributes when the switch is on', async () => {
+    localStorage.setItem('ldapportal:operational-attributes:users-list', 'true')
+    try {
+      await mountWith(ALL)
+      expect(usersApi.searchUsersPage).toHaveBeenCalledWith(
+        'd1', expect.objectContaining({ attributes: '*,+,memberOf,isMemberOf' }))
+    } finally {
+      localStorage.removeItem('ldapportal:operational-attributes:users-list')
+    }
+  })
+
+  it('heads columns by the schema-cased attribute name and never offers secrets or raw memberOf', async () => {
+    vi.mocked(usersApi.searchUsersPage).mockResolvedValueOnce({ data: {
+      entries: [{ dn: 'uid=a,dc=x', attributes: {
+        cn: ['A'], employeenumber: ['7'], userpassword: ['{SSHA}x'], memberof: ['cn=g,dc=x'],
+      } }],
+      truncated: false, total: 1,
+    } } as never)
+    const wrapper = await mountWith(ALL)
+    const cols = wrapper.findComponent({ name: 'ResultsTable' }).props('columns') as Array<{ key: string, label: string }>
+    expect(cols.find(c => c.key === 'employeenumber')!.label).toBe('employeeNumber')
+    expect(cols.find(c => c.key === 'dn')!.label).toBe('dn')
+    expect(cols.find(c => c.key === '__groups')!.label).toBe('groups')
+    expect(cols.some(c => c.key === 'userpassword' || c.key === 'memberof')).toBe(false)
+  })
+
+  it('exports the visible columns in display order, with groups when shown', async () => {
+    vi.mocked(usersApi.searchUsersPage).mockResolvedValueOnce({ data: {
+      entries: [{ dn: 'uid=a,dc=x', attributes: { cn: ['A'], mail: ['a@x'], employeenumber: ['7'] } }],
+      truncated: false, total: 1,
+    } } as never)
+    const wrapper = await mountWith(ALL)
+    wrapper.findComponent({ name: 'ResultsTable' }).vm
+      .$emit('visible-columns-change', ['dn', 'employeenumber', 'cn', '__groups', 'actions'])
+    await flushPromises()
+
+    await wrapper.findAll('button').find(b => b.text() === 'Export CSV')!.trigger('click')
+    await flushPromises()
+
+    expect(exportCsv).toHaveBeenCalledWith('d1', expect.objectContaining({
+      attributes: 'employeeNumber,cn', includeGroups: true,
+    }))
+  })
+
+  it('exports dn alone (not every attribute) when only dn is visible', async () => {
+    const wrapper = await mountWith(ALL)
+    wrapper.findComponent({ name: 'ResultsTable' }).vm.$emit('visible-columns-change', ['dn', 'actions'])
+    await flushPromises()
+
+    await wrapper.findAll('button').find(b => b.text() === 'Export CSV')!.trigger('click')
+    await flushPromises()
+
+    expect(exportCsv).toHaveBeenCalledWith('d1', expect.objectContaining({ attributes: 'dn' }))
+    expect(vi.mocked(exportCsv).mock.calls[0][1]).not.toHaveProperty('includeGroups', true)
   })
 
   // Regression: the backend lower-cases all LDAP attribute keys, so each

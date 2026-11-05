@@ -142,12 +142,24 @@ For operational reports, go to **Reports** in the sidebar:
   lists every entry under the branch that has any of those attributes absent or
   blank, with a "Missing Attributes" column naming the gaps. Optionally narrow
   to users or groups. Can also be scheduled.
-- All available in CSV and PDF format. The table shows the first ten columns;
-  turn the rest on from the **Columns** menu. Reports that list users also
-  show a **Groups** column (each user's groups, `|`-separated, limited to
-  groups under your authorized OUs). A CSV export carries every column, headed by the real LDAP
-  attribute names (`givenname`, not "First Name"); password attributes are
-  never included.
+- All available in CSV and PDF format.
+- Reports that list users (Users in Group / Branch, Users with No Group,
+  Recently Added / Modified, Disabled Accounts) offer the same columns as the
+  **Users** page, in the same order: `dn`, then `cn`, `sn`, `givenName`,
+  `displayName`, `mail`, `uid` and `title` when present (shown), then a
+  `groups` column (each user's groups, `|`-separated, limited to groups under
+  your authorized OUs), then every other attribute A–Z, off until you turn it
+  on from the **Columns** menu. Other reports show their first ten columns.
+- Columns are always headed by the real LDAP attribute name (`givenName`, not
+  "First Name"). Password attributes are never included.
+- Tick **Operational attributes** above the table (here or on the Users page)
+  to also fetch operational attributes such as `createTimestamp` and
+  `entryUUID`; they appear in the **Columns** menu. Active Directory doesn't
+  return operational attributes this way.
+- **Export CSV** carries the columns the table shows, in the order shown, on
+  both the Users page and the reports — hide or reorder a column and the file
+  follows. (`dn` always comes first, and on the Users page `groups` always
+  comes last.)
 
 ---
 
