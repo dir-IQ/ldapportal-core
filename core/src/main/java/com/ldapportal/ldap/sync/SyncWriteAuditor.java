@@ -67,7 +67,7 @@ public class SyncWriteAuditor {
         auditService.recordDirectoryEventNoActor(targetDirectoryId, action, outcome.targetDn(), detail, runId);
     }
 
-    static AuditAction actionFor(SyncPreviewAction outcome) {
+    public static AuditAction actionFor(SyncPreviewAction outcome) {
         return switch (outcome) {
             case ADD -> AuditAction.ENTRY_CREATE;
             case MODIFY -> AuditAction.ENTRY_UPDATE;

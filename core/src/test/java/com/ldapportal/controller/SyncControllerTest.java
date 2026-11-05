@@ -401,6 +401,39 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void driftRepair_previewsThenRepairs_forTheGivenItems() throws Exception {
+        given(service.previewDriftRepair(SET, List.of(3, 7))).willReturn(new com.ldapportal.dto.sync.SyncDriftRepairPreview(
+                List.of(new com.ldapportal.dto.sync.SyncDriftRepairPreview.Item(3,
+                        com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.CREATE, "uid=a,dc=dst", "uid=a,dc=src",
+                        List.of(), null))));
+        given(service.repairDrift(eq(SET), eq(List.of(3, 7)), any())).willReturn(new com.ldapportal.dto.sync.SyncDriftRepairResult(
+                1, 0, 0, 1, 0, 0, List.of()));
+
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/repair/preview").with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[3,7]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].action").value("CREATE"));
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/repair").with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[3,7]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(1));
+    }
+
+    @Test
+    void driftRepair_withoutItems_is400() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/repair").with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void driftRepair_adminWithoutSuperadmin_isForbidden() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/repair").with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[1]}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void reconcileRun_superadmin_returnsDetail() throws Exception {
         UUID runId = UUID.randomUUID();
         SyncReconcileRunResponse run = new SyncReconcileRunResponse(

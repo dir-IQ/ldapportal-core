@@ -662,7 +662,30 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   (`category,targetDn,sourceDn,identity,attribute,expected,actual`, one row per
   differing attribute). The list comes from `GET …/sets/{id}/drift` and
   `…/drift.csv`. Counts from a check made before the list was kept show with
-  a prompt to verify again. When the set
+  a prompt to verify again.
+- **Repairing drift** (Drift tab; needs *Manage directory sync*). A **missing**
+  entry can be **created** and a **content drift** **re-applied** from its
+  source: per row (**Create…** / **Re-apply…**) or for the rows you tick
+  (**Repair (n)…**, one page at a time, up to 200). An orphaned entry has no
+  source member, so it isn't offered here.
+  - **Preview first.** Each chosen entry is re-checked live against both
+    directories (the stored check may be hours old), and the dialog says what
+    a repair would do: *to create*, *to re-apply* (naming the attributes that
+    differ), or *skipped* and why: it no longer drifts, its source entry is
+    gone or no longer in the set, or a directory couldn't be read. Nothing is
+    written until **Repair n**.
+  - **Through the sync engine.** Repair re-checks again, forgets what the set
+    last wrote for those entries (so an unchanged source doesn't skip them, as
+    **Re-check target** does for a whole set), and recomputes each one now,
+    exactly as a reconcile would: a placement conflict or ambiguous match is
+    **held for review**, not overwritten.
+  - **Audited** under your name (`entry.create` / `entry.update`, detail
+    `operation: drift-repair`, attribute names only, never values).
+  - Repaired entries, and any found already back in step, leave the Drift tab
+    and the set's drift counts; the next check confirms the rest. Endpoints:
+    `POST …/sets/{id}/drift/repair/preview` and `…/drift/repair`, body
+    `{"seqs": [...]}` (the items' positions in the stored check).
+- **Orphan scope.** When the set
   writes a **source anchor**, only target entries carrying it count as
   orphaned: an entry under the same target base that nothing manages isn't
   this set's drift. Nor is one another set placed: when several sets write

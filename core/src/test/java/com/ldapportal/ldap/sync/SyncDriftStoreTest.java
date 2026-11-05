@@ -125,4 +125,17 @@ class SyncDriftStoreTest {
         assertThat(seqs.get(0)).isZero();
         assertThat(seqs.get(2499)).isEqualTo(2499);
     }
+
+    @Test
+    void bySeq_andDelete_actOnTheGivenPositionsOnly() {
+        UUID set = UUID.randomUUID();
+        store.replace(set, List.of(missing("a"), orphan("b"), mismatch("c", "x")));
+
+        assertThat(store.bySeq(set, List.of(2, 0, 9))).extracting(SyncDriftStore.Row::seq).containsExactly(0, 2);
+        assertThat(store.bySeq(set, List.of())).isEmpty();
+
+        store.delete(set, List.of(0, 2));
+
+        assertThat(store.page(set, null, null, 0, 10)).extracting(SyncDriftStore.Row::seq).containsExactly(1);
+    }
 }

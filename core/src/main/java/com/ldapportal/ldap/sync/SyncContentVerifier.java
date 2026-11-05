@@ -184,6 +184,97 @@ public class SyncContentVerifier {
         return result.withHeldReferences(heldReferencesOnSource(ctx, members.values()));
     }
 
+    /** What a live re-check of one source member found. */
+    public enum RecheckState {
+        /** The target entry matches the projected source. */
+        IN_SYNC,
+        /** No entry at the member's target DN. */
+        MISSING,
+        /** The target entry's attributes differ from the projected source. */
+        MISMATCH,
+        /** The source entry no longer belongs to the set (filter, scope or placement). */
+        NOT_MEMBER,
+        /** The source entry no longer exists. */
+        SOURCE_GONE,
+        /** The set, its link or a directory is unavailable, or a read failed. */
+        UNAVAILABLE
+    }
+
+    /**
+     * One source member re-checked live: its state, identity, target DN and,
+     * for a MISMATCH, the attributes that differ ({@link #attributeDiffs}).
+     */
+    public record Recheck(String sourceDn, RecheckState state, String identity, String targetDn,
+                          List<SyncDriftItem.AttributeDiff> attributes, String note) {
+    }
+
+    /**
+     * Re-check the given source members against the target right now, exactly
+     * as a full verify would compare them ({@link #compare}, one entry at a
+     * time): each source entry is read and projected, and the entry at its
+     * target DN read and diffed. The set and its directories are loaded once.
+     * Never writes.
+     *
+     * @return one result per source DN, in the order given
+     */
+    public List<Recheck> recheck(UUID syncSetId, List<String> sourceDns) {
+        Context ctx = loadContext(syncSetId);
+        List<Recheck> out = new ArrayList<>(sourceDns.size());
+        if (ctx == null) {
+            for (String dn : sourceDns) {
+                out.add(new Recheck(dn, RecheckState.UNAVAILABLE, null, null, List.of(),
+                        "Sync set, link, or source/target directory is unavailable or disabled."));
+            }
+            return out;
+        }
+        ReferenceResolver resolver = referenceResolvers.snapshot(ctx.link);
+        UntranslatedReferenceTargets.Lookup lookup = untranslatedTargets.forSet(ctx.set);
+        Set<String> excluded = SyncExcludedAttributes.effectiveFor(ctx.set);
+        var schema = targetSchemas.forDirectory(ctx.target);
+        List<String> dnAttrs = SyncReferenceAttributes.forSet(ctx.set);
+        String idAttr = SyncIdentity.attribute(ctx.set, ctx.strategy);
+        String anchor = anchorAttribute(ctx.set);
+        String[] targetAttrs = anchor == null ? new String[] {"*"} : new String[] {"*", anchor};
+        for (String sourceDn : sourceDns) {
+            try {
+                SearchResultEntry src = connectionFactory.withConnectionUnreplicated(ctx.source,
+                        conn -> conn.getEntry(sourceDn, "*", idAttr));
+                if (src == null) {
+                    out.add(new Recheck(sourceDn, RecheckState.SOURCE_GONE, null, null, List.of(),
+                            "The source entry no longer exists."));
+                    continue;
+                }
+                MembershipDecision d = membershipFunction.evaluate(ctx.set, ctx.strategy, src, resolver);
+                if (!d.member() || d.targetDn() == null) {
+                    out.add(new Recheck(sourceDn, RecheckState.NOT_MEMBER, d.identity(), null, List.of(),
+                            "The source entry no longer belongs to this set."));
+                    continue;
+                }
+                Entry target = connectionFactory.withConnectionUnreplicated(ctx.target,
+                        conn -> conn.getEntry(d.targetDn(), targetAttrs));
+                java.util.function.Predicate<String> targetExists = dn -> readExists(ctx, dn);
+                Map<String, Expected> expected = new LinkedHashMap<>();
+                String key = normDn(d.targetDn());
+                expected.put(key, new Expected(d.targetDn(), d.desiredAttrs(), d.heldAttributeNames(),
+                        lookup.candidates(d.unresolvedReferences(), targetExists), sourceDn, d.identity()));
+                Map<String, Entry> actual = target == null ? Map.of() : Map.of(key, target);
+                SyncVerifyResult r = compare(expected, actual, excluded, true, true, schema, dnAttrs,
+                        CompareProgress.NONE, null, NOT_ELSEWHERE);
+                SyncDriftItem item = r.items().isEmpty() ? null : r.items().get(0);
+                RecheckState state = item == null ? RecheckState.IN_SYNC
+                        : item.category() == SyncDriftCategory.MISSING ? RecheckState.MISSING : RecheckState.MISMATCH;
+                out.add(new Recheck(sourceDn, state, d.identity(), d.targetDn(),
+                        item == null ? List.of() : item.attributes(), null));
+            } catch (Exception ex) {
+                log.warn("Sync set {}: re-check of [{}] failed ({})", syncSetId, sourceDn, ex.toString());
+                String msg = ex.getMessage();
+                out.add(new Recheck(sourceDn, RecheckState.UNAVAILABLE, null, null, List.of(),
+                        "Couldn't read the entry: " + (msg == null || msg.isBlank() ? ex.getClass().getSimpleName() : msg)));
+            }
+        }
+        return out;
+    }
+
     /**
      * {@link #heldReferences} with the referenced DNs looked up on the source over
      * one pooled connection rather than one borrow per DN. If the source can't be

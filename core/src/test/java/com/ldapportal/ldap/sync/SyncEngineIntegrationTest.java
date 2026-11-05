@@ -455,6 +455,65 @@ class SyncEngineIntegrationTest {
     }
 
     @Test
+    void recheck_classifiesEachMemberLive_asAFullVerifyWould() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        addPerson("carol", "staff", "carol@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        engine.process(peopleSet.getId(), dn("bob"));
+        target.modify("uid=bob," + DST_USERS, new Modification(ModificationType.REPLACE, "mail", "tampered@dst"));
+
+        var r = verifier.recheck(peopleSet.getId(), List.of(dn("alice"), dn("bob"), dn("carol"), dn("nobody")));
+
+        assertThat(r).extracting(SyncContentVerifier.Recheck::state).containsExactly(
+                SyncContentVerifier.RecheckState.IN_SYNC, SyncContentVerifier.RecheckState.MISMATCH,
+                SyncContentVerifier.RecheckState.MISSING, SyncContentVerifier.RecheckState.SOURCE_GONE);
+        assertThat(r.get(1).attributes()).singleElement().satisfies(a -> {
+            assertThat(a.attribute()).isEqualToIgnoringCase("mail");
+            assertThat(a.expected()).containsExactly("bob@src");
+            assertThat(a.actual()).containsExactly("tampered@dst");
+        });
+        assertThat(r.get(2).targetDn()).isEqualToIgnoringCase("uid=carol," + DST_USERS);
+    }
+
+    @Test
+    void driftRepair_recreatesAndReappliesThroughTheEngine_andClearsTheRepairedItems() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        engine.process(peopleSet.getId(), dn("bob"));
+        // Out of band: alice's mail edited, bob's entry deleted. The index still
+        // says both are applied with unchanged content, so a plain recompute
+        // would skip them (the hash gate).
+        target.modify("uid=alice," + DST_USERS, new Modification(ModificationType.REPLACE, "mail", "tampered@dst"));
+        target.delete("uid=bob," + DST_USERS);
+        syncConfigService.verifyContents(peopleSet.getId());
+        var drift = syncConfigService.drift(peopleSet.getId(), null, null, 0, 50);
+        assertThat(drift.matched()).isEqualTo(2);
+        List<Integer> seqs = drift.entries().stream().map(e -> e.seq()).toList();
+
+        var preview = syncConfigService.previewDriftRepair(peopleSet.getId(), seqs);
+        assertThat(preview.items()).extracting(i -> i.action().name())
+                .containsExactlyInAnyOrder("CREATE", "REAPPLY");
+        // A preview writes nothing.
+        assertThat(target.getEntry("uid=bob," + DST_USERS)).isNull();
+
+        var result = syncConfigService.repairDrift(peopleSet.getId(), seqs, null);
+
+        assertThat(result.created()).isEqualTo(1);
+        assertThat(result.reapplied()).isEqualTo(1);
+        assertThat(target.getEntry("uid=bob," + DST_USERS)).isNotNull();
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("mail")).isEqualTo("alice@src");
+        // Repaired items leave the stored verify, and the set's counts follow.
+        assertThat(syncConfigService.drift(peopleSet.getId(), null, null, 0, 50).matched()).isZero();
+        var set = setRepo.findById(peopleSet.getId()).orElseThrow();
+        assertThat(set.getVerifyMissingCount()).isZero();
+        assertThat(set.getVerifyMismatchCount()).isZero();
+        // ...and a fresh verify agrees.
+        assertThat(verifier.verify(peopleSet.getId()).contentMismatches()).isZero();
+    }
+
+    @Test
     void verify_recordsItsProgress_andHowItEnded() throws Exception {
         addPerson("alice", "staff", "alice@src");
         addPerson("bob", "staff", "bob@src");

@@ -351,6 +351,136 @@ class SyncConfigServiceTest {
                 + "\"MISMATCH\",\"uid=jo,dc=t\",\"uid=jo,dc=s\",\"jo\",\"userPassword\",\"(hidden)\",\"(hidden)\"\r\n");
     }
 
+    // ── Drift repair ────────────────────────────────────────────────────────
+
+    private static com.ldapportal.ldap.sync.SyncDriftStore.Row driftRow(int seq,
+            com.ldapportal.entity.enums.SyncDriftCategory c, String uid) {
+        return new com.ldapportal.ldap.sync.SyncDriftStore.Row(seq, new com.ldapportal.dto.sync.SyncDriftItem(c,
+                "uid=" + uid + ",dc=dst", c == com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN ? null : "uid=" + uid + ",dc=src",
+                uid, List.of()));
+    }
+
+    private static com.ldapportal.ldap.sync.SyncContentVerifier.Recheck recheck(String uid,
+            com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState state) {
+        return new com.ldapportal.ldap.sync.SyncContentVerifier.Recheck("uid=" + uid + ",dc=src", state, uid,
+                "uid=" + uid + ",dc=dst",
+                state == com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.MISMATCH
+                        ? List.of(new com.ldapportal.dto.sync.SyncDriftItem.AttributeDiff("mail", List.of("a@x"),
+                                List.of("b@x"), false, false))
+                        : List.of(),
+                state == com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.NOT_MEMBER
+                        ? "The source entry no longer belongs to this set." : null);
+    }
+
+    private UUID driftFixture() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(setId);
+        set.setLinkId(UUID.randomUUID());
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        var M = com.ldapportal.entity.enums.SyncDriftCategory.MISSING;
+        var D = com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH;
+        var O = com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN;
+        when(driftStore.bySeq(eq(setId), any())).thenReturn(List.of(
+                driftRow(0, M, "new"), driftRow(1, D, "drift"), driftRow(2, O, "old"),
+                driftRow(3, D, "fixed"), driftRow(4, M, "gone")));
+        var S = com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.class;
+        when(verifier.recheck(eq(setId), any())).thenReturn(List.of(
+                recheck("new", com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.MISSING),
+                recheck("drift", com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.MISMATCH),
+                recheck("fixed", com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.IN_SYNC),
+                recheck("gone", com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.NOT_MEMBER)));
+        return setId;
+    }
+
+    @Test
+    void previewDriftRepair_saysWhatEachItemWouldGet_afterALiveRecheck() {
+        UUID setId = driftFixture();
+
+        var items = service.previewDriftRepair(setId, List.of(0, 1, 2, 3, 4)).items();
+
+        assertThat(items).extracting(i -> i.seq() + ":" + i.action())
+                .containsExactly("0:CREATE", "1:REAPPLY", "2:SKIP", "3:SKIP", "4:SKIP");
+        assertThat(items.get(1).attributes()).singleElement().extracting(a -> a.attribute()).isEqualTo("mail");
+        assertThat(items.get(2).reason()).contains("no source member");
+        assertThat(items.get(3).reason()).isEqualTo("It no longer drifts.");
+        assertThat(items.get(4).reason()).contains("no longer belongs");
+        // Orphans aren't re-checked: they have no source member.
+        verify(verifier).recheck(setId, List.of("uid=new,dc=src", "uid=drift,dc=src", "uid=fixed,dc=src",
+                "uid=gone,dc=src"));
+        verify(engine, never()).process(any(UUID.class), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void repairDrift_runsTheEngine_auditsEachWrite_andDropsWhatIsFixed() {
+        UUID setId = driftFixture();
+        when(linkRepo.findById(any())).thenReturn(Optional.empty());
+        SyncLink link = new SyncLink();
+        UUID targetDir = UUID.randomUUID();
+        link.setTargetDirId(targetDir);
+        when(linkRepo.findById(any())).thenReturn(Optional.of(link));
+        when(engine.process(setId, "uid=new,dc=src", false)).thenReturn(new com.ldapportal.ldap.sync.RecomputeOutcome(
+                com.ldapportal.dto.sync.SyncPreviewAction.ADD, "uid=new,dc=dst", null));
+        when(engine.process(setId, "uid=drift,dc=src", false)).thenReturn(new com.ldapportal.ldap.sync.RecomputeOutcome(
+                com.ldapportal.dto.sync.SyncPreviewAction.MODIFY, "uid=drift,dc=dst", null, List.of("mail")));
+        var left = new java.util.EnumMap<com.ldapportal.entity.enums.SyncDriftCategory, Long>(
+                com.ldapportal.entity.enums.SyncDriftCategory.class);
+        left.put(com.ldapportal.entity.enums.SyncDriftCategory.MISSING, 1L);
+        left.put(com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, 1L);
+        left.put(com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, 0L);
+        when(driftStore.countsByCategory(setId)).thenReturn(left);
+        var principal = new com.ldapportal.auth.AuthPrincipal(com.ldapportal.auth.PrincipalType.SUPERADMIN,
+                UUID.randomUUID(), "ops");
+
+        var r = service.repairDrift(setId, List.of(0, 1, 2, 3, 4), principal);
+
+        assertThat(r.created()).isEqualTo(1);
+        assertThat(r.reapplied()).isEqualTo(1);
+        assertThat(r.skipped()).isEqualTo(3);
+        // Past the hash gate first, for just the entries being repaired.
+        verify(membershipRepo).forgetAppliedContentOf(eq(setId), eq(List.of("new", "drift")), any());
+        verify(engine, never()).process(eq(setId), eq("uid=gone,dc=src"), org.mockito.ArgumentMatchers.anyBoolean());
+        // Each write audited with the operator; attribute names only.
+        @SuppressWarnings("unchecked") org.mockito.ArgumentCaptor<java.util.Map<String, Object>> detail = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).record(eq(principal), eq(targetDir),
+                eq(com.ldapportal.entity.enums.AuditAction.ENTRY_CREATE), eq("uid=new,dc=dst"), any());
+        verify(auditService).record(eq(principal), eq(targetDir),
+                eq(com.ldapportal.entity.enums.AuditAction.ENTRY_UPDATE), eq("uid=drift,dc=dst"), detail.capture());
+        assertThat(detail.getValue()).containsEntry("operation", "drift-repair").containsEntry("attributes", List.of("mail"));
+        // Created, re-applied, and found already fixed leave the stored verify; counts restated.
+        verify(driftStore).delete(setId, List.of(0, 1, 3));
+        verify(setRepo).restateVerifyCounts(setId, 1, 1, 0);
+    }
+
+    @Test
+    void repairDrift_reportsHeldAndFailedOutcomes_withoutAuditingThem() {
+        UUID setId = driftFixture();
+        when(linkRepo.findById(any())).thenReturn(Optional.empty());
+        when(engine.process(setId, "uid=new,dc=src", false)).thenReturn(new com.ldapportal.ldap.sync.RecomputeOutcome(
+                com.ldapportal.dto.sync.SyncPreviewAction.REVIEW, "uid=new,dc=dst", "placement conflict"));
+        when(engine.process(setId, "uid=drift,dc=src", false)).thenThrow(new IllegalStateException("contended"));
+
+        var r = service.repairDrift(setId, List.of(0, 1), null);
+
+        assertThat(r.held()).isEqualTo(1);
+        assertThat(r.failed()).isEqualTo(1);
+        assertThat(r.items()).extracting(i -> i.outcome().name()).contains("HELD", "FAILED");
+        verify(auditService, never()).record(any(), any(), any(), any(), any());
+        verify(driftStore).delete(setId, List.of(3)); // only the one found already in sync
+    }
+
+    @Test
+    void repairDrift_refusesAnEmptyOrOversizedSelection() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        assertThatThrownBy(() -> service.repairDrift(setId, List.of(), null))
+                .isInstanceOf(IllegalArgumentException.class);
+        List<Integer> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 201; i++) many.add(i);
+        assertThatThrownBy(() -> service.previewDriftRepair(setId, many))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("At most 200");
+    }
+
     @Test
     void verifyContents_unavailableSet_isNotRecordedAsIncomplete() {
         UUID setId = UUID.randomUUID();
