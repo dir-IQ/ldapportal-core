@@ -27,6 +27,18 @@ public final class SyncDnUtil {
         }
     }
 
+    /**
+     * Whether two DNs name the same entry: compared in canonical form, so case
+     * and spacing don't matter. Unparseable values fall back to a
+     * case-insensitive comparison; two nulls are equal.
+     */
+    public static boolean sameDn(String a, String b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+        return normalize(a).equalsIgnoreCase(normalize(b));
+    }
+
     public static boolean isDn(String value) {
         if (value == null || value.isBlank()) {
             return false;

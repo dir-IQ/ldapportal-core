@@ -64,6 +64,60 @@ public final class CsvUtils {
         return c;
     }
 
+    // ── Multi-valued cells ────────────────────────────────────────────────────
+
+    /** Separates the values of a multi-valued attribute within one cell. */
+    public static final char MULTI_VALUE_SEPARATOR = '|';
+
+    /**
+     * Splits one cell into the values of a multi-valued attribute. Values are
+     * separated by {@code |}; {@code \|} stands for a literal pipe. Any other
+     * backslash is kept as is, so DN escapes such as {@code cn=Smith\, John}
+     * pass through untouched. Each value is trimmed and empty values are dropped.
+     *
+     * @return the values in cell order; empty for a null or blank cell
+     */
+    public static List<String> splitMultiValue(String cell) {
+        if (cell == null || cell.isBlank()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        for (int i = 0; i < cell.length(); i++) {
+            char c = cell.charAt(i);
+            if (c == '\\' && i + 1 < cell.length() && cell.charAt(i + 1) == MULTI_VALUE_SEPARATOR) {
+                cur.append(MULTI_VALUE_SEPARATOR);
+                i++;
+            } else if (c == MULTI_VALUE_SEPARATOR) {
+                addTrimmed(out, cur);
+            } else {
+                cur.append(c);
+            }
+        }
+        addTrimmed(out, cur);
+        return out;
+    }
+
+    /**
+     * Joins attribute values into one cell, the inverse of
+     * {@link #splitMultiValue}: values are separated by {@code |} and a pipe
+     * inside a value is written as {@code \|}.
+     */
+    public static String joinMultiValue(List<String> values) {
+        StringBuilder sb = new StringBuilder();
+        for (String v : values) {
+            if (sb.length() > 0) sb.append(MULTI_VALUE_SEPARATOR);
+            sb.append(v == null ? "" : v.replace("|", "\\|"));
+        }
+        return sb.toString();
+    }
+
+    private static void addTrimmed(List<String> out, StringBuilder cur) {
+        String v = cur.toString().trim();
+        if (!v.isEmpty()) out.add(v);
+        cur.setLength(0);
+    }
+
     // ── Parse ─────────────────────────────────────────────────────────────────
 
     /**
@@ -198,7 +252,12 @@ public final class CsvUtils {
         String[] headers;
         int dataStart;
         if (hasHeaderRow) {
-            headers = rawRows.get(0);
+            headers = rawRows.get(0).clone();
+            // Excel's "CSV UTF-8" starts the file with a byte-order mark, which
+            // would otherwise become part of the first header's name.
+            if (headers.length > 0 && headers[0] != null && headers[0].startsWith("\uFEFF")) {
+                headers[0] = headers[0].substring(1);
+            }
             dataStart = 1;
         } else {
             int maxCols = rawRows.stream().mapToInt(r -> r.length).max().orElse(0);

@@ -10,15 +10,26 @@ import tailwindcss from '@tailwindcss/vite'
  * a literal string via the `define` block below, so the runtime can read
  * it for the deployment-skew banner (see `composables/useVersionCheck.ts`).
  * Non-git checkouts (release tarballs, CI without .git, Docker COPYs that
- * exclude .git) fall back to "dev" so the build never fails.
+ * exclude .git) fall back to "dev" so the build never fails, unless the
+ * commit is passed in as BUILD_SHA (frontend/Dockerfile does this).
  */
 function buildSha() {
+  // Docker builds have no .git in the frontend/ context, so the image build
+  // passes the commit in (BUILD_SHA build arg); trimmed to git's short form.
+  const fromEnv = (process.env.BUILD_SHA || '').trim()
+  if (fromEnv) return fromEnv.slice(0, 7)
   try {
     return execSync('git rev-parse --short=7 HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
       .toString().trim() || 'dev'
   } catch {
     return 'dev'
   }
+}
+
+// The frontend image's tag (IMAGE_VERSION build arg, e.g. "1.4.2"), shown in
+// the sidebar build stamp next to the backend's. Empty for untagged builds.
+function imageVersion() {
+  return (process.env.IMAGE_VERSION || '').trim()
 }
 
 // Edition selector. `commercial` (default) builds the full app; `community`
@@ -70,6 +81,7 @@ export default defineConfig({
   ],
   define: {
     __BUILD_SHA__: JSON.stringify(buildSha()),
+    __IMAGE_VERSION__: JSON.stringify(imageVersion()),
   },
   resolve: {
     alias,

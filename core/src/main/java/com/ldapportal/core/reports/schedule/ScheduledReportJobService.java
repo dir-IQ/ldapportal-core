@@ -117,9 +117,12 @@ public class ScheduledReportJobService {
      * Pin a non-superadmin's job to their authorized OUs. The scheduler runs
      * jobs as the system, so the stored scope has to be settled here: the
      * requested {@code scopeBaseDn} is clamped to the admin's OUs (or refused
-     * when it lies outside them), an absent one is derived from their single
-     * OU, and the per-type DN params ({@code branchDn}, {@code groupDn}) are
-     * checked the same way. A superadmin's request is stored as sent.
+     * when it lies outside them). An absent one falls back to the job's
+     * {@code branchDn} — the branch already names the subtree the report
+     * reads, so it settles which OU a multi-OU admin means — and failing
+     * that is derived from their single OU. The per-type DN params
+     * ({@code branchDn}, {@code groupDn}) are checked the same way. A
+     * superadmin's request is stored as sent.
      */
     private ReportJobRequest withCreatorScope(UUID directoryId, ReportJobRequest req,
                                               AuthPrincipal principal) {
@@ -129,6 +132,9 @@ public class ScheduledReportJobService {
         Map<String, Object> params = new LinkedHashMap<>(
                 req.reportParams() != null ? req.reportParams() : Map.of());
         String requested = stringParam(params, "scopeBaseDn");
+        if (requested == null) {
+            requested = stringParam(params, "branchDn");
+        }
         List<String> bases = permissionService.resolveSearchBaseDns(principal, directoryId, requested);
         if (bases.size() != 1) {
             throw new IllegalArgumentException(

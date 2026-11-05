@@ -19,6 +19,9 @@ public interface SyncLinkRepository extends JpaRepository<SyncLink, UUID> {
 
     List<SyncLink> findAllBySourceDirIdAndEnabledTrue(UUID sourceDirId);
 
+    /** Every link (enabled or not) reading from a source directory. */
+    List<SyncLink> findAllBySourceDirId(UUID sourceDirId);
+
     /** Every link (enabled or not) writing into a target directory — the set of index rows that can own its entries. */
     List<SyncLink> findAllByTargetDirId(UUID targetDirId);
 

@@ -36,7 +36,7 @@
       <LdapFilterBuilder
         v-model="filterText"
         :directory-id="dirId"
-        :relevant-attributes="profileAttributeNames"
+        :object-classes="filterObjectClasses"
       />
       <RecentSearches
         ref="recentSearchesRef"
@@ -75,6 +75,8 @@
           <!-- No max-width cap: the DN truncates against the column's actual
                width, so a widened column shows the full value. -->
           <span class="min-w-0 truncate" :title="value as string">{{ value }}</span>
+          <span v-if="isIviaImported(value as string)" class="badge-blue shrink-0"
+                :title="`Imported into ${IVIA_NAME}`">{{ IVIA_ABBR }}</span>
           <CopyButton
             :text="value as string"
             class="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
@@ -87,10 +89,11 @@
       <!-- Member count. The list search returns every attribute, so the
            count comes straight from the row's resolved member values — no
            per-row round-trip. Clicking it opens the Members drawer (same
-           as the action button) when the admin may manage members. -->
+           as the action button) when the admin may view groups; the drawer
+           is view-only without group.manage_members. -->
       <template #cell-_memberCount="{ value, row }">
         <button
-          v-if="can.manageMembers"
+          v-if="can.viewMembers"
           type="button"
           class="tabular-nums text-blue-600 hover:underline"
           :aria-label="`View ${value} members of ${(row as unknown as GroupRow).cn || (row as unknown as GroupRow).dn}`"
@@ -100,11 +103,15 @@
       </template>
       <template #cell-actions="{ row }">
         <ActionMenu :items="[
-          { label: 'Members', onClick: () => openMembers(row as unknown as GroupRow), hidden: !can.manageMembers },
+          { label: 'Edit', onClick: () => openEdit(row as unknown as GroupRow), hidden: !can.edit },
+          { label: `Import into ${IVIA_ABBR}`, onClick: () => openIviaImport(row as unknown as GroupRow),
+            hidden: !canImportIntoIvia(row as unknown as GroupRow) },
+          { label: `Remove from ${IVIA_ABBR}`, onClick: () => removeFromIvia(row as unknown as GroupRow),
+            danger: true, hidden: !canRemoveFromIvia(row as unknown as GroupRow) },
           { label: 'Delete',  onClick: () => confirmDelete(row as unknown as GroupRow), danger: true, hidden: !can.createDelete },
-        ]">
+        ]" :inline-threshold="1">
           <template #primary>
-            <button v-if="can.edit" @click="openEdit(row as unknown as GroupRow)" class="btn-secondary btn-compact">Edit</button>
+            <button v-if="can.viewMembers" @click="openMembers(row as unknown as GroupRow)" class="btn-secondary btn-compact">Members</button>
           </template>
         </ActionMenu>
       </template>
@@ -171,6 +178,25 @@
       </template>
     </AppModal>
 
+    <!-- Import into IVIA: registers the group with IVIA (a secGroup entry in
+         the IVIA group container), as pdadmin group import does. The group
+         itself is not changed. -->
+    <AppModal v-model="showIviaImport" :title="`Import into ${IVIA_ABBR}`" size="md">
+      <p class="text-sm text-gray-600 mb-3">
+        Registers <span class="font-mono break-all">{{ iviaImportTarget?.dn }}</span> with
+        {{ IVIA_NAME }}, as <code>pdadmin group import</code> does, so {{ IVIA_ABBR }} access
+        rules can use it and its members get it at sign-in. The group itself isn't changed.
+      </p>
+      <FormField :label="`${IVIA_ABBR} group name`" v-model="iviaImportName"
+                 placeholder="Defaults to the group's cn" />
+      <template #footer>
+        <button @click="showIviaImport = false" class="btn-neutral">Cancel</button>
+        <button @click="doIviaImport" :disabled="iviaImporting" class="btn-primary">
+          {{ iviaImporting ? 'Importing…' : 'Import' }}
+        </button>
+      </template>
+    </AppModal>
+
     <!-- Members drawer -->
     <AppModal v-model="showMembers" :title="`Members — ${selectedGroup?.cn || ''}`" size="xl">
       <!-- Client-side filter over the loaded member list (no server call);
@@ -184,13 +210,15 @@
           aria-label="Filter members"
           class="input flex-1"
         />
-        <button @click="toggleBulk('add')" class="btn-secondary" :aria-pressed="bulkMode === 'add'">Add Members</button>
-        <button @click="toggleBulk('remove')" class="btn-danger-soft" :aria-pressed="bulkMode === 'remove'">Bulk Remove</button>
+        <template v-if="can.manageMembers">
+          <button @click="toggleBulk('add')" class="btn-secondary" :aria-pressed="bulkMode === 'add'">Add Members</button>
+          <button @click="toggleBulk('remove')" class="btn-danger-soft" :aria-pressed="bulkMode === 'remove'">Bulk Remove</button>
+        </template>
       </div>
       <!-- One panel serves both verbs: the textarea, DN-shape warning and
            per-line result list are identical; only the label, submit
            button and result wording change with bulkMode. -->
-      <div v-if="bulkMode" class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+      <div v-if="bulkMode && can.manageMembers" class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
         <label for="gl-bulk-members" class="block text-xs font-medium text-gray-600 mb-1">
           {{ bulkMode === 'add' ? 'Add members' : 'Remove members' }} (one DN per line)
         </label>
@@ -221,14 +249,14 @@
       <ul class="divide-y divide-gray-100 min-h-0 overflow-y-auto pr-3">
         <li v-for="dn in filteredMembers" :key="dn" class="flex items-center justify-between gap-4 py-2 text-sm">
           <span class="text-xs text-gray-700 truncate" :title="dn">{{ dn }}</span>
-          <button @click="removeMember(dn)" class="text-red-500 hover:text-red-700 text-xs shrink-0">Remove</button>
+          <button v-if="can.manageMembers" @click="removeMember(dn)" class="text-red-500 hover:text-red-700 text-xs shrink-0">Remove</button>
         </li>
         <li v-if="!members.length" class="py-4 text-center text-gray-500 text-sm">No members</li>
         <li v-else-if="!filteredMembers.length" class="py-4 text-center text-gray-500 text-sm">No members match the filter</li>
       </ul>
     </AppModal>
 
-    <ConfirmDialog v-model="showDelete" title="Delete Group" :message="`Delete '${deleteTarget?.dn}'?`" confirm-label="Delete" danger @confirm="doDelete" />
+    <ConfirmDialog v-model="showDelete" title="Delete Group" :message="`Delete '${deleteTarget?.dn}'?` + (deleteTarget && isIviaImported(deleteTarget.dn) ? ` Its ${IVIA_ABBR} registration is removed too.` : '')" confirm-label="Delete" danger @confirm="doDelete" />
   </div>
 </template>
 
@@ -245,6 +273,7 @@ import { listProfiles } from '@/api/profiles'
 import { usePermissions } from '@/composables/usePermissions'
 import ResultsTable from '@/components/ResultsTable.vue'
 import LdapFilterBuilder from '@/components/LdapFilterBuilder.vue'
+import { rowObjectClasses } from '@/composables/useLdapFilter'
 import RecentSearches from '@/components/RecentSearches.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import AppModal from '@/components/AppModal.vue'
@@ -254,6 +283,10 @@ import CopyButton from '@/components/CopyButton.vue'
 import { validateDn } from '@/utils/attributeValidation'
 import { resolveGroupMembers, type MemberAttr } from '@/utils/groupMembers'
 import ProfilePill from '@/components/ProfilePill.vue'
+import { useAuthStore } from '@/stores/auth'
+import { getIsvaGroupRegistrations, importIsvaGroup, removeIsvaGroup } from '@/api/isvaGroup'
+import { useConfirm } from '@/composables/useConfirm'
+import { IVIA_ABBR, IVIA_NAME } from '@/constants/productNames'
 
 interface ProfileLite {
   id: string
@@ -320,6 +353,9 @@ const can = computed(() => ({
   createDelete:  hasFeature('group.create_delete'),
   edit:          hasFeature('group.edit'),
   manageMembers: hasFeature('group.manage_members'),
+  // The drawer reads the row's already-loaded members, so group.read is
+  // enough to open it; its add/remove controls need manageMembers.
+  viewMembers:   hasFeature('group.read') || hasFeature('group.manage_members'),
   exportCsv:     hasFeature('bulk.export'),
 }))
 
@@ -332,6 +368,96 @@ const groups        = ref<GroupRow[]>([])
 const capHit = computed(() => groups.value.length >= FETCH_LIMIT)
 const filterText    = ref('')
 const showCreate    = ref(false)
+
+// ── IVIA group import ──────────────────────────────────────────────────
+// Only when the IVIA addon is present; the directory's own IVIA state comes
+// from one registrations call per load (enabled=false → no IVIA controls).
+const auth = useAuthStore()
+interface IviaGroupState { enabled: boolean, canImport: boolean, imported: Set<string> }
+const ivia = ref<IviaGroupState | null>(null)
+const showIviaImport = ref(false)
+const iviaImportTarget = ref<GroupRow | null>(null)
+const iviaImportName = ref('')
+const iviaImporting = ref(false)
+
+/** Comparable form of a DN: case and spaces after commas don't matter. */
+function dnKey(dn: string): string {
+  return dn.trim().toLowerCase().replace(/\s*,\s*/g, ',')
+}
+
+function isIviaImported(dn: string): boolean {
+  return ivia.value?.imported.has(dnKey(dn)) === true
+}
+
+function canImportIntoIvia(row: GroupRow): boolean {
+  return can.value.edit && ivia.value?.enabled === true && ivia.value.canImport && !isIviaImported(row.dn)
+}
+
+function canRemoveFromIvia(row: GroupRow): boolean {
+  return can.value.edit && ivia.value?.enabled === true && isIviaImported(row.dn)
+}
+
+const confirm = useConfirm()
+
+/** Deletes the group's IVIA registration, as pdadmin group delete (without -registry) does. */
+async function removeFromIvia(row: GroupRow): Promise<void> {
+  const name = row.cn || row.dn
+  const ok = await confirm({
+    title: `Remove from ${IVIA_ABBR}`,
+    message: `Remove "${name}" from ${IVIA_NAME}?\n\n`
+      + `${IVIA_ABBR} stops treating it as a group: access rules that name it stop applying, and its `
+      + `members no longer get it at sign-in.\n\n`
+      + 'The LDAP group and its members are not changed, and you can import it again later '
+      + `(access rules that named it may need to name it again).`,
+    confirmLabel: `Remove from ${IVIA_ABBR}`,
+    danger: true,
+  })
+  if (!ok) return
+  try {
+    await removeIsvaGroup(dirId, row.dn)
+    ivia.value?.imported.delete(dnKey(row.dn))
+    notif.success(`Removed ${name} from ${IVIA_ABBR}`)
+  } catch (e) {
+    const err = e as { response?: { data?: { detail?: string } }, message?: string }
+    notif.error(err.response?.data?.detail || err.message || `Remove from ${IVIA_ABBR} failed`)
+  }
+}
+
+async function loadIviaRegistrations(): Promise<void> {
+  ivia.value = null
+  if (!auth.isIsvaIntegrationEnabled || groups.value.length === 0) return
+  try {
+    const { data } = await getIsvaGroupRegistrations(dirId, groups.value.map(g => g.dn))
+    ivia.value = { enabled: data.enabled, canImport: data.canImport, imported: new Set(data.registered.map(dnKey)) }
+  } catch {
+    // No IVIA badges or actions; the group list itself is unaffected.
+    ivia.value = null
+  }
+}
+
+function openIviaImport(row: GroupRow): void {
+  iviaImportTarget.value = row
+  iviaImportName.value = row.cn ?? ''
+  showIviaImport.value = true
+}
+
+async function doIviaImport(): Promise<void> {
+  const target = iviaImportTarget.value
+  if (!target) return
+  iviaImporting.value = true
+  try {
+    await importIsvaGroup(dirId, target.dn, iviaImportName.value)
+    ivia.value?.imported.add(dnKey(target.dn))
+    showIviaImport.value = false
+    notif.success(`Imported ${target.cn || target.dn} into ${IVIA_ABBR}`)
+  } catch (e) {
+    // Keep the dialog open: a taken name can be changed and retried.
+    const err = e as { response?: { data?: { detail?: string } }, message?: string }
+    notif.error(err.response?.data?.detail || err.message || `Import into ${IVIA_ABBR} failed`)
+  } finally {
+    iviaImporting.value = false
+  }
+}
 // Step-1 profile picker for "New Group" — mirrors UserListView so an
 // admin with more than one profile picks the target OU explicitly
 // before the form opens.
@@ -360,15 +486,17 @@ const allProfiles     = ref<ProfileLite[]>([])
 const selectedProfileId = ref('')
 const profileData     = ref<ProfileLite | null>(null)
 
-// Attribute names the active profile declares — fed to LdapFilterBuilder
-// so the attribute picker defaults to this subset instead of the
-// directory's full schema. Builder exposes a "Show all attributes"
-// toggle for power users; empty array disables scoping.
-const profileAttributeNames = computed<string[]>(() =>
-  (profileData.value?.attributeConfigs ?? [])
-    .map(a => a.attributeName)
-    .filter((n): n is string => typeof n === 'string' && n.length > 0),
-)
+
+// objectClasses fed to LdapFilterBuilder: its suggestions are every
+// attribute the loaded groups' classes allow (groupOfNames, posixGroup,
+// …). The profile's objectClassNames and attributeConfigs describe
+// *users*, so neither is used here. Before the first search returns,
+// the builder falls back to the full directory schema.
+const filterObjectClasses = computed<string[]>(() => {
+  const out: string[] = []
+  for (const row of groups.value) out.push(...rowObjectClasses(row.__entry?.attributes))
+  return out
+})
 const bulkMode      = ref<BulkMode | null>(null)
 const bulkMemberDns = ref('')
 const bulkBusy      = ref(false)
@@ -449,7 +577,7 @@ const cols = computed(() => {
   const defaults = DEFAULT_GROUP_COLUMNS.filter(k => discoveredSet.has(k.toLowerCase()))
   const extras = discoveredAttrs.value.filter(k => !DEFAULT_GROUP_COLUMNS_LC.has(k.toLowerCase()))
   return [
-    { key: 'dn', label: 'DN', alwaysVisible: true },
+    { key: 'dn', label: 'DN', alwaysVisible: true, lockPosition: true },
     ...defaults.map(k => ({ key: k, label: k === 'cn' ? 'Name' : k })),
     // Synthetic, sortable member-count column (numeric sort via the
     // number-typed row field). Sits after the curated defaults so it
@@ -463,7 +591,7 @@ const cols = computed(() => {
     // buttons. Each ~70px with the gap-1 spacing; 240 leaves
     // breathing room. Smaller than UserListView's actions column
     // because there's no kebab to host overflow items here.
-    { key: 'actions', label: '', alwaysVisible: true, sortable: false, defaultWidth: 240 },
+    { key: 'actions', label: '', alwaysVisible: true, lockPosition: true, sortable: false, defaultWidth: 240 },
   ]
 })
 
@@ -522,6 +650,7 @@ async function load() {
       return row as unknown as GroupRow
     })
   })
+  void loadIviaRegistrations()
 }
 
 /**
@@ -576,13 +705,18 @@ async function doCreate() {
 }
 
 function openCreate() {
-  // Mirror UserListView's two-step flow: when multiple enabled profiles
-  // exist, force an explicit pick so the operator sees which group
-  // container the group will be created under. Single profile auto-picks;
-  // no profile falls back to the bare form using the directory base.
+  // Mirror UserListView: with a profile selected (the sidebar picker, or this
+  // page's Profile dropdown), create through it; the dialog shows which. Under
+  // "All" with several enabled profiles there's no single one, so ask, so the
+  // operator sees which group container the group will be created under. A
+  // single profile auto-picks; no profile falls back to the bare form using
+  // the directory base.
   createProfile.value = null
   createOwnerError.value = null
-  if (allProfiles.value.length === 1) {
+  const selected = allProfiles.value.find(p => p.id === selectedProfileId.value)
+  if (selected) {
+    selectProfileAndCreate(selected)
+  } else if (allProfiles.value.length === 1) {
     selectProfileAndCreate(allProfiles.value[0])
   } else if (allProfiles.value.length > 1) {
     showTemplatePicker.value = true

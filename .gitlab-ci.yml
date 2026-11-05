@@ -304,7 +304,13 @@ publish-frontend:
     - IMAGE="$CI_REGISTRY_IMAGE/ldapportal-frontend"
     - VERSION="${CI_COMMIT_TAG#v}"
     - MINOR="${VERSION%.*}"
-    - docker build -f frontend/Dockerfile -t "$IMAGE:$VERSION" -t "$IMAGE:$MINOR" -t "$IMAGE:latest" frontend
+    # IMAGE_VERSION + BUILD_SHA bake the tag and commit into the bundle for
+    # the sidebar build stamp (the frontend/ context has no .git).
+    - >
+      docker build -f frontend/Dockerfile
+      --build-arg "IMAGE_VERSION=$VERSION"
+      --build-arg "BUILD_SHA=$CI_COMMIT_SHORT_SHA"
+      -t "$IMAGE:$VERSION" -t "$IMAGE:$MINOR" -t "$IMAGE:latest" frontend
     - docker push --all-tags "$IMAGE"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'

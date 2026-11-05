@@ -16,9 +16,13 @@ public record UnifiedDashboardDto(
         boolean complianceEnabled,
         boolean hrIntegrationEnabled,
         /**
-         * True when at least one profile visible to the caller has
-         * {@code requireApproval = true}. Drives whether approval-related
-         * UI (Pending Approvals metric card, Approval Aging panel) renders
+         * True when an approval source can produce requests in the caller's
+         * scope: the global {@code approvalsEnabled} switch is on and a
+         * visible profile has {@code requireApproval = true}, or the
+         * {@code selfRegistrationApprovalEnabled} switch is on and a visible
+         * profile allows self-registration (see ApprovalUsageService).
+         * Drives whether approval-related UI (Pending Approvals metric card,
+         * Profiles "Pending" column, Approval Aging panel) renders
          * on the dashboard — an environment that doesn't use approval
          * workflows shouldn't carry empty approval tiles. Frontend also
          * ORs this with {@code metrics.pendingApprovals > 0} so residual

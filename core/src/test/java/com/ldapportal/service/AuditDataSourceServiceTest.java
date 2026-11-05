@@ -13,6 +13,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -92,5 +93,18 @@ class AuditDataSourceServiceTest {
         assertThat(export.request().slug()).isEqualTo("dsee-audit");
         assertThat(export.request().bindPassword()).isNull();   // never exported
         assertThat(export.request().host()).isEqualTo("audit.corp.example.com");
+    }
+
+    @Test
+    void create_rejectsSyncOnlyCookieFormat() {
+        AuditSourceRequest req = new AuditSourceRequest(
+                "OUD Audit", "oud.corp.example.com", 636, SslMode.LDAPS, false,
+                null, "cn=reader,dc=corp,dc=example,dc=com", "secret",
+                "cn=changelog", null, ChangelogFormat.OUD_COOKIE_CHANGELOG, true, "oud-audit");
+
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("DSEE_CHANGELOG");
+        verify(repo, never()).save(any());
     }
 }

@@ -23,6 +23,13 @@
           :title="capabilitiesTooltip(row)"
         >{{ vendorBadge(row) }}</div>
       </template>
+      <template #cell-baseDn="{ row }">
+        {{ row.baseDn }}
+        <span v-if="row.additionalBaseDns?.length" class="ml-1 text-xs text-gray-500"
+              :title="row.additionalBaseDns.join('\n')">
+          +{{ row.additionalBaseDns.length }} {{ row.additionalBaseDns.length === 1 ? 'root' : 'roots' }}
+        </span>
+      </template>
       <template #cell-enabled="{ row }">
         <span :class="row.enabled ? 'text-green-600' : 'text-gray-500'" class="text-xs font-medium">
           {{ row.enabled ? 'Yes' : 'No' }}
@@ -102,6 +109,22 @@
             <FormField label="Bind Password" v-model="form.bindPassword" type="password" :placeholder="editing ? 'Leave blank to keep' : ''" />
             <div class="col-span-2">
               <FormField label="Base DN" v-model="form.baseDn" required placeholder="dc=example,dc=com" />
+            </div>
+            <div class="col-span-2">
+              <label for="dm-additional-roots" class="block text-sm font-medium text-gray-700 mb-1">
+                Additional base DNs
+              </label>
+              <textarea id="dm-additional-roots" v-model="additionalRootsText" rows="2"
+                        class="input w-full font-mono" placeholder="o=partners" />
+              <p class="text-xs text-gray-500 mt-1">
+                Optional, one per line. Other top-level roots (suffixes) on the same server, for a
+                directory with more than one. Searches without an explicit base cover every root,
+                and the browser shows each as its own tree. Roots must not be nested.
+              </p>
+              <button v-if="suggestedRoots.length" type="button" class="btn-neutral btn-compact mt-1"
+                      @click="addSuggestedRoots">
+                Add the server's other naming contexts ({{ suggestedRoots.join(', ') }})
+              </button>
             </div>
           </template>
         </div>
@@ -300,6 +323,7 @@ interface DirectoryCapabilities {
   vendorVersion?: string | null
   probedAt?: string | null
   supportedControls?: string[] | null
+  namingContexts?: string[] | null
 }
 
 // Row shape from the (untyped) directories API; only the fields this
@@ -309,6 +333,7 @@ interface DirectoryRow extends Partial<DirectoryForm> {
   displayName: string
   enabled: boolean
   capabilities?: DirectoryCapabilities | null
+  additionalBaseDns?: string[] | null
 }
 
 interface TestResult {
@@ -398,6 +423,27 @@ function probeAll() {
 }
 
 const form = ref<DirectoryForm>(emptyForm())
+
+// Additional roots, edited as raw text (one DN per line) so typing a new
+// line isn't swallowed; split into a list on save.
+const additionalRootsText = ref('')
+// Root-DSE naming contexts of the directory being edited, from its last probe.
+const editingNamingContexts = ref<string[]>([])
+
+function parseRoots(text: string): string[] {
+  return text.split(/\r?\n/).map(s => s.trim()).filter(s => s.length > 0)
+}
+
+// Naming contexts the server advertises that aren't configured yet.
+const suggestedRoots = computed<string[]>(() => {
+  const have = [form.value.baseDn, ...parseRoots(additionalRootsText.value)]
+    .map(d => d.trim().toLowerCase())
+  return editingNamingContexts.value.filter(nc => nc && !have.includes(nc.trim().toLowerCase()))
+})
+
+function addSuggestedRoots() {
+  additionalRootsText.value = [...parseRoots(additionalRootsText.value), ...suggestedRoots.value].join('\n')
+}
 
 // Comma-separated text views over the objectClass arrays, for the inputs.
 const userObjectClassesText = computed<string>({
@@ -528,6 +574,8 @@ onMounted(load)
 function openCreate() {
   editing.value = null
   form.value = emptyForm()
+  additionalRootsText.value = ''
+  editingNamingContexts.value = []
   testResult.value = null
   showModal.value = true
 }
@@ -560,6 +608,8 @@ function openEdit(d: DirectoryRow) {
     groupObjectClasses: d.groupObjectClasses?.length
       ? [...d.groupObjectClasses] : objectClassPreset(d.directoryType || 'GENERIC').group,
   }
+  additionalRootsText.value = (d.additionalBaseDns ?? []).join('\n')
+  editingNamingContexts.value = d.capabilities?.namingContexts ?? []
   testResult.value = null
   showModal.value = true
 }
@@ -567,14 +617,18 @@ function openEdit(d: DirectoryRow) {
 async function save() {
   saving.value = true
   try {
-    const payload: Partial<DirectoryForm> = { ...form.value }
+    const payload: Partial<DirectoryForm> & { additionalBaseDns?: string[] } = {
+      ...form.value, additionalBaseDns: parseRoots(additionalRootsText.value),
+    }
     if (editing.value && !payload.bindPassword) delete payload.bindPassword
     if (editing.value && !payload.entraClientSecret) delete payload.entraClientSecret
     // Form is a superset of the (stale) generated request schema.
     const requestBody = payload as unknown as DirectoryRequest
     if (editing.value) {
-      await updateDirectory(editing.value, requestBody)
+      const { data } = await updateDirectory(editing.value, requestBody) as { data?: { warnings?: string[] } }
       notif.success('Directory updated')
+      // e.g. sync sets with a blank base that a newly added root won't reach.
+      for (const w of data?.warnings ?? []) notif.warning(w)
     } else {
       await createDirectory(requestBody)
       notif.success('Directory created')

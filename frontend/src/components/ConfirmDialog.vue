@@ -7,7 +7,7 @@
          role="dialog" aria-modal="true" :aria-labelledby="titleId">
       <div ref="panelRef" class="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
         <h3 :id="titleId" class="text-lg font-semibold text-gray-900 mb-2">{{ title }}</h3>
-        <p class="text-sm text-gray-600 mb-6">{{ message }}</p>
+        <p class="text-sm text-gray-600 mb-6 whitespace-pre-line">{{ message }}</p>
         <div class="flex justify-end gap-3">
           <button
             @click="$emit('update:modelValue', false)"

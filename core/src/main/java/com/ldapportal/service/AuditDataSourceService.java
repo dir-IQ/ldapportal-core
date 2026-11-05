@@ -166,6 +166,13 @@ public class AuditDataSourceService {
 
     private void applyRequest(AuditDataSource src, AuditSourceRequest req,
                               String encryptedPassword) {
+        if (req.changelogFormat() == ChangelogFormat.OUD_COOKIE_CHANGELOG) {
+            // Cookie mode is a directory-sync capture cursor; the audit reader
+            // dedups by entry id and has no cookie loop. OUD audit sources use
+            // DSEE_CHANGELOG (OUD's change-number mode).
+            throw new IllegalArgumentException(
+                    "OUD_COOKIE_CHANGELOG is a directory-sync capture format; use DSEE_CHANGELOG for audit sources");
+        }
         src.setDisplayName(req.displayName().trim());
         src.setHost(req.host().trim());
         src.setPort(req.port());

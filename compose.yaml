@@ -128,6 +128,8 @@ services:
       # Bootstrap superadmin (only active when no permanent superadmin exists)
       BOOTSTRAP_SUPERADMIN_USERNAME:   ${BOOTSTRAP_SUPERADMIN_USERNAME:-superadmin}
       BOOTSTRAP_SUPERADMIN_PASSWORD:   ${BOOTSTRAP_SUPERADMIN_PASSWORD}
+      # Shown in the sidebar after the image tags (e.g. an AWS region); optional.
+      DEPLOYMENT_LOCATION: ${DEPLOYMENT_LOCATION:-}
       # Logging
       LOG_LEVEL:     ${LOG_LEVEL:-INFO}
       APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
@@ -155,6 +157,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      # Build identity for the sidebar build stamp. The frontend/ context has
+      # no .git, so the commit is passed in (the Makefile sets BUILD_SHA);
+      # IMAGE_VERSION is empty for local builds → the stamp shows the SHA.
+      args:
+        IMAGE_VERSION: ${IMAGE_VERSION:-}
+        BUILD_SHA: ${BUILD_SHA:-}
     container_name: ldap-portal-frontend
     depends_on:
       - app

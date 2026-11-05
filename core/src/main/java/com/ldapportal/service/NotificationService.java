@@ -40,19 +40,10 @@ public class NotificationService {
     private final AdminFeaturePermissionRepository featurePermRepo;
     private final AdminProfileRoleRepository profileRoleRepo;
 
-    /**
-     * Features available to all admins (including READ_ONLY) by default.
-     * Must stay in sync with {@link com.ldapportal.auth.PermissionService}.
-     */
-    private static final Set<FeatureKey> READONLY_DEFAULT_FEATURES = Set.of(
-            FeatureKey.BULK_EXPORT,
-            FeatureKey.REPORTS_RUN,
-            FeatureKey.DIRECTORY_BROWSE,
-            FeatureKey.SCHEMA_READ,
-            FeatureKey.USER_READ,
-            FeatureKey.GROUP_READ,
-            FeatureKey.APPROVAL_MANAGE
-    );
+    /** Base-role defaults for READ_ONLY admins — the canonical set, so the
+     *  two can't drift. */
+    private static final Set<FeatureKey> READONLY_DEFAULT_FEATURES =
+            com.ldapportal.auth.PermissionService.READONLY_DEFAULT_FEATURES;
 
     // ── Send ──────────────────────────────────────────────────────────────────
 

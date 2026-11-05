@@ -180,6 +180,41 @@ public class AuditService {
         }
     }
 
+    /**
+     * Record a write a background worker made to a directory, with no actor:
+     * the directory sync engine's target writes, which run on the engine's own
+     * bind account whoever started the run. {@code correlationId} groups the
+     * worker's writes (the sync run's id); {@code null} falls back to the
+     * active correlation scope.
+     */
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordDirectoryEventNoActor(UUID directoryId,
+                                            AuditAction action,
+                                            String targetDn,
+                                            Map<String, Object> detail,
+                                            UUID correlationId) {
+        try {
+            DirectoryConnection dir = dirRepo.findById(directoryId).orElse(null);
+            AuditEvent event = AuditEvent.builder()
+                    .source(AuditSource.INTERNAL)
+                    .directoryId(directoryId)
+                    .directoryName(dir != null ? dir.getDisplayName() : null)
+                    .action(action)
+                    .targetDn(targetDn)
+                    .detail(enrichDetail(directoryId, action, targetDn, detail))
+                    .correlationId(correlationId != null ? correlationId : currentCorrelation())
+                    .occurredAt(OffsetDateTime.now())
+                    .build();
+            auditRepo.save(event);
+            eventPublisher.publishEvent(new AuditRecordedEvent(event));
+            siemExportService.export(event);
+        } catch (Exception ex) {
+            log.error("Failed to record actor-less directory audit event [action={}, dn={}]: {}",
+                    action, targetDn, ex.getMessage(), ex);
+        }
+    }
+
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void recordSystemEvent(AuthPrincipal principal,

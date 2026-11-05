@@ -97,6 +97,9 @@ interface Form {
   // in this table.
   secuserAttributes: SecUserAttribute[]
   managementDitBaseDn: string
+  /** Blank = cn=Users / cn=Groups below the management DIT. */
+  userContainerDn: string
+  groupContainerDn: string
   secuserRdnAttribute: string
   secuserRdnValueSource: IsvaRdnValueSource
   groupMemberTarget: IsvaGroupMemberTarget
@@ -112,6 +115,8 @@ function emptyForm(): Form {
     secuserObjectClasses: ['secUser'],
     secuserAttributes: defaultAttributeModel(),
     managementDitBaseDn: '',
+    userContainerDn: '',
+    groupContainerDn: '',
     secuserRdnAttribute: 'secUUID',
     secuserRdnValueSource: 'GENERATED_UUID',
     groupMemberTarget: 'DEMOGRAPHIC_DN',
@@ -151,6 +156,12 @@ const modeNotExposed = computed(() => !exposedModes.value.includes(form.value.to
 // Linked-mode-only fields hide when topology is INLINE so the
 // operator doesn't fill in values that'll be ignored.
 const isLinkedMode = computed(() => form.value.topologyMode === 'LINKED')
+
+/** A container's default, shown as its placeholder: the RDN below the management DIT. */
+function defaultContainer(rdn: string): string {
+  const dit = form.value.managementDitBaseDn.trim()
+  return dit ? `${rdn},${dit}` : `${rdn},<management DIT>`
+}
 
 // Save enabled only when the form is at least minimally valid. The
 // controller validates more strictly; this catches the obvious
@@ -228,6 +239,8 @@ function populateFromDto(dto: IsvaConfigDto) {
     ? dto.secuserAttributes.map((a) => ({ ...a }))
     : defaultAttributeModel()
   form.value.managementDitBaseDn = dto.managementDitBaseDn ?? ''
+  form.value.userContainerDn = dto.userContainerDn ?? ''
+  form.value.groupContainerDn = dto.groupContainerDn ?? ''
   form.value.secuserRdnAttribute = dto.secuserRdnAttribute ?? 'secUUID'
   form.value.secuserRdnValueSource = dto.secuserRdnValueSource ?? 'GENERATED_UUID'
   form.value.groupMemberTarget = dto.groupMemberTarget ?? 'DEMOGRAPHIC_DN'
@@ -315,9 +328,12 @@ async function save() {
       secuserOverlayAttributes: enabledOptionalNames(),
       // The authoritative per-attribute model.
       secuserAttributes: form.value.secuserAttributes,
-      // Linked-only — server clears these when topologyMode = INLINE,
-      // so it's safe to send the form values regardless.
+      // The management DIT and its containers apply to both modes; blank
+      // containers default below the DIT.
       managementDitBaseDn: form.value.managementDitBaseDn.trim() || null,
+      userContainerDn: form.value.userContainerDn.trim() || null,
+      groupContainerDn: form.value.groupContainerDn.trim() || null,
+      // Linked-only — ignored by the server when topologyMode = INLINE.
       secuserRdnAttribute: form.value.secuserRdnAttribute.trim() || null,
       secuserRdnValueSource: form.value.secuserRdnValueSource,
       groupMemberTarget: form.value.groupMemberTarget,
@@ -627,14 +643,62 @@ function extractErrorMessage(e: unknown, fallback: string): string {
                  v-model="form.requireSecGroup" class="rounded mt-1" />
           <div>
             <label for="requireSecGroup" class="text-sm font-medium text-gray-900">
-              Require <code>secGroup</code> overlay on groups
+              Require groups to be imported into {{ IVIA_ABBR }}
             </label>
             <p class="text-xs text-gray-500">
-              When on, group-membership writes refuse to add a user to a
-              group that lacks <code>objectClass: secGroup</code> — {{ IVIA_ABBR }}
-              would silently ignore the membership otherwise.
+              When on, group-membership writes refuse to add a user to a group
+              {{ IVIA_ABBR }} doesn't know — {{ IVIA_ABBR }} would silently ignore the
+              membership otherwise. A group counts as imported when a
+              <code>secGroup</code> entry in the group container points at it (what
+              <code>pdadmin group import</code> and "Import into {{ IVIA_ABBR }}" on the
+              Groups page write), or when the group itself carries
+              <code>objectClass: secGroup</code>.
             </p>
           </div>
+        </div>
+      </section>
+
+      <!-- The management DIT and its containers (both modes) -->
+      <section class="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
+        <h2 class="text-base font-semibold text-gray-900">Management DIT</h2>
+
+        <div>
+          <label class="label" for="managementDitBaseDn">
+            Management DIT base DN{{ isLinkedMode ? ' (required)' : '' }}
+          </label>
+          <input id="managementDitBaseDn" type="text"
+                 v-model="form.managementDitBaseDn"
+                 class="input w-full" placeholder="secAuthority=Default,o=ibm,c=us" />
+          <p class="text-xs text-gray-500 mt-1">
+            The {{ IVIA_ABBR }} management DIT itself (the <code>secAuthority=…</code>
+            entry), not a container below it.
+            <template v-if="!isLinkedMode">Optional in inline mode — needed only to import
+              groups into {{ IVIA_ABBR }}.</template>
+          </p>
+        </div>
+
+        <div v-if="isLinkedMode">
+          <label class="label" for="userContainerDn">User container</label>
+          <input id="userContainerDn" type="text"
+                 v-model="form.userContainerDn"
+                 class="input w-full" :placeholder="defaultContainer('cn=Users')" />
+          <p class="text-xs text-gray-500 mt-1">
+            Where paired <code>secUser</code> entries are created and looked up. Leave
+            blank for <code>cn=Users</code> below the management DIT.
+          </p>
+        </div>
+
+        <div>
+          <label class="label" for="groupContainerDn">Group container</label>
+          <input id="groupContainerDn" type="text"
+                 v-model="form.groupContainerDn"
+                 class="input w-full" :placeholder="defaultContainer('cn=Groups')" />
+          <p class="text-xs text-gray-500 mt-1">
+            Where groups imported into {{ IVIA_ABBR }} are registered (a
+            <code>secGroup</code> entry pointing at each group), as
+            <code>pdadmin group import</code> does. Leave blank for
+            <code>cn=Groups</code> below the management DIT.
+          </p>
         </div>
       </section>
 
@@ -642,16 +706,6 @@ function extractErrorMessage(e: unknown, fallback: string): string {
       <section v-if="isLinkedMode"
                class="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
         <h2 class="text-base font-semibold text-gray-900">Paired secUser settings</h2>
-
-        <div>
-          <label class="label" for="managementDitBaseDn">Management DIT base DN (required)</label>
-          <input id="managementDitBaseDn" type="text"
-                 v-model="form.managementDitBaseDn"
-                 class="input w-full" placeholder="secAuthority=Default,o=ibm,c=us" />
-          <p class="text-xs text-gray-500 mt-1">
-            Parent DN under which paired <code>secUser</code> entries live.
-          </p>
-        </div>
 
         <div>
           <label class="label" for="secuserRdnAttribute">secUser RDN attribute</label>

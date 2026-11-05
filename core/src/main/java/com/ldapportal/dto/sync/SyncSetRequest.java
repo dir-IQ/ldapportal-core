@@ -3,6 +3,7 @@ package com.ldapportal.dto.sync;
 
 import com.ldapportal.entity.SyncTransformRule;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncLoggingLevel;
 import com.ldapportal.entity.enums.SyncScope;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -33,5 +34,8 @@ public record SyncSetRequest(
         // (operational + password values); a list (incl. empty) is used verbatim.
         List<@Size(max = 255) String> excludedAttributes,
         @Min(60) Long reconcileCadenceSeconds,
-        boolean enabled) {
+        boolean enabled,
+        // How much of each run the history keeps. null => unchanged on update,
+        // SUMMARY on create.
+        SyncLoggingLevel loggingLevel) {
 }

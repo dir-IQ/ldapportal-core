@@ -4,7 +4,12 @@ package com.ldapportal.ldap.sync;
 import com.ldapportal.core.entitlement.Entitlement;
 import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.entity.RecomputeRequest;
+import com.ldapportal.entity.SyncLink;
+import com.ldapportal.entity.SyncSet;
+import com.ldapportal.repository.MembershipRepository;
 import com.ldapportal.repository.RecomputeRequestRepository;
+import com.ldapportal.repository.SyncLinkRepository;
+import com.ldapportal.repository.SyncSetRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -13,7 +18,11 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Scheduled drainer for the recompute queue. Each tick pulls a batch of unclaimed
@@ -25,6 +34,11 @@ import java.util.List;
  * recompute, then remove it only if no re-trigger landed meanwhile
  * ({@code deleteIfClaimed}); on an unexpected fault the claim is released so the
  * request retries. A stale-claim sweep reclaims rows orphaned by a crash.
+ *
+ * <p>Each pass is recorded per sync set as an
+ * {@link com.ldapportal.entity.enums.SyncReconcileTrigger#INCREMENTAL incremental}
+ * run in the set's history (kept when the pass did something), and every
+ * target write it makes is audited — the same bookkeeping a reconcile gets.
  *
  * <p>Gated on the {@code DIRECTORY_SYNC} entitlement so the engine is inert in
  * editions without it.
@@ -40,6 +54,10 @@ public class RecomputeWorker {
     private final RecomputeRequestRepository requestRepo;
     private final RecomputeEngine engine;
     private final EntitlementService entitlementService;
+    private final SyncSetRepository syncSetRepo;
+    private final SyncLinkRepository syncLinkRepo;
+    private final MembershipRepository membershipRepo;
+    private final SyncReconcileHistory history;
 
     @Scheduled(fixedDelayString = "${ldapportal.sync.worker.fixed-delay-ms:10000}")
     public void drainQueue() {
@@ -49,12 +67,18 @@ public class RecomputeWorker {
         try {
             List<RecomputeRequest> batch = requestRepo.findBatchUnclaimed(PageRequest.of(0, BATCH_SIZE));
             OffsetDateTime now = OffsetDateTime.now();
+            // One incremental run per set touched by this pass (empty when the
+            // set or its link can't be loaded: the engine skips those anyway).
+            Map<UUID, Optional<SyncReconcileHistory.Run>> runs = new LinkedHashMap<>();
             for (RecomputeRequest req : batch) {
                 if (requestRepo.claim(req.getSyncSetId(), req.getRequestKey(), now) == 0) {
                     continue; // another worker claimed it
                 }
+                Optional<SyncReconcileHistory.Run> run =
+                        runs.computeIfAbsent(req.getSyncSetId(), this::startRun);
                 try {
-                    engine.process(req.getSyncSetId(), req.getRequestKey());
+                    RecomputeOutcome outcome = engine.process(req.getSyncSetId(), req.getRequestKey(), false);
+                    run.ifPresent(r -> history.record(r, outcome));
                     requestRepo.deleteIfClaimed(req.getSyncSetId(), req.getRequestKey());
                 } catch (Exception ex) {
                     // Engine handles its own apply failures (marking the identity
@@ -62,12 +86,28 @@ public class RecomputeWorker {
                     // release the claim so the request retries next tick.
                     log.error("Recompute of ({}, {}) failed unexpectedly: {}",
                             req.getSyncSetId(), req.getRequestKey(), ex.toString());
+                    run.ifPresent(r -> history.fault(r, ex, req.getRequestKey()));
                     requestRepo.releaseClaim(req.getSyncSetId(), req.getRequestKey());
                 }
             }
+            runs.forEach((setId, run) -> run.ifPresent(
+                    r -> history.finishIncremental(r, membershipRepo.countBySyncSetId(setId))));
         } catch (Exception ex) {
             // A @Scheduled method that throws stops being scheduled — guard the loop.
             log.error("Sync recompute drain pass failed: {}", ex.toString());
+        }
+    }
+
+    private Optional<SyncReconcileHistory.Run> startRun(UUID syncSetId) {
+        try {
+            SyncSet set = syncSetRepo.findById(syncSetId).orElse(null);
+            SyncLink link = set == null ? null : syncLinkRepo.findById(set.getLinkId()).orElse(null);
+            return link == null ? Optional.empty()
+                    : Optional.of(history.startIncremental(set, link.getTargetDirId()));
+        } catch (Exception ex) {
+            // Bookkeeping only: the recompute itself still runs.
+            log.warn("Sync set {}: could not start recording the incremental pass: {}", syncSetId, ex.toString());
+            return Optional.empty();
         }
     }
 

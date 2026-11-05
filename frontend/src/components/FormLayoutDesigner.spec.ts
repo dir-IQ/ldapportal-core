@@ -45,3 +45,41 @@ describe('FormLayoutDesigner — naming-badge reactivity', () => {
     expect(rdnBadges()).toBe(1)
   })
 })
+
+describe('FormLayoutDesigner — per-type width rule', () => {
+  // The designer offers (and draws) only the widths the rendered form honors —
+  // see utils/fieldWidth — so what the admin sees is what the operator gets.
+  function mountWith(fields: ReturnType<typeof cfg>[]) {
+    return mount(FormLayoutDesigner, {
+      props: { attributeConfigs: [cfg('uid', { rdn: true }), ...fields], showDnField: false },
+    })
+  }
+
+  // Width buttons on the card for `attr`, by label.
+  function widthButtons(wrapper: ReturnType<typeof mountWith>, attr: string): string[] {
+    const card = wrapper.findAll('[draggable="true"]').find(c => c.text().includes(attr))!
+    return card.findAll('button[title]').map(b => b.text())
+  }
+
+  it('offers only 1/2 and Full for password and DN-lookup fields', () => {
+    const wrapper = mountWith([
+      cfg('userPassword', { inputType: 'PASSWORD' }),
+      cfg('manager', { inputType: 'DN_LOOKUP' }),
+    ])
+    expect(widthButtons(wrapper, 'userPassword')).toEqual(['1/2', 'Full'])
+    expect(widthButtons(wrapper, 'manager')).toEqual(['1/2', 'Full'])
+  })
+
+  it('offers every width for multi-line fields and draws them at the chosen width', () => {
+    const wrapper = mountWith([cfg('description', { inputType: 'TEXTAREA', columnSpan: 2 })])
+    expect(widthButtons(wrapper, 'description')).toEqual(['1/3', '1/2', '2/3', 'Full'])
+    const card = wrapper.findAll('[draggable="true"]').find(c => c.text().includes('description'))!
+    expect(card.attributes('style')).toContain('grid-column: span 2')
+  })
+
+  it('draws a narrow saved password at 1/2, matching the rendered form', () => {
+    const wrapper = mountWith([cfg('userPassword', { inputType: 'PASSWORD', columnSpan: 2 })])
+    const card = wrapper.findAll('[draggable="true"]').find(c => c.text().includes('userPassword'))!
+    expect(card.attributes('style')).toContain('grid-column: span 3')
+  })
+})

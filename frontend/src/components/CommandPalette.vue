@@ -65,6 +65,8 @@ interface RouteMetaFlags {
   requiresHr?: boolean
   requiresApprovals?: boolean
   requiresPlaybooks?: boolean
+  requiresFeature?: string
+  requiresSuperadminPermission?: string
 }
 
 const router = useRouter()
@@ -85,6 +87,7 @@ const LABEL_MAP: Record<string, string> = {
   'directory-search': 'Directory Search',
   'directory-schema': 'Schema Browser',
   'integrity': 'Integrity Check',
+  'directory-diff': 'Directory Diff',
   'audit-log': 'Audit Log',
   'audit-sources': 'Audit Sources',
   'audit-reports': 'Compliance Reports',
@@ -114,6 +117,7 @@ const SECTION_MAP: Record<string, string> = {
   'superadmin/directory-search': 'Explore',
   'superadmin/directory-schema': 'Explore',
   'superadmin/reports': 'Report',
+  'superadmin/directory-diff': 'Report',
   'superadmin/audit-reports': 'Report',
   'superadmin/auditor-links': 'Report',
   'settings': 'Configure',
@@ -158,6 +162,10 @@ const commands = computed<Command[]>(() => {
     if (meta.requiresApprovals && !auth.isAnyApprovalEnabled) continue
     // ...and the Lifecycle Playbooks master switch.
     if (meta.requiresPlaybooks && !auth.isPlaybooksEnabled) continue
+    // ...and the directory feature key the page needs (see router guard).
+    if (meta.requiresFeature && !auth.hasFeature(meta.requiresFeature)) continue
+    // ...and the superadmin permission the page needs (see router guard).
+    if (meta.requiresSuperadminPermission && !auth.hasSuperadminPermission(meta.requiresSuperadminPermission)) continue
 
     // For directory-scoped routes, substitute the current dirId
     if (path.includes(':dirId')) {

@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.dto.sync.SyncPreviewAction;
 import com.ldapportal.dto.sync.SyncReconcilePreview;
+import com.ldapportal.dto.sync.SyncRunSettings;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.MembershipState;
+import com.ldapportal.entity.enums.SyncNotInSetReason;
+import com.ldapportal.entity.enums.SyncReconcilePhase;
+import com.ldapportal.entity.enums.SyncReconcileTrigger;
+import com.ldapportal.exception.ConflictException;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.sync.identity.IdentityStrategy;
 import com.ldapportal.ldap.sync.identity.IdentityStrategyRegistry;
@@ -22,6 +28,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -58,6 +66,15 @@ import java.util.concurrent.atomic.AtomicLong;
  *       floor, so tiny sets aren't tripped by a single legitimate delete).</li>
  * </ul>
  * The same plan powers {@link #preview(UUID)} for the UI.
+ *
+ * <p>A reconcile is single-flight per set across app instances: it claims the
+ * set's reconcile lease first and heartbeats it while it runs, so instances whose
+ * schedulers find the same set due skip it, and a manual run while one is
+ * running is refused ({@link ConflictException}).
+ *
+ * <p>Every run is recorded in the set's reconcile history
+ * ({@link SyncReconcileHistory}): its trigger, the plan's shape, and what the
+ * engine did to each entry.
  */
 @Component
 @RequiredArgsConstructor
@@ -76,6 +93,11 @@ public class MembershipReconciler {
 
     private static final ReferenceResolver NO_RESOLVER = dn -> Optional.empty();
 
+    /** A reconcile lease silent this long belonged to a server that stopped; another run may claim it. */
+    static final Duration LEASE_STALE = Duration.ofMinutes(15);
+    /** How often a running reconcile refreshes its lease. */
+    static final Duration LEASE_HEARTBEAT = Duration.ofSeconds(30);
+
     private final SyncSetRepository syncSetRepo;
     private final SyncLinkRepository syncLinkRepo;
     private final DirectoryConnectionRepository directoryRepo;
@@ -84,50 +106,120 @@ public class MembershipReconciler {
     private final MembershipRepository membershipRepo;
     private final MembershipFunction membershipFunction;
     private final RecomputeEngine engine;
+    private final SyncReconcileHistory history;
 
     /** Strictly-increasing sweep generation, seeded above any stored epoch. */
     private final AtomicLong epochSequence = new AtomicLong(System.currentTimeMillis());
 
-    /**
-     * Reconcile one sync set synchronously. Returns the number of identities
-     * enumerated at the source.
-     */
+    /** Reconcile one sync set synchronously, recorded as a manual run with no requester. */
     public int reconcile(UUID syncSetId) {
-        Context ctx = loadContext(syncSetId);
-        if (ctx == null) {
-            return 0;
+        return reconcile(syncSetId, SyncReconcileTrigger.MANUAL, null);
+    }
+
+    /**
+     * Reconcile one sync set synchronously, recording the run in the set's
+     * history. Returns the number of identities enumerated at the source. A
+     * disabled or unavailable set is skipped and not recorded.
+     *
+     * @param requestedBy the operator, for a manual run
+     * @throws ConflictException when another reconcile of the set is running
+     *         (on this or another app instance)
+     */
+    public int reconcile(UUID syncSetId, SyncReconcileTrigger trigger, String requestedBy) {
+        Lease lease = new Lease(syncSetId);
+        if (!lease.claim()) {
+            throw new ConflictException("A reconcile of this sync set is already running.");
         }
+        try {
+            // Loaded after the claim, so the request counter it records covers
+            // everything raised before this run began.
+            Context ctx = loadContext(syncSetId, true);
+            if (ctx == null) {
+                return 0;
+            }
+            SyncReconcileHistory.Run run = history.start(ctx.set, ctx.link.getTargetDirId(), trigger, requestedBy);
+            try {
+                int enumerated = reconcile(ctx, run, lease);
+                history.complete(run, membershipRepo.countBySyncSetId(syncSetId));
+                return enumerated;
+            } catch (RuntimeException ex) {
+                history.fail(run, ex);
+                throw ex;
+            }
+        } finally {
+            lease.release();
+        }
+    }
+
+    private int reconcile(Context ctx, SyncReconcileHistory.Run run, Lease lease) {
+        UUID syncSetId = ctx.set.getId();
+        long started = System.nanoTime();
+        // Read before the scan: if it moves while the run works, a source change
+        // raced it and the engine stops trusting the scanned entries.
+        Long sourceChangeSeq = syncSetRepo.findSourceChangeSeq(syncSetId);
         Plan plan = computePlan(ctx);
+        long scanNanos = System.nanoTime() - started;
+        RecomputeEngine.Batch batch = engine.reconcileBatch(syncSetId,
+                sourceChangeSeq != null ? sourceChangeSeq : Long.MIN_VALUE);
         Guard guard = evaluateGuard(plan);
+        lease.beat(); // the source scan can be long
+        history.planned(run, plan.entries.size(), plan.managedCount, plan.complete,
+                guard.tripped(), guard.reason(), settingsOf(ctx.set));
+        history.phase(run, SyncReconcilePhase.APPLYING);
 
         long epoch = epochSequence.incrementAndGet();
         int faults = 0;
-        for (Planned p : plan.entries) {
-            // Per-entry isolation: one entry whose recompute faults (a source read
-            // that throws, a contended index row) must not abort the run and skip
-            // the sweep for everyone else. It is still stamped as seen — it was
-            // enumerated, so it must not become a not-seen delete candidate.
-            try {
-                engine.process(syncSetId, p.entry.getDN(), guard.tripped());
-            } catch (Exception ex) {
-                faults++;
-                log.warn("Sync set {}: reconcile recompute of {} faulted ({}); continuing",
-                        syncSetId, p.entry.getDN(), ex.toString());
-            } finally {
-                stampSeen(syncSetId, p.identity, epoch);
-            }
-        }
-        if (plan.complete) {
-            for (Membership row : membershipRepo.findNotSeen(syncSetId, epoch)) {
+        boolean finished = false;
+        try {
+            for (Planned p : plan.entries) {
+                // Per-entry isolation: one entry whose recompute faults (a source read
+                // that throws, a contended index row) must not abort the run and skip
+                // the sweep for everyone else. It is still stamped as seen — it was
+                // enumerated, so it must not become a not-seen delete candidate.
+                lease.beat();
+                history.current(run, p.entry.getDN());
                 try {
-                    engine.process(syncSetId, row.getIdentity(), guard.tripped());
+                    RecomputeOutcome outcome = engine.process(batch, p.entry.getDN(), p.entry, guard.tripped());
+                    if (p.notInSet != null && outcome != null && outcome.action() == SyncPreviewAction.UNCHANGED) {
+                        // In scope, never tracked and still not a member: the reason
+                        // the run's source entries outnumber the managed ones.
+                        history.notInSet(run, p.entry.getDN(), p.notInSet);
+                    } else {
+                        history.record(run, outcome);
+                    }
                 } catch (Exception ex) {
                     faults++;
-                    log.warn("Sync set {}: reconcile sweep of identity {} faulted ({}); continuing",
-                            syncSetId, row.getIdentity(), ex.toString());
+                    history.fault(run, ex, p.entry.getDN());
+                    log.warn("Sync set {}: reconcile recompute of {} faulted ({}); continuing",
+                            syncSetId, p.entry.getDN(), ex.toString());
+                } finally {
+                    stampSeen(syncSetId, p.identity, epoch);
                 }
             }
+            if (plan.complete) {
+                history.phase(run, SyncReconcilePhase.SWEEPING);
+                for (Membership row : membershipRepo.findNotSeen(syncSetId, epoch)) {
+                    lease.beat();
+                    history.current(run, row.getTargetDn() != null ? row.getTargetDn() : row.getSourceDn());
+                    try {
+                        history.record(run, engine.process(batch, row.getIdentity(), null, guard.tripped()));
+                    } catch (Exception ex) {
+                        faults++;
+                        history.fault(run, ex, row.getIdentity());
+                        log.warn("Sync set {}: reconcile sweep of identity {} faulted ({}); continuing",
+                                syncSetId, row.getIdentity(), ex.toString());
+                    }
+                }
+            }
+            finished = true;
+        } finally {
+            // Closure for what this run changed, once at the end: during the run
+            // a referrer is either recomputed later anyway, or its referent wasn't
+            // synced yet when the change happened. Also when the run stops part
+            // way, so the changes it did make still reach their referrers.
+            fanOutChanges(batch, run, finished ? lease : null);
         }
+        logTimings(syncSetId, plan.entries.size(), System.nanoTime() - started, scanNanos, batch.timings());
         if (faults > 0) {
             log.warn("Sync set {}: reconcile finished with {} faulted recompute(s); they retry next run",
                     syncSetId, faults);
@@ -136,17 +228,74 @@ public class MembershipReconciler {
             log.warn("Sync set {}: delete guard TRIPPED — {} planned deletes suppressed "
                     + "(held for review): {}", syncSetId, plan.deleteCandidates.size(), guard.reason());
         }
-        ctx.set.setReconcileLastRunAt(java.time.OffsetDateTime.now());
-        syncSetRepo.save(ctx.set);
+        // A targeted update, not a save of ctx.set: the set may have been edited
+        // while this run worked, and its stale version made the save fail.
+        syncSetRepo.stampReconcileRun(syncSetId, OffsetDateTime.now());
+        // ctx.set was loaded before the enumeration started, so its request
+        // counter is exactly what this run covers; anything raised since stays due.
+        // An incomplete enumeration didn't cover every entry, so it only counts as
+        // an attempt and the request is retried.
+        syncSetRepo.markReconcileRun(syncSetId, ctx.set.getReconcileRequestSeq(), plan.complete);
         return plan.entries.size();
+    }
+
+    /**
+     * Queue the referrers of what the run changed. {@code lease} is {@code null}
+     * when the run stopped part way: then it isn't heartbeated (it may be why
+     * the run stopped), and a failure here is logged rather than hiding the
+     * run's own.
+     */
+    private void fanOutChanges(RecomputeEngine.Batch batch, SyncReconcileHistory.Run run, Lease lease) {
+        try {
+            history.phase(run, SyncReconcilePhase.REFERENCES);
+            engine.fanOutDeferred(batch, dn -> {
+                if (lease != null) {
+                    lease.beat();
+                }
+                history.current(run, dn);
+            });
+        } catch (RuntimeException ex) {
+            if (lease != null) {
+                throw ex;
+            }
+            log.warn("Sync set {}: could not queue the referrers of a stopped reconcile's changes: {}",
+                    run.row().getSyncSetId(), ex.toString());
+        }
+    }
+
+    /** Where a reconcile's time went: the first thing to read when a run is slow. */
+    private static void logTimings(UUID syncSetId, int entries, long totalNanos, long scanNanos,
+                                   RecomputeEngine.Timings t) {
+        long other = Math.max(0, totalNanos - scanNanos - t.sourceReadNanos() - t.targetNanos() - t.referenceNanos());
+        log.info("Sync set {}: reconcile of {} source entries took {} (source scan {}, source reads {}, "
+                        + "target reads and writes {}, reference updates {}, index, audit and other work {})",
+                syncSetId, entries, seconds(totalNanos), seconds(scanNanos), seconds(t.sourceReadNanos()),
+                seconds(t.targetNanos()), seconds(t.referenceNanos()), seconds(other));
+    }
+
+    private static String seconds(long nanos) {
+        return String.format(java.util.Locale.ROOT, "%.1fs", nanos / 1e9);
+    }
+
+    /**
+     * Whether a reconcile of {@code set}, as loaded, holds its lease: one is
+     * running (on any instance) and heartbeated recently enough not to be
+     * reclaimed.
+     */
+    public static boolean isRunning(SyncSet set, OffsetDateTime now) {
+        return set.getReconcileLeaseToken() != null && set.getReconcileLeaseHeartbeatAt() != null
+                && set.getReconcileLeaseHeartbeatAt().isAfter(now.minus(LEASE_STALE));
     }
 
     /** Dry-run: what a reconcile would do, computed without writing to the target. */
     public SyncReconcilePreview preview(UUID syncSetId) {
-        Context ctx = loadContext(syncSetId);
+        // A preview never writes, so it plans for a disabled set or link too —
+        // that is exactly when an operator needs it: before enabling (the UI's
+        // enable confirmation runs this and asks only if deletes are planned).
+        Context ctx = loadContext(syncSetId, false);
         if (ctx == null) {
             return new SyncReconcilePreview(0, 0, 0, 0, List.of(), false,
-                    "Sync set, link, or source/target directory is unavailable or disabled.", false);
+                    "Sync set, link, or source directory is unavailable.", false);
         }
         Plan plan = computePlan(ctx);
         Guard guard = evaluateGuard(plan);
@@ -169,7 +318,7 @@ public class MembershipReconciler {
                 var decision = membershipFunction.evaluate(ctx.set, ctx.strategy, e, NO_RESOLVER);
                 String identity = decision.identity();
                 if (identity != null && !identity.isBlank()) {
-                    entries.add(new Planned(e, identity, decision.member()));
+                    entries.add(new Planned(e, identity, decision.member(), decision.outReason()));
                 }
             }
             complete = true;
@@ -187,9 +336,13 @@ public class MembershipReconciler {
         Set<String> seen = new HashSet<>();
         int adds = 0;
         List<Membership> deletes = new ArrayList<>();
-        for (Planned p : entries) {
+        for (int i = 0; i < entries.size(); i++) {
+            Planned p = entries.get(i);
             seen.add(p.identity);
             Membership row = byIdentity.get(p.identity);
+            if (row != null && p.notInSet != null) {
+                entries.set(i, p = p.tracked()); // a tracked entry leaving the set is a delete, not "not in set"
+            }
             if (p.member) {
                 if (row == null || row.getState() != MembershipState.APPLIED) {
                     adds++;
@@ -241,13 +394,18 @@ public class MembershipReconciler {
         return Guard.ok();
     }
 
-    private Context loadContext(UUID syncSetId) {
+    /**
+     * @param requireEnabled true for anything that writes (reconcile): a disabled
+     *                       set or link is skipped. A read-only preview passes
+     *                       false so it can plan before the set is turned on.
+     */
+    private Context loadContext(UUID syncSetId, boolean requireEnabled) {
         SyncSet set = syncSetRepo.findById(syncSetId).orElse(null);
-        if (set == null || !set.isEnabled()) {
+        if (set == null || (requireEnabled && !set.isEnabled())) {
             return null;
         }
         SyncLink link = syncLinkRepo.findById(set.getLinkId()).orElse(null);
-        if (link == null || !link.isEnabled()) {
+        if (link == null || (requireEnabled && !link.isEnabled())) {
             return null;
         }
         DirectoryConnection source = directoryRepo.findById(link.getSourceDirId()).orElse(null);
@@ -278,12 +436,19 @@ public class MembershipReconciler {
     }
 
     private List<SearchResultEntry> enumerateSource(Context ctx) {
-        String base = ctx.set.getObjectScopeBaseDn() != null
-                ? ctx.set.getObjectScopeBaseDn() : ctx.source.getBaseDn();
-        SearchScope scope = SyncScopes.searchScope(ctx.set);
-        String idAttr = SyncIdentity.attribute(ctx.set, ctx.strategy);
-        int pageSize = ctx.source.getPagingSize();
-        return connectionFactory.withConnectionUnreplicated(ctx.source, conn -> {
+        return enumerate(ctx.set, ctx.source, ctx.strategy);
+    }
+
+    /**
+     * The source scan a reconcile plans from: every entry in the set's scope,
+     * paged. Package-private so the per-entry preview enumerates identically.
+     */
+    List<SearchResultEntry> enumerate(SyncSet set, DirectoryConnection source, IdentityStrategy strategy) {
+        String base = set.getObjectScopeBaseDn() != null ? set.getObjectScopeBaseDn() : source.getBaseDn();
+        SearchScope scope = SyncScopes.searchScope(set);
+        String idAttr = SyncIdentity.attribute(set, strategy);
+        int pageSize = source.getPagingSize();
+        return connectionFactory.withConnectionUnreplicated(source, conn -> {
             // Fetch user attributes ("*") so membership can be evaluated for the
             // plan, plus the identity attribute explicitly (it may be operational,
             // e.g. entryUUID, which "*" does not return). Paged, so a scope larger
@@ -296,10 +461,78 @@ public class MembershipReconciler {
         });
     }
 
+    /** The set's settings and guard limits as this run sees them, kept with the run's record. */
+    private static SyncRunSettings settingsOf(SyncSet set) {
+        return new SyncRunSettings(
+                set.getDeletePolicy() != null ? set.getDeletePolicy().name() : null,
+                set.getObjectScopeBaseDn(),
+                set.getObjectScope() != null ? set.getObjectScope().name() : null,
+                set.getApplicabilityFilter(),
+                set.getTargetBaseDn(),
+                set.getIdentityKey(),
+                set.getSourceAnchorAttribute(),
+                set.getReconcileCadenceSeconds(),
+                DELETE_GUARD_MAX_ABSOLUTE,
+                DELETE_GUARD_MAX_PERCENT,
+                DELETE_GUARD_MIN_POPULATION);
+    }
+
     private record Context(SyncSet set, SyncLink link, DirectoryConnection source, IdentityStrategy strategy) {
     }
 
-    private record Planned(Entry entry, String identity, boolean member) {
+    /** One run's hold on the set's reconcile lease. */
+    private final class Lease {
+        private final UUID syncSetId;
+        private final UUID token = UUID.randomUUID();
+        private OffsetDateTime lastBeat;
+
+        Lease(UUID syncSetId) {
+            this.syncSetId = syncSetId;
+        }
+
+        boolean claim() {
+            OffsetDateTime now = OffsetDateTime.now();
+            lastBeat = now;
+            return syncSetRepo.claimReconcile(syncSetId, token, now, now.minus(LEASE_STALE)) == 1;
+        }
+
+        /**
+         * Refresh the lease when the heartbeat is due. If another run reclaimed it
+         * (this one went silent past {@link #LEASE_STALE}), stop rather than run
+         * alongside it.
+         */
+        void beat() {
+            OffsetDateTime now = OffsetDateTime.now();
+            if (lastBeat.plus(LEASE_HEARTBEAT).isAfter(now)) {
+                return;
+            }
+            if (syncSetRepo.heartbeatReconcile(syncSetId, token, now) == 0) {
+                throw new IllegalStateException("Another reconcile of this sync set took over after this one "
+                        + "stopped heartbeating; this run stopped.");
+            }
+            lastBeat = now;
+        }
+
+        void release() {
+            try {
+                syncSetRepo.releaseReconcile(syncSetId, token);
+            } catch (Exception ex) {
+                // Worst case the lease lapses after LEASE_STALE and the next run claims it.
+                log.warn("Sync set {}: could not release the reconcile lease: {}", syncSetId, ex.toString());
+            }
+        }
+    }
+
+    /**
+     * One source entry the plan found.
+     *
+     * @param notInSet why it isn't a member, when it isn't one and the set
+     *                 doesn't track it; {@code null} otherwise
+     */
+    private record Planned(Entry entry, String identity, boolean member, SyncNotInSetReason notInSet) {
+        Planned tracked() {
+            return new Planned(entry, identity, member, null);
+        }
     }
 
     private record Plan(List<Planned> entries, long managedCount, int adds,

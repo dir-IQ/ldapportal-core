@@ -10,6 +10,7 @@ import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.ldap.LdapGroupService;
 import com.ldapportal.ldap.LdapUserService;
+import com.ldapportal.ldap.model.LdapGroup;
 import com.ldapportal.ldap.model.LdapUser;
 import com.ldapportal.repository.AuditEventRepository;
 import com.ldapportal.repository.ProvisioningProfileRepository;
@@ -27,6 +28,7 @@ import org.springframework.security.access.AccessDeniedException;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -151,7 +153,7 @@ class OperationalReportServiceTest {
         service.run(dc, "DISABLED_ACCOUNTS", Map.of(), dirId, alice);
 
         // Not the directory base the old code fell back to.
-        verify(userService).searchUsers(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*"));
+        verify(userService).searchUsersRaw(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*"));
     }
 
     @Test
@@ -166,7 +168,7 @@ class OperationalReportServiceTest {
         service.run(dc, "RECENTLY_ADDED",
                 Map.of("scopeBaseDn", "dc=example,dc=com", "lookbackDays", 7), dirId, alice);
 
-        verify(userService).searchUsers(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*"));
+        verify(userService).searchUsersRaw(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*"));
     }
 
     @Test
@@ -192,7 +194,7 @@ class OperationalReportServiceTest {
     @Test
     void missingData_listsEntriesWithAbsentOrBlankAttributes_andSkipsPopulatedOnes() {
         DirectoryConnection dc = ldapDir();
-        when(userService.searchUsers(eq(dc), eq("(objectClass=*)"), eq(BRANCH), anyInt(), any(String[].class)))
+        when(userService.searchUsersRaw(eq(dc), eq("(objectClass=*)"), eq(BRANCH), anyInt(), any(String[].class)))
                 .thenReturn(List.of(
                         // fully populated → not reported
                         entry("uid=ok", Map.of("mail", List.of("ok@example.com"), "sn", List.of("Ok"),
@@ -211,41 +213,176 @@ class OperationalReportServiceTest {
         ReportData data = service.run(dc, "MISSING_DATA",
                 Map.of("branchDn", BRANCH, "attributes", List.of("mail", "sn")), dirId, superadmin());
 
-        assertThat(data.columns()).containsExactly("DN", "Missing Attributes", "Object Class", "Email", "Last Name");
-        assertThat(data.rows()).extracting(r -> r.get("DN"))
+        assertThat(data.columns()).containsExactly("dn", "missingAttributes", "objectClass", "mail", "sn");
+        // Attribute columns are headed by their LDAP name; only the derived column has a label.
+        assertThat(data.labels()).containsExactly(Map.entry("missingAttributes", "Missing Attributes"));
+        assertThat(data.rows()).extracting(r -> r.get("dn"))
                 .containsExactly("uid=nomail," + BRANCH, "uid=blanksn," + BRANCH, "uid=none," + BRANCH);
-        assertThat(data.rows().get(0).get("Missing Attributes")).isEqualTo("mail");
-        assertThat(data.rows().get(1).get("Missing Attributes")).isEqualTo("sn");
-        assertThat(data.rows().get(1).get("Email")).isEqualTo("|x@example.com");
-        assertThat(data.rows().get(2).get("Missing Attributes")).isEqualTo("mail, sn");
-        assertThat(data.rows().get(2).get("Object Class")).isEqualTo("inetOrgPerson");
+        assertThat(data.rows().get(0).get("missingAttributes")).isEqualTo("mail");
+        assertThat(data.rows().get(1).get("missingAttributes")).isEqualTo("sn");
+        assertThat(data.rows().get(1).get("mail")).isEqualTo("|x@example.com");
+        assertThat(data.rows().get(2).get("missingAttributes")).isEqualTo("mail, sn");
+        assertThat(data.rows().get(2).get("objectClass")).isEqualTo("inetOrgPerson");
+    }
+
+    @Test
+    void missingData_checksASecretAttribute_butNeverShowsItsValues() {
+        DirectoryConnection dc = ldapDir();
+        when(userService.searchUsersRaw(eq(dc), anyString(), eq(BRANCH), anyInt(), any(String[].class)))
+                .thenReturn(List.of(entry("uid=a", Map.of("userpassword", List.of("{SSHA}secret"),
+                        "objectclass", List.of("inetOrgPerson")))));
+
+        ReportData data = service.run(dc, "MISSING_DATA",
+                Map.of("branchDn", BRANCH, "attributes", List.of("mail", "userPassword")), dirId, superadmin());
+
+        assertThat(data.columns()).containsExactly("dn", "missingAttributes", "objectClass", "mail");
+        assertThat(data.rows()).singleElement().satisfies(row -> {
+            assertThat(row).containsEntry("missingAttributes", "mail");
+            assertThat(row.values()).noneMatch(v -> v.contains("secret"));
+        });
+    }
+
+    // ── Entry reports: columns, labels, groups ──────────────────────────────
+
+    @Test
+    void usersInBranch_keysColumnsByAttributeName_dropsSecrets_andAddsGroupsLast() {
+        DirectoryConnection dc = ldapDir();
+        when(userService.searchUsersRaw(eq(dc), anyString(), eq(BRANCH), anyInt(), eq("*")))
+                .thenReturn(List.of(entry("uid=alice", Map.of(
+                        "cn", List.of("Alice"), "uid", List.of("alice"), "mail", List.of("a@example.com"),
+                        "givenname", List.of("Alice"), "userpassword", List.of("{SSHA}secret"),
+                        "unicodepwd", List.of("x"), "sambantpassword", List.of("y")))));
+        LdapGroup admins = new LdapGroup("cn=admins,ou=groups,dc=example,dc=com",
+                Map.of("cn", List.of("admins"), "member", List.of("uid=alice," + BRANCH)));
+        LdapGroup devs = new LdapGroup("cn=devs,ou=groups,dc=example,dc=com",
+                Map.of("cn", List.of("devs"), "memberuid", List.of("alice")));
+        when(groupService.searchGroups(eq(dc), anyString(), isNull(), any(String[].class)))
+                .thenReturn(List.of(admins, devs));
+
+        ReportData data = service.run(dc, "USERS_IN_BRANCH", Map.of("branchDn", BRANCH), dirId, superadmin());
+
+        assertThat(data.columns()).containsExactly("dn", "cn", "givenname", "mail", "uid", "groups");
+        // Real attribute names only — no friendly headings, groups included.
+        assertThat(data.labels()).isEmpty();
+        assertThat(data.rows()).singleElement().satisfies(row -> {
+            assertThat(row).containsEntry("dn", "uid=alice," + BRANCH).containsEntry("mail", "a@example.com");
+            assertThat(row).containsEntry("groups", "admins|devs");
+        });
+        // Read without the enricher chain, so no addon virtual columns (isva.*).
+        verify(userService, never()).searchUsers(any(), anyString(), any(), anyInt(), any(String[].class));
+    }
+
+    @Test
+    void entryReport_fetchesOperationalAttributes_onlyWhenAsked() {
+        DirectoryConnection dc = ldapDir();
+        when(userService.searchUsersRaw(eq(dc), anyString(), eq(BRANCH), anyInt(), eq("*"), eq("+")))
+                .thenReturn(List.of(entry("uid=alice", Map.of(
+                        "uid", List.of("alice"), "modifytimestamp", List.of("20261104120000Z")))));
+
+        ReportData data = service.run(dc, "USERS_IN_BRANCH",
+                Map.of("branchDn", BRANCH, "includeOperational", true), dirId, superadmin());
+
+        assertThat(data.columns()).contains("modifytimestamp");
+        verify(userService, never()).searchUsersRaw(eq(dc), anyString(), eq(BRANCH), anyInt(), eq("*"));
+    }
+
+    @Test
+    void entryAttributes_acceptsBooleanOrString_andDefaultsToUserAttributesOnly() {
+        assertThat(OperationalReportService.entryAttributes(Map.of())).containsExactly("*");
+        assertThat(OperationalReportService.entryAttributes(null)).containsExactly("*");
+        assertThat(OperationalReportService.entryAttributes(Map.of("includeOperational", false)))
+                .containsExactly("*");
+        assertThat(OperationalReportService.entryAttributes(Map.of("includeOperational", true)))
+                .containsExactly("*", "+");
+        assertThat(OperationalReportService.entryAttributes(Map.of("includeOperational", "true")))
+                .containsExactly("*", "+");
+    }
+
+    @Test
+    void groupsColumn_isBuiltLikeTheUserExport_soAPipeInAGroupNameIsEscaped() {
+        DirectoryConnection dc = ldapDir();
+        when(userService.searchUsersRaw(eq(dc), anyString(), eq(BRANCH), anyInt(), eq("*")))
+                .thenReturn(List.of(entry("uid=alice", Map.of("uid", List.of("alice")))));
+        LdapGroup piped = new LdapGroup("cn=r|d,ou=groups,dc=example,dc=com",
+                Map.of("cn", List.of("r|d"), "member", List.of("uid=alice," + BRANCH)));
+        when(groupService.searchGroups(eq(dc), anyString(), isNull(), any(String[].class)))
+                .thenReturn(List.of(piped));
+
+        ReportData data = service.run(dc, "USERS_IN_BRANCH", Map.of("branchDn", BRANCH), dirId, superadmin());
+
+        // Same cell as BulkUserService's export: the import reads it back as one group.
+        assertThat(data.rows()).singleElement()
+                .satisfies(row -> assertThat(row).containsEntry("groups", "r\\|d"));
+    }
+
+    @Test
+    void groupsColumn_forAnAdmin_readsGroupsFromAllTheirOus_notJustTheReportsUserOu() {
+        // The admin view scopes the report to the profile's user OU; the groups
+        // live in the profile's group OU and must still be named.
+        String groupsOu = "ou=groups,dc=example,dc=com";
+        AuthPrincipal alice = admin();
+        DirectoryConnection dc = ldapDir();
+        when(permissionService.resolveSearchBaseDns(alice, dirId, BRANCH)).thenReturn(List.of(BRANCH));
+        when(permissionService.isDnWithinScope(alice, dirId, BRANCH)).thenReturn(true);
+        when(permissionService.getAuthorizedOuDns(alice, dirId)).thenReturn(Set.of(BRANCH, groupsOu));
+        when(userService.searchUsersRaw(eq(dc), anyString(), eq(BRANCH), anyInt(), eq("*")))
+                .thenReturn(List.of(entry("uid=alice", Map.of("uid", List.of("alice")))));
+        when(groupService.searchGroups(eq(dc), anyString(), eq(BRANCH), any(String[].class)))
+                .thenReturn(List.of());
+        when(groupService.searchGroups(eq(dc), anyString(), eq(groupsOu), any(String[].class)))
+                .thenReturn(List.of(new LdapGroup("cn=admins," + groupsOu,
+                        Map.of("cn", List.of("admins"), "member", List.of("uid=alice," + BRANCH)))));
+
+        ReportData data = service.run(dc, "USERS_IN_BRANCH",
+                Map.of("branchDn", BRANCH, "scopeBaseDn", BRANCH), dirId, alice);
+
+        assertThat(data.rows()).singleElement()
+                .satisfies(row -> assertThat(row).containsEntry("groups", "admins"));
+    }
+
+    @Test
+    void entryReport_withNoRows_stillCarriesTheGroupsColumn_withoutScanningGroups() {
+        DirectoryConnection dc = ldapDir();
+
+        ReportData data = service.run(dc, "DISABLED_ACCOUNTS", Map.of(), dirId, superadmin());
+
+        assertThat(data.columns()).containsExactly("dn", "groups");
+        verifyNoInteractions(groupService);
+    }
+
+    @Test
+    void secretAttributes_matchIgnoringCaseAndOptions() {
+        assertThat(OperationalReportService.isSecretAttribute("userPassword")).isTrue();
+        assertThat(OperationalReportService.isSecretAttribute("userPassword;binary")).isTrue();
+        assertThat(OperationalReportService.isSecretAttribute("unicodePwd")).isTrue();
+        assertThat(OperationalReportService.isSecretAttribute("mail")).isFalse();
     }
 
     @Test
     void missingData_acceptsCommaSeparatedAttributes_andFetchesOnlyThosePlusObjectClass() {
         DirectoryConnection dc = ldapDir();
-        when(userService.searchUsers(eq(dc), anyString(), eq(BRANCH), anyInt(), any(String[].class)))
+        when(userService.searchUsersRaw(eq(dc), anyString(), eq(BRANCH), anyInt(), any(String[].class)))
                 .thenReturn(List.of());
 
         service.run(dc, "MISSING_DATA",
                 Map.of("branchDn", BRANCH, "attributes", " mail, telephoneNumber ,,MAIL "), dirId, superadmin());
 
         ArgumentCaptor<String[]> attrs = ArgumentCaptor.forClass(String[].class);
-        verify(userService).searchUsers(eq(dc), eq("(objectClass=*)"), eq(BRANCH), anyInt(), attrs.capture());
+        verify(userService).searchUsersRaw(eq(dc), eq("(objectClass=*)"), eq(BRANCH), anyInt(), attrs.capture());
         assertThat(attrs.getValue()).containsExactly("mail", "telephoneNumber", "objectClass");
     }
 
     @Test
     void missingData_objectTypeUser_narrowsTheSearchFilter() {
         DirectoryConnection dc = ldapDir();
-        when(userService.searchUsers(eq(dc), anyString(), eq(BRANCH), anyInt(), any(String[].class)))
+        when(userService.searchUsersRaw(eq(dc), anyString(), eq(BRANCH), anyInt(), any(String[].class)))
                 .thenReturn(List.of());
 
         service.run(dc, "MISSING_DATA",
                 Map.of("branchDn", BRANCH, "attributes", List.of("mail"), "objectType", "USER"),
                 dirId, superadmin());
 
-        verify(userService).searchUsers(eq(dc),
+        verify(userService).searchUsersRaw(eq(dc),
                 eq("(|(objectClass=inetOrgPerson)(&(objectClass=user)(!(objectClass=computer))))"),
                 eq(BRANCH), anyInt(), any(String[].class));
     }
@@ -297,7 +434,7 @@ class OperationalReportServiceTest {
         assertThatThrownBy(() -> service.run(ldapDir(), "USERS_IN_BRANCH",
                 Map.of("branchDn", OTHER), dirId, alice))
                 .isInstanceOf(AccessDeniedException.class);
-        verify(userService, never()).searchUsers(any(), anyString(), anyString(), anyInt(), any());
+        verify(userService, never()).searchUsersRaw(any(), anyString(), anyString(), anyInt(), any());
     }
 
     @Test
@@ -305,9 +442,9 @@ class OperationalReportServiceTest {
         AuthPrincipal alice = admin();
         DirectoryConnection dc = ldapDir();
         when(permissionService.resolveSearchBaseDns(alice, dirId, null)).thenReturn(List.of(PEOPLE, OTHER));
-        when(userService.searchUsers(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*")))
+        when(userService.searchUsersRaw(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*")))
                 .thenReturn(List.of(new LdapUser("uid=a," + PEOPLE, Map.of("cn", List.of("A")))));
-        when(userService.searchUsers(eq(dc), anyString(), eq(OTHER), anyInt(), eq("*")))
+        when(userService.searchUsersRaw(eq(dc), anyString(), eq(OTHER), anyInt(), eq("*")))
                 .thenReturn(List.of(new LdapUser("uid=b," + OTHER, Map.of("cn", List.of("B")))));
 
         ReportData data = service.run(dc, "DISABLED_ACCOUNTS", Map.of(), dirId, alice);
@@ -343,7 +480,7 @@ class OperationalReportServiceTest {
 
         service.run(dc, "DISABLED_ACCOUNTS", Map.of(), dirId, superadmin());
 
-        verify(userService).searchUsers(eq(dc), anyString(), isNull(), anyInt(), eq("*"));
+        verify(userService).searchUsersRaw(eq(dc), anyString(), isNull(), anyInt(), eq("*"));
         verifyNoInteractions(permissionService);
     }
 
@@ -353,7 +490,7 @@ class OperationalReportServiceTest {
 
         service.run(dc, "DISABLED_ACCOUNTS", Map.of("scopeBaseDn", PEOPLE), dirId);
 
-        verify(userService).searchUsers(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*"));
+        verify(userService).searchUsersRaw(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*"));
         verifyNoInteractions(permissionService);
     }
 }

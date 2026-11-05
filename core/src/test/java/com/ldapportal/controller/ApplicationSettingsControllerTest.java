@@ -6,6 +6,7 @@ import com.ldapportal.dto.settings.ApplicationSettingsDto;
 import com.ldapportal.dto.settings.BrandingDto;
 import com.ldapportal.dto.settings.UpdateApplicationSettingsRequest;
 import com.ldapportal.service.ApplicationSettingsService;
+import com.ldapportal.service.EmailService;
 import com.ldapportal.core.siem.service.SiemExportService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +21,7 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -34,6 +36,7 @@ class ApplicationSettingsControllerTest extends BaseControllerTest {
     @MockitoBean ApplicationSettingsService settingsService;
     @MockitoBean SiemExportService          siemExportService;
     @MockitoBean com.ldapportal.service.ApprovalWorkflowService approvalWorkflowService;
+    @MockitoBean EmailService               emailService;
 
     static final String BASE_URL = "/api/v1/settings";
 
@@ -178,6 +181,50 @@ class ApplicationSettingsControllerTest extends BaseControllerTest {
     @Test
     void testSiem_unauthenticated_returns401() throws Exception {
         mockMvc.perform(post(BASE_URL + "/siem/test"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // ── POST /api/v1/settings/smtp/test ──────────────────────────────────────
+
+    @Test
+    void testSmtp_superadmin_returnsServerVerdict() throws Exception {
+        given(emailService.sendTest("ops@example.com"))
+                .willReturn(new EmailService.TestResult(false, "SMTP server rejected STARTTLS: 454 TLS not available"));
+
+        mockMvc.perform(post(BASE_URL + "/smtp/test")
+                        .with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"recipient\":\"ops@example.com\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.message").value("SMTP server rejected STARTTLS: 454 TLS not available"));
+    }
+
+    @Test
+    void testSmtp_invalidRecipient_returns400() throws Exception {
+        mockMvc.perform(post(BASE_URL + "/smtp/test")
+                        .with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"recipient\":\"not-an-address\"}"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(emailService);
+    }
+
+    @Test
+    void testSmtp_admin_returns403() throws Exception {
+        mockMvc.perform(post(BASE_URL + "/smtp/test")
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"recipient\":\"ops@example.com\"}"))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(emailService);
+    }
+
+    @Test
+    void testSmtp_unauthenticated_returns401() throws Exception {
+        mockMvc.perform(post(BASE_URL + "/smtp/test")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"recipient\":\"ops@example.com\"}"))
                 .andExpect(status().isUnauthorized());
     }
 }

@@ -105,6 +105,14 @@ public class ProvisioningInterceptorChain {
                 : interceptors.get(0).planGroupMembership(dir, groupDn, memberAttribute, memberValue, ctx);
     }
 
+    public DeletePlan planGroupDelete(DirectoryConnection dir,
+                                      String groupDn,
+                                      ProvisioningContext ctx) {
+        return interceptors.isEmpty()
+                ? BaselinePlans.groupDelete(groupDn)
+                : interceptors.get(0).planGroupDelete(dir, groupDn, ctx);
+    }
+
     /** True iff at least one interceptor is registered. Used by services
      * that want to keep the old code path when no interceptor exists —
      * not strictly necessary (plans collapse to baseline) but useful

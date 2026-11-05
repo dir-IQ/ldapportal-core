@@ -35,8 +35,16 @@ public record IsvaConfigDto(
         // page always has a complete table to render and round-trip.
         List<SecUserAttribute> secuserAttributes,
 
-        // Linked-mode-only — null in inline-mode responses
+        // The IVIA management DIT (required in linked mode, optional inline)
+        // and the containers below it: the stored values (null = default)
+        // and the effective DNs the addon actually uses.
         String managementDitBaseDn,
+        String userContainerDn,
+        String groupContainerDn,
+        String effectiveUserContainerDn,
+        String effectiveGroupContainerDn,
+
+        // Linked-mode-only
         String secuserRdnAttribute,
         IsvaRdnValueSource secuserRdnValueSource,
         IsvaGroupMemberTarget groupMemberTarget,
@@ -59,6 +67,10 @@ public record IsvaConfigDto(
                 entity.getSecuserOverlayAttributes(),
                 IsvaSecUserPlans.effectiveAttributes(entity),
                 entity.getManagementDitBaseDn(),
+                entity.getUserContainerDn(),
+                entity.getGroupContainerDn(),
+                entity.effectiveUserContainerDn(),
+                entity.effectiveGroupContainerDn(),
                 entity.getSecuserRdnAttribute(),
                 entity.getSecuserRdnValueSource(),
                 entity.getGroupMemberTarget(),

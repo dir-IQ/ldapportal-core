@@ -93,7 +93,9 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 OffsetDateTime.now(),               // createdAt
                 OffsetDateTime.now(),               // updatedAt
                 true,                               // bindPasswordSet
-                false);                             // entraClientSecretSet
+                false,                              // entraClientSecretSet
+                List.of(),                          // additionalBaseDns
+                List.of());                         // warnings
     }
 
     DirectoryConnectionRequest validRequest() {
@@ -107,7 +109,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 List.of(), List.of(),
                 null, null,                         // user/group objectClasses
                 null, null, null, null,
-                null, null);
+                null, null, null);
     }
 
     // ── GET list ──────────────────────────────────────────────────────────────
@@ -173,7 +175,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 List.of(), List.of(),
                 null, null,                         // user/group objectClasses
                 null, null, null, null,
-                null, null);
+                null, null, null);
 
         mockMvc.perform(post(BASE_URL)
                         .with(authentication(superadminAuth()))
@@ -194,7 +196,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 List.of(), List.of(),
                 null, null,                         // user/group objectClasses
                 null, null, null, null,
-                null, null);
+                null, null, null);
 
         mockMvc.perform(post(BASE_URL)
                         .with(authentication(superadminAuth()))

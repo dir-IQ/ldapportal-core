@@ -480,6 +480,56 @@ function toRootNode(result: BrowseResult): TreeNode {
   return { dn, rdn: dn, hasChildren: page.children.length > 0, _preloaded: page }
 }
 
+interface LoadedRoots { nodes: TreeNode[], base: BrowseResult }
+
+/**
+ * Browse every top-level root of a directory: the base DN first, then each
+ * further root the root browse lists (otherRoots) as its own tree node. A
+ * root that can't be read is left out with a warning instead of failing the
+ * tree. Returns null
+ * when the directory was switched meanwhile. Callers apply the result with
+ * applyRoots in the same tick they clear treeLoading, so the URL sync
+ * doesn't see a half-loaded tree.
+ */
+async function loadRoots(dirId: string): Promise<LoadedRoots | null> {
+  const { data } = await browse(dirId, undefined, { limit: BRANCH_PAGE_SIZE }) as { data: BrowseResult }
+  const extraDns = data.otherRoots ?? []
+  const extras = await Promise.allSettled(extraDns.map(dn =>
+    browse(dirId, dn, { limit: BRANCH_PAGE_SIZE }) as Promise<{ data: BrowseResult }>))
+  if (dirId !== selectedDirId.value) return null
+  const nodes = [toRootNode(data)]
+  extras.forEach((r, i) => {
+    if (r.status === 'fulfilled') nodes.push(toRootNode(r.value.data))
+    else notif.error(`Could not load base DN ${extraDns[i]}`)
+  })
+  return { nodes, base: data }
+}
+
+/** Show loaded roots, selecting the base DN. */
+function applyRoots(loaded: LoadedRoots | null): void {
+  if (!loaded) return
+  rootNodes.value = loaded.nodes
+  entryDetail.value = toDetail(loaded.base)
+  selectedDn.value = loaded.base.dn ?? ''
+}
+
+/**
+ * The chain of DNs from the root that contains `dn` down to it, or null when
+ * `dn` sits under none of the directory's roots.
+ */
+function chainFromRoots(dn: string): string[] | null {
+  for (const root of rootNodes.value) {
+    const chain = root.dn ? ancestorChain(dn, root.dn) : null
+    if (chain) return chain
+  }
+  return null
+}
+
+/** True when `dn` is one of the tree's top-level roots. */
+function isRootDn(dn: string): boolean {
+  return rootNodes.value.some(n => dnEquals(n.dn, dn))
+}
+
 // ── Branch filter ──────────────────────────────────────────────────────────
 
 async function applyBranchFilter(): Promise<void> {
@@ -548,12 +598,8 @@ watch(selectedDirId, async (dirId) => {
 
   treeLoading.value = true
   try {
-    const { data } = await browse(dirId, undefined, { limit: BRANCH_PAGE_SIZE }) as { data: BrowseResult }
-    // Root node is the directory base DN itself
-    rootNodes.value = [toRootNode(data)]
-    // Auto-select root
-    entryDetail.value = toDetail(data)
-    selectedDn.value = data.dn ?? ''
+    // One node per top-level root; the base DN is auto-selected.
+    applyRoots(await loadRoots(dirId))
   } catch (e) {
     const err = e as ApiError
     notif.error(err.response?.data?.detail || err.message || 'Failed to load directory')
@@ -577,10 +623,9 @@ watch(selectedDirId, async (dirId) => {
  * right so the link is never a dead end.
  */
 async function revealDn(dn: string): Promise<void> {
-  const rootDn = rootNodes.value[0]?.dn ?? ''
-  const ancestors = rootDn ? ancestorChain(dn, rootDn) : null
-  if (ancestors && ancestors.length === 0) {
-    // The target is the root itself — already selected on load.
+  const ancestors = chainFromRoots(dn)
+  if (ancestors && ancestors.length === 0 && dnEquals(dn, selectedDn.value)) {
+    // The target is the base DN itself — already selected on load.
     return
   }
   revealing = true
@@ -588,7 +633,10 @@ async function revealDn(dn: string): Promise<void> {
   try {
     // The tree mounts on the tick after rootNodes is set.
     await nextTick()
-    if (ancestors && treeRef.value) {
+    if (isRootDn(dn)) {
+      // Another top-level root: it's already in the tree, just select it.
+      revealed = true
+    } else if (ancestors && treeRef.value) {
       revealed = await treeRef.value.revealNode(ancestors, dn)
     }
     await selectEntry(dn)
@@ -598,7 +646,7 @@ async function revealDn(dn: string): Promise<void> {
   if (!revealed) {
     notif.info(ancestors
       ? 'Entry not found under its parent in the tree; showing its details.'
-      : 'Entry is outside this directory\'s base DN; showing its details.')
+      : 'Entry is outside this directory\'s base DNs; showing its details.')
   }
 }
 
@@ -820,11 +868,7 @@ async function onLdifImported(): Promise<void> {
   if (selectedDirId.value) {
     treeLoading.value = true
     try {
-      const { data } = await browse(selectedDirId.value, undefined,
-        { limit: BRANCH_PAGE_SIZE }) as { data: BrowseResult }
-      rootNodes.value = [toRootNode(data)]
-      entryDetail.value = toDetail(data)
-      selectedDn.value = data.dn ?? ''
+      applyRoots(await loadRoots(selectedDirId.value))
     } catch (e) {
       const err = e as ApiError
       notif.error(err.response?.data?.detail || err.message || 'Failed to reload directory')

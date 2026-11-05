@@ -57,9 +57,9 @@
              attributeConfigs array is empty — both mean we have no
              dynamic fields to render). -->
         <div v-if="!userTemplateConfig?.attributeConfigs?.length" class="grid grid-cols-6 gap-2">
-          <FormField label="RDN Attribute" v-model="local.rdnAttribute" placeholder="uid" required />
+          <FormField no-autofill label="RDN Attribute" v-model="local.rdnAttribute" placeholder="uid" required />
           <div class="col-span-4">
-            <FormField
+            <FormField no-autofill
               label="DN"
               :model-value="effectiveDn"
               @update:model-value="onDnInput"
@@ -74,28 +74,10 @@
         </div>
 
         <!-- RDN Value when using fallback (no dynamic attribute template) -->
-        <FormField v-if="!userTemplateConfig?.attributeConfigs?.length" label="RDN Value" v-model="local.rdnValue" placeholder="jsmith" required />
+        <FormField no-autofill v-if="!userTemplateConfig?.attributeConfigs?.length" label="RDN Value" v-model="local.rdnValue" placeholder="jsmith" required />
 
         <!-- Dynamic fields from user form config (all attributes in layout order) -->
         <template v-if="userTemplateConfig?.attributeConfigs?.length">
-          <!-- Standalone DN row when the RDN attribute is hidden (a computed
-               RDN, e.g. cn derived from other fields). The usual DN field
-               renders beside the RDN field, which doesn't exist here. -->
-          <div v-if="rdnIsHidden && showDnField" class="grid grid-cols-6 gap-2">
-            <div class="col-span-6">
-              <FormField
-                label="DN"
-                :model-value="effectiveDn"
-                @update:model-value="onDnInput"
-                placeholder="uid=jsmith,ou=people,dc=example,dc=com"
-                required
-                :error="dnError"
-              />
-              <button v-if="dnEdited" type="button" class="mt-1 text-xs text-blue-600 hover:underline" @click="resetDn">
-                Reset to computed
-              </button>
-            </div>
-          </div>
           <template v-for="(section, sIdx) in createSections" :key="sIdx">
             <fieldset v-if="section.fields.length" class="space-y-2">
               <legend v-if="section.name" class="text-base font-semibold text-gray-900 pb-1.5 border-b-2 border-gray-200 w-full mb-3">{{ section.name }}</legend>
@@ -114,7 +96,7 @@
                          reading computedAttrValues directly like the DN field.
                          Binding to local.rdnValue instead would leave it frozen,
                          since that value only reaches the field via a round-trip. -->
-                    <FormField
+                    <FormField no-autofill
                       v-if="attr.computedExpression"
                       :label="fieldLabel(attr)"
                       :model-value="computedAttrValues[attr.attributeName] || ''"
@@ -122,7 +104,7 @@
                       disabled
                       :field-key="attr.attributeName"
                     />
-                    <FormField
+                    <FormField no-autofill
                       v-else
                       :label="fieldLabel(attr)"
                       v-model="local.rdnValue"
@@ -136,7 +118,7 @@
                   <!-- Editable DN (seeded from the computed default / template).
                        Position + width come from the designer-configured layout. -->
                   <div v-else-if="attr.isDn" :style="{ gridColumn: `span ${attr.columnSpan || 4}` }">
-                    <FormField
+                    <FormField no-autofill
                       label="DN"
                       :model-value="effectiveDn"
                       @update:model-value="onDnInput"
@@ -149,10 +131,10 @@
                     </button>
                   </div>
                   <!-- Password field with generate/show/copy (create mode only).
-                       Hidden entirely when the profile auto-generates it
-                       server-side — see hidePasswordField. -->
+                       An auto-generated password never reaches this list —
+                       see layoutAttributes. -->
                   <div
-                    v-if="!attr.rdn && attr.inputType === 'PASSWORD' && !hidePasswordField"
+                    v-if="!attr.rdn && attr.inputType === 'PASSWORD'"
                     :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <label :for="`uf-pw-${attr.attributeName}`" class="block text-sm font-medium text-gray-700 mb-1">
@@ -165,6 +147,7 @@
                           :id="`uf-pw-${attr.attributeName}`"
                           :data-field="attr.attributeName"
                           :type="passwordVisible ? 'text' : 'password'"
+                          autocomplete="new-password"
                           :value="local.attributes[attr.attributeName]"
                           @input="local.attributes[attr.attributeName] = ($event.target as HTMLInputElement).value"
                           :required="attr.requiredOnCreate"
@@ -205,9 +188,7 @@
                     </div>
                     <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                   </div>
-                  <!-- Regular field. Excludes PASSWORD so a hidden (auto-
-                       generated) password renders nothing rather than falling
-                       through to a plain text input. -->
+                  <!-- Regular field. -->
                   <div
                     v-else-if="!attr.rdn && !attr.isDn && attr.inputType !== 'PASSWORD'"
                     :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
@@ -215,7 +196,7 @@
                     <!-- DN Lookup: use DnPicker instead of text input -->
                     <template v-if="attr.inputType === 'DN_LOOKUP'">
                       <label class="block text-sm font-medium text-gray-700 mb-1">{{ attr.customLabel || attr.attributeName }}</label>
-                      <DnPicker
+                      <DnPicker autocomplete="off"
                         :model-value="local.attributes[attr.attributeName]"
                         @update:model-value="v => { local.attributes[attr.attributeName] = v }"
                         :directory-id="dirId ?? undefined"
@@ -224,7 +205,7 @@
                       />
                       <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                     </template>
-                    <FormField
+                    <FormField no-autofill
                       v-else
                       :label="fieldLabel(attr)"
                       :model-value="attr.computedExpression ? computedAttrValues[attr.attributeName] : local.attributes[attr.attributeName]"
@@ -249,10 +230,10 @@
              attribute template — either no config row or
              attributeConfigs empty. -->
         <template v-if="!userTemplateConfig?.attributeConfigs?.length">
-          <FormField label="cn (Common Name)" v-model="local.attributes.cn" required />
-          <FormField label="sn (Surname)" v-model="local.attributes.sn" />
-          <FormField label="mail" v-model="local.attributes.mail" />
-          <FormField label="userPassword" type="password" revealable v-model="local.attributes.userPassword" />
+          <FormField no-autofill label="cn (Common Name)" v-model="local.attributes.cn" required />
+          <FormField no-autofill label="sn (Surname)" v-model="local.attributes.sn" />
+          <FormField no-autofill label="mail" v-model="local.attributes.mail" />
+          <FormField no-autofill label="userPassword" type="password" revealable v-model="local.attributes.userPassword" />
         </template>
       </div>
 
@@ -275,20 +256,21 @@
                        names the entry — an entry created under an overridden
                        DN that doesn't use the designated attribute keeps this
                        field editable. -->
-                  <div v-if="attr.rdn" :style="{ gridColumn: showDnField ? 'span 2' : `span ${attr.columnSpan || 6}` }">
-                    <FormField
+                  <div v-if="attr.rdn" :style="{ gridColumn: `span ${attr.columnSpan || 6}` }">
+                    <FormField no-autofill
                       :label="fieldLabel(attr)"
                       v-model="local.attributes[attr.attributeName]"
                       :type="mapInputType(attr.inputType)"
                       :required="attr.requiredOnCreate"
-                      :disabled="isNamingAttr(attr.attributeName) || attr.editableOnUpdate === false"
+                      :disabled="readOnly || isNamingAttr(attr.attributeName) || attr.editableOnUpdate === false"
                       :rows="attr.inputType === 'TEXTAREA' || attr.inputType === 'MULTI_VALUE' ? 3 : undefined"
-                      :hint="editFieldHint(attr)"
+                      :hint="readOnly ? undefined : editFieldHint(attr)"
                     />
                   </div>
-                  <!-- DN field (shown after RDN when enabled, edit mode) -->
-                  <div v-if="attr.rdn && showDnField" class="col-span-4">
-                    <FormField
+                  <!-- Read-only DN. Position + width come from the
+                       designer-configured layout, same as create mode. -->
+                  <div v-else-if="attr.isDn" :style="{ gridColumn: `span ${attr.columnSpan || 4}` }">
+                    <FormField no-autofill
                       label="DN"
                       :model-value="local.dn"
                       disabled
@@ -299,32 +281,32 @@
                        naming attribute, not just the designated one, and a
                        modify against any of them fails with notAllowedOnRDN. -->
                   <div
-                    v-if="!attr.rdn"
+                    v-else
                     :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <!-- DN Lookup: use DnPicker instead of text input -->
                     <template v-if="attr.inputType === 'DN_LOOKUP'">
                       <label class="block text-sm font-medium text-gray-700 mb-1">{{ fieldLabel(attr) }}</label>
-                      <DnPicker
+                      <DnPicker autocomplete="off"
                         v-model="local.attributes[attr.attributeName]"
                         :directory-id="dirId ?? undefined"
                         :placeholder="'Select a DN'"
                         :superadmin="false"
-                        :disabled="!attr.editableOnUpdate || isNamingAttr(attr.attributeName)"
+                        :disabled="readOnly || !attr.editableOnUpdate || isNamingAttr(attr.attributeName)"
                       />
                       <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                     </template>
-                    <FormField
+                    <FormField no-autofill
                       v-else
                       :label="fieldLabel(attr)"
                       v-model="local.attributes[attr.attributeName]"
                       :type="mapInputType(attr.inputType)"
-                      :revealable="mapInputType(attr.inputType) === 'password'"
+                      :revealable="!readOnly && mapInputType(attr.inputType) === 'password'"
                       :options="attr.inputType === 'SELECT' ? parseOptions(attr.allowedValues) : undefined"
                       :required="attr.requiredOnCreate"
-                      :disabled="!attr.editableOnUpdate || isNamingAttr(attr.attributeName)"
+                      :disabled="readOnly || !attr.editableOnUpdate || isNamingAttr(attr.attributeName)"
                       :rows="attr.inputType === 'TEXTAREA' || attr.inputType === 'MULTI_VALUE' ? 3 : undefined"
-                      :hint="editFieldHint(attr)"
+                      :hint="readOnly ? undefined : editFieldHint(attr)"
                       :field-key="attr.attributeName"
                       :error="fieldErrors[attr.attributeName]"
                     />
@@ -350,10 +332,10 @@
                    config never mentions (cn in o=0001+cn=Jane Rowe,…), and
                    editing it here would be a server-side naming violation. -->
               <template v-for="(_, key) in extraEditAttributes" :key="key">
-                <FormField :label="isNamingAttr(key) ? `${key} (RDN)` : key"
+                <FormField no-autofill :label="isNamingAttr(key) ? `${key} (RDN)` : key"
                            v-model="local.attributes[key]" type="textarea" :rows="2"
-                           :disabled="isNamingAttr(key)"
-                           :hint="isNamingAttr(key)
+                           :disabled="readOnly || isNamingAttr(key)"
+                           :hint="readOnly ? undefined : isNamingAttr(key)
                              ? 'Part of the entry DN — changing it requires a rename'
                              : 'One value per line'" />
               </template>
@@ -366,10 +348,10 @@
              here too — same rule as the configured-field path. -->
         <template v-else>
           <template v-for="(_, key) in editableAttributes" :key="key">
-            <FormField :label="isNamingAttr(key) ? `${key} (RDN)` : key"
+            <FormField no-autofill :label="isNamingAttr(key) ? `${key} (RDN)` : key"
                        v-model="local.attributes[key]" type="textarea" :rows="2"
-                       :disabled="isNamingAttr(key)"
-                       :hint="isNamingAttr(key)
+                       :disabled="readOnly || isNamingAttr(key)"
+                       :hint="readOnly ? undefined : isNamingAttr(key)
                          ? 'Part of the entry DN — changing it requires a rename'
                          : 'One value per line'" />
           </template>
@@ -387,11 +369,11 @@
               <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
             </svg>
             {{ IVIA_ABBR }} attributes ({{ Object.keys(iviaDisplayAttributes).length }})
-            <span class="font-normal">— read-only, manage on the {{ IVIA_ABBR }} Account tab</span>
+            <span v-if="!readOnly" class="font-normal">— read-only, manage on the {{ IVIA_ABBR }} Account tab</span>
           </button>
           <div v-if="showIviaAttrs" class="space-y-2 mt-3 pl-3 border-l-2 border-gray-100">
             <template v-for="(val, key) in iviaDisplayAttributes" :key="key">
-              <FormField :label="iviaAttrLabel(key)" :model-value="val" type="textarea" :rows="1" disabled />
+              <FormField no-autofill :label="iviaAttrLabel(key)" :model-value="val" type="textarea" :rows="1" disabled />
             </template>
           </div>
         </div>
@@ -413,7 +395,7 @@
 
       <!-- Copy memberships from another user (edit mode). Pre-stages the
            source user's groups as additions; applied with the rest on Save. -->
-      <div v-if="isEdit" class="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+      <div v-if="isEdit && !readOnly" class="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
         <button type="button" @click="showCopyFrom = !showCopyFrom"
                 class="flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800">
           <svg :class="['w-3.5 h-3.5 transition-transform', showCopyFrom && 'rotate-90']" viewBox="0 0 20 20" fill="currentColor">
@@ -425,7 +407,7 @@
           <p class="text-xs text-gray-500">Stage this user to join every group the selected user belongs to. Groups already shared are skipped; nothing is written until you Save.</p>
           <div class="flex gap-2">
             <div class="flex-1 min-w-0">
-              <DnPicker
+              <DnPicker autocomplete="off"
                 v-model="copySourceDn"
                 :directory-id="dirId ?? undefined"
                 :superadmin="false"
@@ -444,7 +426,7 @@
            right = search + add. Stacks vertically on narrow screens.
            Identity DN appears in the header above the tab strip — no
            need to repeat it inside the tab content. -->
-      <div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="flex-1 min-h-0 grid grid-cols-1 gap-4" :class="readOnly ? '' : 'lg:grid-cols-2'">
 
         <!-- LEFT: existing memberships -->
         <div class="flex flex-col min-h-0">
@@ -469,7 +451,7 @@
                   </div>
                   <code class="text-xs text-gray-500 block truncate" :title="row.group.dn">{{ row.group.dn }}</code>
                 </div>
-                <button @click="onMembershipAction(row)"
+                <button v-if="!readOnly" @click="onMembershipAction(row)"
                         class="ml-2 text-xs font-medium"
                         :class="row.state === 'member' ? 'text-red-500 hover:text-red-700' : 'text-gray-600 hover:text-gray-800'">
                   {{ row.state === 'member' ? 'Remove' : 'Undo' }}
@@ -495,13 +477,14 @@
           </div>
         </div>
 
-        <!-- RIGHT: add to group -->
-        <div class="flex flex-col min-h-0">
+        <!-- RIGHT: add to group (hidden when read-only) -->
+        <div v-if="!readOnly" class="flex flex-col min-h-0">
           <h3 class="text-sm font-semibold text-gray-800 mb-2">Add to Group</h3>
           <div class="flex gap-2 mb-2">
             <input
               v-model="groupFilter"
               placeholder="Search groups…"
+              autocomplete="off"
               aria-label="Search groups"
               @keyup.enter="searchAvailableGroups"
               class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -534,6 +517,7 @@
         :dir-id="dirId || ''"
         :dn="local.dn || ''"
         :ivia-config-enabled="iviaTabVisible"
+        :read-only="readOnly"
         @status-changed="onIviaStatusChanged"
       />
     </div>
@@ -558,6 +542,7 @@ import { IVIA_ABBR, isIviaAttr, iviaAttrLabel } from '@/constants/productNames'
 import type { IsvaAccountStatus } from '@/api/isvaAccount'
 import { validateAttributeValue, type AttributeRules } from '@/utils/attributeValidation'
 import { parseLeadingRdn, dnEquals } from '@/utils/dn'
+import { effectiveSpan } from '@/utils/fieldWidth'
 import { resolveGroupMembers } from '@/utils/groupMembers'
 import { useAttributeSyntaxStore } from '@/stores/attributeSyntax'
 
@@ -593,7 +578,8 @@ interface UserTemplateConfig {
   showDnField?: boolean
   /**
    * Optional ${attr} expression that seeds the (editable) DN field on create.
-   * Blank falls back to "<rdnAttribute>=<rdnValue>,<parentDn>".
+   * Blank falls back to "<rdnAttribute>=<rdnValue>,<parentDn>", or to just
+   * ",<parentDn>" when an operator-entered profile has no RDN attribute.
    */
   dnTemplate?: string | null
   /** DN field layout (designer-configured); null reproduces the default (after the RDN, 2/3). */
@@ -638,8 +624,15 @@ const props = withDefaults(defineProps<{
   userTemplateConfig?: UserTemplateConfig | null
   dirId?: string | null
   profileId?: string | null
+  /**
+   * View-only edit mode (an admin with user.read but not user.edit): every
+   * field is disabled, and the Groups tab's add / remove / copy controls and
+   * the IVIA Account tab's actions are hidden. Only meaningful with isEdit.
+   */
+  readOnly?: boolean
 }>(), {
   isEdit: false,
+  readOnly: false,
   userTemplateConfig: null,
   dirId: null,
   profileId: null,
@@ -850,14 +843,15 @@ const iviaDisplayAttributes = computed<Record<string, string>>(() => {
   return result
 })
 
-/** Attributes from the form config to show in edit mode (excludes objectClass, password, and hidden; includes RDN). */
-const editFormAttributes = computed(() => {
-  if (!props.userTemplateConfig?.attributeConfigs) return []
-  const rdnName = props.userTemplateConfig.rdnAttribute
-  return props.userTemplateConfig.attributeConfigs
-    .filter(a => !a.hidden && !HIDDEN_EDIT_ATTRS.has(a.attributeName) && !HIDDEN_EDIT_ATTRS.has(a.attributeName.toLowerCase()))
-    .map(a => ({ ...a, rdn: a.attributeName === rdnName }))
-})
+/**
+ * Attributes from the form config to show in edit mode, in layout order with
+ * the DN field placed: the shared layout minus objectClass and password.
+ * Fields are dropped only *after* the DN is placed, so the DN's saved position
+ * (counted against the designer's field list) still lands where it was put.
+ */
+const editFormAttributes = computed(() =>
+  withDnField(layoutAttributes.value).filter(a =>
+    a.isDn || (!HIDDEN_EDIT_ATTRS.has(a.attributeName) && !HIDDEN_EDIT_ATTRS.has(a.attributeName.toLowerCase()))))
 
 /** Attributes present on the entry but NOT in the form config (edit mode overflow). */
 const extraEditAttributes = computed<Record<string, string>>(() => {
@@ -893,23 +887,13 @@ function mapInputType(inputType?: string | null): string {
 }
 
 /**
- * Grid-column width for an attribute. Three layers:
- *
- *   1. Widgets that structurally need horizontal room — PASSWORD (show /
- *      generate / copy controls), TEXTAREA + MULTI_VALUE (multi-line),
- *      DN_LOOKUP (DN picker + browse button) — always span the full row
- *      regardless of profile config. The admin can't usefully override
- *      this; the widget would break at narrower widths.
- *
- *   2. Profile config — `attr.columnSpan` set on ProfileAttributeConfig.
- *      Admin's deliberate choice for this attribute on this profile.
- *
- *   3. Fallback to 3 (two-column row) when neither rule applies.
+ * Grid-column width for an attribute: the designer-configured `columnSpan`
+ * (falling back to 3, a two-column row), under the same per-input-type rule
+ * the designer applies — see utils/fieldWidth — so the form renders the width
+ * the admin picked.
  */
-const FULL_WIDTH_INPUT_TYPES = new Set(['PASSWORD', 'TEXTAREA', 'MULTI_VALUE', 'DN_LOOKUP'])
 function effectiveColumnSpan(attr: AttributeConfig): number {
-  if (attr.inputType && FULL_WIDTH_INPUT_TYPES.has(attr.inputType)) return 6
-  return attr.columnSpan || 3
+  return effectiveSpan(attr.inputType, attr.columnSpan, 3)
 }
 
 /** Parse the allowedValues JSON string into FormField options. */
@@ -970,17 +954,6 @@ function resolveDnVar(name: string): string {
   return local.attributes[name] || ''
 }
 
-/**
- * Whether the RDN attribute is hidden from the create form (i.e. a computed
- * RDN). The DN field then renders standalone, and the RDN value used for DN
- * composition comes from the computed expression rather than a typed field.
- */
-const rdnIsHidden = computed(() => {
-  const cfg = props.userTemplateConfig?.attributeConfigs?.find(
-    a => a.attributeName === props.userTemplateConfig?.rdnAttribute)
-  return !!cfg?.hidden
-})
-
 /** The RDN value for DN composition: computed when the RDN attr is computed. */
 const rdnEffectiveValue = computed(() => {
   const name = rdnAttr.value?.attributeName || local.rdnAttribute || ''
@@ -1028,6 +1001,10 @@ const defaultDn = computed(() => {
   const attr = rdnAttr.value?.attributeName || local.rdnAttribute || ''
   const val = rdnEffectiveValue.value
   const base = local.parentDn || ''
+  // An operator-entered profile with neither a template nor an RDN attribute
+  // leaves naming to the operator: pre-fill just the target OU for them to
+  // complete with the entry's RDN.
+  if (!attr && showDnField.value && base) return `,${base}`
   if (!attr || !val || !base) return ''
   return `${attr}=${escapeRdnValue(val)},${base}`
 })
@@ -1101,9 +1078,20 @@ const dnError = computed(() => {
   const dn = effectiveDn.value.trim()
   const base = (local.parentDn || '').trim()
   if (!dn) return dnEdited.value ? 'DN is required' : ''
+  // A DN with no RDN at all (the bare ",<target OU>" pre-fill) is flagged once
+  // the operator types or tries to save, not on first sight. Only a missing
+  // RDN: a template RDN still waiting on a blank field ("uid=,ou=…") is left to
+  // that field's own required check.
+  if (dn.startsWith(',')) {
+    return dnEdited.value || validationAttempted.value
+      ? 'Start the DN with the entry\'s RDN, e.g. uid=jsmith' : ''
+  }
   if (base && !dnWithinBase(dn, base)) return `DN must be within ${base}`
   return ''
 })
+
+/** Set by the first save attempt, so an incomplete pre-filled DN is reported then. */
+const validationAttempted = ref(false)
 
 /** Whether to show the DN field alongside the RDN. */
 const showDnField = computed(() => props.userTemplateConfig?.showDnField !== false)
@@ -1118,45 +1106,69 @@ const hidePasswordField = computed(() => {
   return d === 'GENERATED_DELIVERED' || d === 'GENERATED_DISCARDED'
 })
 
-/** All non-hidden attributes (including RDN), preserving the order defined in the user form config. */
-const allVisibleAttributes = computed(() => {
-  if (!props.userTemplateConfig?.attributeConfigs) return []
-  const rdnName = props.userTemplateConfig.rdnAttribute
-  const list: AttributeConfig[] = props.userTemplateConfig.attributeConfigs
-    .filter(a => !a.hidden && a.attributeName.toLowerCase() !== 'objectclass')
-    .map(a => ({ ...a, rdn: a.attributeName === rdnName }))
-  // Skip injection when the RDN is hidden — a standalone full-width DN row
-  // handles that (computed-RDN) case separately.
-  if (showDnField.value && !rdnIsHidden.value) insertDnPseudoField(list)
-  return list
-})
+function isPasswordAttr(a: AttributeConfig): boolean {
+  return a.inputType === 'PASSWORD' || a.attributeName.toLowerCase() === 'userpassword'
+}
 
 /**
- * Inject the synthetic, editable DN field into the create layout at its
- * designer-configured section / position / width. Null layout values reproduce
- * the default — immediately after the RDN at 2/3 width.
+ * The attributes the admin form-layout designer lays out, in saved order (the
+ * RDN flagged): everything visible except objectClass, HIDDEN_FIXED fields
+ * (server-applied constants — no operator input, and rendering one would leave
+ * an empty labelled cell in the grid) and an auto-generated password. Keeping
+ * this identical to the designer's list is what makes the saved DN position
+ * (counted against that list) land in the same place here.
  */
-function insertDnPseudoField(list: AttributeConfig[]): void {
+const layoutAttributes = computed<AttributeConfig[]>(() => {
+  if (!props.userTemplateConfig?.attributeConfigs) return []
+  const rdnName = props.userTemplateConfig.rdnAttribute
+  return props.userTemplateConfig.attributeConfigs
+    .filter(a => !a.hidden
+      && a.inputType !== 'HIDDEN_FIXED'
+      && a.attributeName.toLowerCase() !== 'objectclass'
+      && !(hidePasswordField.value && isPasswordAttr(a)))
+    .map(a => ({ ...a, rdn: a.attributeName === rdnName }))
+})
+
+/** All attributes rendered on the create form, in layout order with the DN field placed. */
+const allVisibleAttributes = computed(() => withDnField(layoutAttributes.value))
+
+/**
+ * A copy of the list with the synthetic DN field injected at its
+ * designer-configured section / position / width (when the profile shows the
+ * DN). Placement mirrors FormLayoutDesigner's insertDnField: the configured
+ * section if it exists, else the RDN's section, else the first; within it the
+ * configured index, else right after the RDN, else the end. Null layout values
+ * reproduce the default — immediately after the RDN at 2/3 width.
+ */
+function withDnField(attrs: AttributeConfig[]): AttributeConfig[] {
+  const list = [...attrs]
+  if (!showDnField.value) return list
   const cfg = props.userTemplateConfig
-  const rdnIdx = list.findIndex(f => f.rdn)
-  const rdnSection = rdnIdx >= 0 ? (list[rdnIdx].sectionName || '') : ''
-  const targetSection = cfg?.dnSectionName != null ? cfg.dnSectionName : rdnSection
-  const dn: AttributeConfig = {
-    attributeName: '__dn__', isDn: true, rdn: false,
-    columnSpan: cfg?.dnColumnSpan || 4, sectionName: targetSection,
+  const sectionOf = (f: AttributeConfig) => f.sectionName || ''
+  const rdn = list.find(f => f.rdn)
+  let targetSection: string
+  if (cfg?.dnSectionName != null && list.some(f => sectionOf(f) === cfg.dnSectionName)) {
+    targetSection = cfg.dnSectionName
+  } else if (rdn) {
+    targetSection = sectionOf(rdn)
+  } else {
+    targetSection = list.length ? sectionOf(list[0]) : ''
   }
   const sectionIdxs: number[] = []
-  list.forEach((f, i) => { if ((f.sectionName || '') === targetSection) sectionIdxs.push(i) })
+  list.forEach((f, i) => { if (sectionOf(f) === targetSection) sectionIdxs.push(i) })
+  const endOfSection = sectionIdxs.length ? sectionIdxs[sectionIdxs.length - 1] + 1 : list.length
   let insertAt: number
   if (cfg?.dnDisplayOrder != null && cfg.dnDisplayOrder >= 0) {
-    const order = Math.min(cfg.dnDisplayOrder, sectionIdxs.length)
-    insertAt = order < sectionIdxs.length
-      ? sectionIdxs[order]
-      : (sectionIdxs.length ? sectionIdxs[sectionIdxs.length - 1] + 1 : list.length)
+    insertAt = cfg.dnDisplayOrder < sectionIdxs.length ? sectionIdxs[cfg.dnDisplayOrder] : endOfSection
   } else {
-    insertAt = rdnIdx >= 0 ? rdnIdx + 1 : list.length
+    const rdnIdx = rdn ? list.indexOf(rdn) : -1
+    insertAt = rdnIdx >= 0 && sectionOf(rdn!) === targetSection ? rdnIdx + 1 : endOfSection
   }
-  list.splice(insertAt, 0, dn)
+  list.splice(insertAt, 0, {
+    attributeName: '__dn__', isDn: true, rdn: false,
+    columnSpan: cfg?.dnColumnSpan || 4, sectionName: targetSection,
+  })
+  return list
 }
 
 /** Group all visible attributes into sections for create mode. */
@@ -1311,6 +1323,7 @@ function validate(): boolean {
 
 /** Populates {@link fieldErrors}; returns true when the form is valid. */
 function runValidation(): boolean {
+  validationAttempted.value = true
   for (const k of Object.keys(fieldErrors)) delete fieldErrors[k]
   // The editable DN must stay within the profile's target OU on create. This
   // gate applies even on the fallback path (no attribute template).

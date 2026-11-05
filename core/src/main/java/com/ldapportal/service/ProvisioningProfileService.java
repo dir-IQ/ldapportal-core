@@ -472,6 +472,95 @@ public class ProvisioningProfileService {
         return toResponse(copy);
     }
 
+    /**
+     * Replace the user form of each target profile with the source profile's:
+     * every attribute config (fields, labels, input types, validation,
+     * defaults, computed values, and the admin, self-registration and
+     * self-service layouts) plus where the DN field sits in the form (its
+     * section, width and order). Targets may live in any directory, which is
+     * how identical dev / test / prod directories share one form definition.
+     *
+     * <p>Everything else stays the target's own: name, target OUs, object
+     * classes, DN mode / template / RDN attribute, password policy, groups,
+     * lifecycle, approvals and enabled state. The copied fields go through the
+     * same checks as a manual save against the target's settings (e.g. its
+     * RDN attribute must be a required field), and the call is all-or-nothing:
+     * one target failing leaves every target unchanged.
+     *
+     * @return the updated target profiles, in request order
+     * @throws IllegalArgumentException if the source is among the targets, or a
+     *         target rejects the copied form
+     */
+    @Transactional
+    public List<ProfileResponse> copyForm(UUID directoryId, UUID sourceProfileId,
+                                          List<UUID> targetProfileIds, AuthPrincipal principal) {
+        ProvisioningProfile source = requireProfileInDirectory(directoryId, sourceProfileId);
+        Set<UUID> targetIds = new LinkedHashSet<>(targetProfileIds);
+        if (targetIds.contains(sourceProfileId)) {
+            throw new IllegalArgumentException("A profile can't copy its form onto itself");
+        }
+        List<CreateProfileRequest.AttributeConfigEntry> form =
+                attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(sourceProfileId).stream()
+                        .map(ProvisioningProfileService::toEntry)
+                        .toList();
+
+        List<ProfileResponse> updated = new ArrayList<>();
+        for (UUID targetId : targetIds) {
+            ProvisioningProfile target = replaceForm(requireProfile(targetId), source.getDnColumnSpan(),
+                    source.getDnSectionName(), source.getDnDisplayOrder(), form);
+
+            if (principal != null) {
+                // A form copy is an update of the target; the detail says
+                // where the form came from.
+                auditService.record(principal, target.getDirectory().getId(), AuditAction.PROFILE_UPDATE, null,
+                        Map.of("profileId", target.getId(), "name", target.getName(),
+                                "operation", "copy-form",
+                                "sourceProfileId", source.getId(), "sourceName", source.getName(),
+                                "sourceDirectoryId", source.getDirectory().getId()));
+            }
+            updated.add(toResponse(target));
+        }
+        return updated;
+    }
+
+    /**
+     * Replace {@code target}'s user form: its attribute configs and where the
+     * DN field sits. Runs the same checks as a manual save against the
+     * target's own settings; a rejection names the target. Shared by
+     * {@link #copyForm} and profile import. No audit; callers record it.
+     */
+    ProvisioningProfile replaceForm(ProvisioningProfile target, Integer dnColumnSpan, String dnSectionName,
+                                    Integer dnDisplayOrder, List<CreateProfileRequest.AttributeConfigEntry> form) {
+        target.setDnColumnSpan(dnColumnSpan);
+        target.setDnSectionName(dnSectionName);
+        target.setDnDisplayOrder(dnDisplayOrder);
+        target = profileRepo.save(target);
+
+        attrConfigRepo.deleteAllByProfileId(target.getId());
+        attrConfigRepo.flush();
+        try {
+            saveAttributeConfigs(target, form);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(
+                    "Profile [" + target.getName() + "] in [" + target.getDirectory().getDisplayName()
+                            + "]: " + e.getMessage(), e);
+        }
+        return target;
+    }
+
+    /** A stored attribute config as the entry {@link #saveAttributeConfigs} takes. */
+    static CreateProfileRequest.AttributeConfigEntry toEntry(ProfileAttributeConfig c) {
+        return new CreateProfileRequest.AttributeConfigEntry(
+                c.getAttributeName(), c.getCustomLabel(), c.getInputType().name(),
+                c.isRequiredOnCreate(), c.isEditableOnCreate(), c.isEditableOnUpdate(),
+                c.isSelfServiceEdit(), c.isSelfRegistrationEdit(),
+                c.getDefaultValue(), c.getComputedExpression(), c.getValidationRegex(), c.getValidationMessage(),
+                c.getAllowedValues(), c.getMinLength(), c.getMaxLength(),
+                c.getSectionName(), c.getColumnSpan(), c.isHidden(),
+                c.getRegistrationSectionName(), c.getRegistrationColumnSpan(), c.getRegistrationDisplayOrder(),
+                c.getSelfServiceSectionName(), c.getSelfServiceColumnSpan(), c.getSelfServiceDisplayOrder());
+    }
+
     // ── Lifecycle Policy ──────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
@@ -1063,6 +1152,14 @@ public class ProvisioningProfileService {
                     "Self-registration requires an automatically-composed DN; turn off "
                     + "operator-entered DN or self-registration");
         }
+        // Automatic mode composes "<rdnAttribute>=<value>,<targetUserDn>", so it
+        // needs the attribute; operator-entered mode names the entry from the DN
+        // template or the operator's typed DN, so it's optional there.
+        String rdn = (rdnAttribute != null && !rdnAttribute.isBlank()) ? rdnAttribute.trim() : null;
+        if (rdn == null && !showDnField) {
+            throw new IllegalArgumentException(
+                    "An RDN attribute is required when the DN is composed automatically");
+        }
         profile.setName(name);
         profile.setDescription(description);
         profile.setTargetUserDn(targetUserDn);
@@ -1073,14 +1170,17 @@ public class ProvisioningProfileService {
         profile.setTargetGroupDn(
                 (targetGroupDn != null && !targetGroupDn.isBlank()) ? targetGroupDn : targetUserDn);
         profile.setObjectClassNames(new ArrayList<>(objectClassNames));
-        profile.setRdnAttribute(rdnAttribute);
+        profile.setRdnAttribute(rdn);
         profile.setShowDnField(showDnField);
         // Blank collapses to null so the create form falls back to the default
         // "<rdn>=<value>,<targetUserDn>" composition rather than an empty template.
         profile.setDnTemplate((dnTemplate != null && !dnTemplate.isBlank()) ? dnTemplate.trim() : null);
         // DN field layout — null reproduces the default (after the RDN, 2/3 width).
+        // An empty section name is a deliberate choice, not "unset": it is the
+        // form's unnamed section, so it is kept as "" rather than collapsing to
+        // null (which would move the DN back to the RDN's section on reload).
         profile.setDnColumnSpan(dnColumnSpan);
-        profile.setDnSectionName((dnSectionName != null && !dnSectionName.isBlank()) ? dnSectionName.trim() : null);
+        profile.setDnSectionName(dnSectionName != null ? dnSectionName.trim() : null);
         profile.setDnDisplayOrder(dnDisplayOrder);
         profile.setEnabled(enabled);
         profile.setSelfRegistrationAllowed(selfRegistrationAllowed);
@@ -1218,12 +1318,23 @@ public class ProvisioningProfileService {
             c.setHidden(e.hidden());
             c.setRegistrationSectionName(e.registrationSectionName());
             c.setRegistrationColumnSpan(e.registrationColumnSpan());
-            c.setRegistrationDisplayOrder(e.registrationColumnSpan() != null ? i : null);
+            c.setRegistrationDisplayOrder(layoutOrder(e.registrationDisplayOrder(), e.registrationColumnSpan(), i));
             c.setSelfServiceSectionName(e.selfServiceSectionName());
             c.setSelfServiceColumnSpan(e.selfServiceColumnSpan());
-            c.setSelfServiceDisplayOrder(e.selfServiceColumnSpan() != null ? i : null);
+            c.setSelfServiceDisplayOrder(layoutOrder(e.selfServiceDisplayOrder(), e.selfServiceColumnSpan(), i));
             attrConfigRepo.save(c);
         }
+    }
+
+    /**
+     * Position of a field in the self-registration / self-service layout. Those
+     * layouts are ordered independently of the admin form, so the designer's
+     * explicit order wins; a client that sends none keeps the legacy behavior
+     * (admin position once the layout has been customised, else unset).
+     */
+    private static Integer layoutOrder(Integer explicitOrder, Integer layoutColumnSpan, int adminIndex) {
+        if (explicitOrder != null) return explicitOrder;
+        return layoutColumnSpan != null ? adminIndex : null;
     }
 
     private void saveGroupAssignments(ProvisioningProfile profile,

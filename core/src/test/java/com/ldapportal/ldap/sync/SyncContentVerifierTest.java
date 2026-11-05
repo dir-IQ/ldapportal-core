@@ -24,7 +24,7 @@ class SyncContentVerifierTest {
     private static final Set<String> EXCLUDED = Set.of();
 
     private static SyncContentVerifier.Expected expected(String dn, Attribute... attrs) {
-        return new SyncContentVerifier.Expected(dn, List.of(attrs));
+        return new SyncContentVerifier.Expected(dn, List.of(attrs), java.util.Set.of(), Map.of());
     }
 
     private static Map<String, SyncContentVerifier.Expected> expectedMap(String dn,
@@ -49,6 +49,33 @@ class SyncContentVerifierTest {
         assertThat(r.contentMismatches()).isZero();
         assertThat(r.sourceMembers()).isEqualTo(1);
         assertThat(r.targetEntries()).isEqualTo(1);
+    }
+
+    @Test
+    void heldReference_keptOnTheTarget_isNotDrift() {
+        var expected = expectedMap("cn=eng,dc=t", new SyncContentVerifier.Expected("cn=eng,dc=t",
+                List.of(new Attribute("cn", "eng")), Set.of("secdn"), Map.of()));
+        Map<String, Entry> actual = Map.of("cn=eng,dc=t",
+                new Entry("cn=eng,dc=t", new Attribute("cn", "eng"), new Attribute("secDN", "cn=eng,o=native")));
+
+        SyncVerifyResult r = SyncContentVerifier.compare(expected, actual, EXCLUDED, true, true);
+
+        assertThat(r.inSync()).isEqualTo(1);
+        assertThat(r.contentMismatches()).isZero();
+    }
+
+    @Test
+    void unresolvedMember_theTargetHasExactly_isNotDrift() {
+        var expected = expectedMap("cn=g,dc=t", new SyncContentVerifier.Expected("cn=g,dc=t",
+                List.of(new Attribute("member", "uid=a,dc=t")), Set.of(),
+                Map.of("member", Map.of("secAuthority=default,cn=foo", "secAuthority=default,cn=foo"))));
+        Map<String, Entry> actual = Map.of("cn=g,dc=t", new Entry("cn=g,dc=t",
+                new Attribute("member", "uid=a, dc=t", "secAuthority=default, cn=foo")));
+
+        SyncVerifyResult r = SyncContentVerifier.compare(expected, actual, EXCLUDED, true, true, null,
+                List.of("member"));
+
+        assertThat(r.inSync()).isEqualTo(1);
     }
 
     @Test
@@ -126,5 +153,81 @@ class SyncContentVerifierTest {
         SyncVerifyResult r = SyncContentVerifier.compare(Map.of(), Map.of(), EXCLUDED, false, true);
         assertThat(r.sourceComplete()).isFalse();
         assertThat(r.targetComplete()).isTrue();
+    }
+
+    @Test
+    void aDnReferenceDifferingOnlyInForm_isInSync_notDrift() {
+        var expected = expectedMap("cn=sec,dc=t",
+                expected("cn=sec,dc=t", new Attribute("secDN", "cn=IVIA_Import_Test,o=Groups,c=us")));
+        Map<String, Entry> actual = Map.of("cn=sec,dc=t",
+                new Entry("cn=sec,dc=t", new Attribute("secDN", "cn=ivia_import_test, o=groups,c=us")));
+
+        SyncVerifyResult r = SyncContentVerifier.compare(expected, actual, EXCLUDED, true, true, null,
+                List.of("secDN"));
+
+        assertThat(r.inSync()).isEqualTo(1);
+        assertThat(r.contentMismatches()).isZero();
+    }
+
+    @Test
+    void withAnAnchor_onlyAnchoredTargetEntriesAreOrphans() {
+        Map<String, Entry> actual = new LinkedHashMap<>();
+        actual.put("uid=gone,ou=people,dc=t", new Entry("uid=gone,ou=people,dc=t",
+                new Attribute("cn", "Gone"), new Attribute("srcAnchor", "id-1")));
+        actual.put("uid=other,ou=people,dc=t", new Entry("uid=other,ou=people,dc=t",
+                new Attribute("cn", "Not ours")));
+
+        SyncVerifyResult anchored = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true,
+                null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor",
+                SyncContentVerifier.NOT_ELSEWHERE);
+        SyncVerifyResult unanchored = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true);
+
+        // Only the entry the set stamped is its orphan; the other isn't its to account for.
+        assertThat(anchored.orphanOnTarget()).isEqualTo(1);
+        assertThat(anchored.sampleOrphans()).containsExactly("uid=gone,ou=people,dc=t");
+        assertThat(anchored.orphansAnchored()).isTrue();
+        // Without an anchor every entry under the base is a candidate, as before.
+        assertThat(unanchored.orphanOnTarget()).isEqualTo(2);
+        assertThat(unanchored.orphansAnchored()).isFalse();
+    }
+
+    @org.junit.jupiter.api.Test
+    void withAnAnchor_entriesAnotherSetPlacesThereAreNotOrphans() {
+        // Both carry the shared anchor attribute; only "gone" is this set's leftover.
+        Map<String, Entry> actual = new LinkedHashMap<>();
+        actual.put("uid=gone,ou=people,dc=t", new Entry("uid=gone,ou=people,dc=t",
+                new Attribute("cn", "Gone"), new Attribute("srcAnchor", "id-1")));
+        actual.put("uid=theirs,ou=people,dc=t", new Entry("uid=theirs,ou=people,dc=t",
+                new Attribute("cn", "Theirs"), new Attribute("srcAnchor", "id-2")));
+        SyncContentVerifier.ManagedElsewhere otherSet = (value, dn) ->
+                value.equals("id-2") && dn.equalsIgnoreCase("uid=theirs,ou=people,dc=t");
+
+        SyncVerifyResult r = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true,
+                null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor", otherSet);
+
+        assertThat(r.orphanOnTarget()).isEqualTo(1);
+        assertThat(r.sampleOrphans()).containsExactly("uid=gone,ou=people,dc=t");
+    }
+
+    // ── held references ──────────────────────────────────────────────────────────
+
+    @org.junit.jupiter.api.Test
+    void heldReferences_countsMembersAndTheOnesNamingMissingEntries() {
+        var linked = MembershipDecision.in("1", "cn=a,dc=t", List.of(), new byte[0],
+                Map.of("secDN", List.of("uid=ghost,ou=people,dc=s")), Map.of());
+        var unsynced = MembershipDecision.in("2", "cn=b,dc=t", List.of(), new byte[0],
+                Map.of(), Map.of("member", List.of("uid=pending,ou=people,dc=s")));
+        var clean = MembershipDecision.in("3", "cn=c,dc=t", List.of(), new byte[0], Map.of(), Map.of());
+
+        // ghost exists nowhere; pending exists on the source but isn't synced yet.
+        var held = SyncContentVerifier.heldReferences(List.of(linked, unsynced, clean),
+                dn -> !dn.startsWith("uid=ghost"));
+
+        assertThat(held.entries()).isEqualTo(2);
+        assertThat(held.dangling()).isEqualTo(1);
+        assertThat(held.unchecked()).isFalse();
+        assertThat(held.samples()).extracting(SyncVerifyResult.HeldSample::reference, SyncVerifyResult.HeldSample::dangling)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("uid=ghost,ou=people,dc=s", true),
+                        org.assertj.core.groups.Tuple.tuple("uid=pending,ou=people,dc=s", false));
     }
 }

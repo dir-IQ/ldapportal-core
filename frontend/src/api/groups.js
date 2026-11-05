@@ -21,11 +21,16 @@ export const deleteGroup = (dirId, dn) =>
 export const addGroupMember = (dirId, dn, data) =>
   client.post(`${base(dirId)}/members`, data, { params: { dn } })
 
+// The member goes in the query, not a DELETE body: reverse proxies such as
+// WebSEAL don't reliably forward a DELETE request's body.
 export const removeGroupMember = (dirId, dn, data) =>
-  client.delete(`${base(dirId)}/members`, { data, params: { dn } })
+  client.delete(`${base(dirId)}/members`, {
+    params: { dn, memberAttribute: data.memberAttribute, memberValue: data.memberValue },
+  })
 
 export const addGroupMembersBulk = (dirId, dn, data) =>
   client.post(`${base(dirId)}/members/bulk`, data, { params: { dn } })
 
+// A POST: a list of DNs is too long for a query, and a DELETE body may be dropped by a proxy.
 export const removeGroupMembersBulk = (dirId, dn, data) =>
-  client.delete(`${base(dirId)}/members/bulk`, { data, params: { dn } })
+  client.post(`${base(dirId)}/members/bulk/remove`, data, { params: { dn } })

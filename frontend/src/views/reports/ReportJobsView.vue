@@ -38,8 +38,10 @@
         </div>
         <div v-if="needsParam">
           <label for="rj-param-value" class="block text-sm font-medium text-gray-700 mb-1">{{ paramLabel }}</label>
-          <DnPicker v-if="currentRunType?.param === 'groupDn'" v-model="runForm.paramValue" :directory-id="dirId" scope="group" />
-          <DnPicker v-else-if="currentRunType?.param === 'branchDn'" v-model="runForm.paramValue" :directory-id="dirId" />
+          <DnPicker v-if="currentRunType?.param === 'groupDn'" v-model="runForm.paramValue" :directory-id="dirId" scope="group"
+                     :base-dn="groupPickerBaseDn" />
+          <DnPicker v-else-if="currentRunType?.param === 'branchDn'" v-model="runForm.paramValue" :directory-id="dirId"
+                     :superadmin="auth.isSuperadmin" :authorized-roots="branchPickerRoots" />
           <input v-else id="rj-param-value" v-model="runForm.paramValue" type="text" :placeholder="paramPlaceholder" class="input w-full" />
         </div>
         <!-- Missing Data: the attributes every entry under the branch must carry. -->
@@ -126,8 +128,14 @@
         :columns="tableColumns"
         :rows="resultRows"
         empty-text="No entries found for this report."
+        @visible-columns-change="visibleColumnKeys = $event"
       >
         <template #toolbar>
+          <label v-if="isEntryReport" class="flex items-center gap-1.5 text-xs text-gray-600"
+                 title="Also fetch operational attributes (createTimestamp, entryUUID, …) and run the report again. They appear in the Columns menu.">
+            <input v-model="includeOperational" type="checkbox" class="rounded border-gray-300" :disabled="running" />
+            Operational attributes
+          </label>
           <button @click="doExport('CSV')" :disabled="exporting" class="btn-secondary text-xs">Export CSV</button>
           <!-- PDF rendering ships with the commercial governance
                module; hide the button on community where the
@@ -156,12 +164,13 @@
           <span v-else-if="isDateColumn(col.key, value)" :title="formatFullDate(value as string)" class="font-mono whitespace-nowrap">
             {{ formatRelativeDate(value as string) }}
           </span>
-          <!-- DN columns (truncate) -->
-          <span v-else-if="isDnColumn(col.key, value)" :title="value as string" class="font-mono truncate block max-w-xs">
-            {{ truncateDn(value as string) }}
+          <!-- DN columns: the whole DN, ellipsized at the column's width (no
+               max-width cap), so widening the column shows more of it. -->
+          <span v-else-if="isDnColumn(col.key, value)" :title="value as string" class="font-mono truncate block">
+            {{ value }}
           </span>
           <!-- Default -->
-          <span v-else class="font-mono truncate block max-w-xs">{{ value }}</span>
+          <span v-else :title="typeof value === 'string' ? value : undefined" class="font-mono truncate block">{{ value }}</span>
         </template>
       </ResultsTable>
     </section>
@@ -302,8 +311,10 @@
             </div>
             <div v-if="jobFormNeedsParam">
               <label class="block text-sm font-medium text-gray-700 mb-1">{{ jobFormParamLabel }}</label>
-              <DnPicker v-if="currentJobFormType?.param === 'groupDn'" v-model="jobForm.paramValue" :directory-id="dirId" scope="group" />
-              <DnPicker v-else-if="currentJobFormType?.param === 'branchDn'" v-model="jobForm.paramValue" :directory-id="dirId" />
+              <DnPicker v-if="currentJobFormType?.param === 'groupDn'" v-model="jobForm.paramValue" :directory-id="dirId" scope="group"
+                     :base-dn="groupPickerBaseDn" />
+              <DnPicker v-else-if="currentJobFormType?.param === 'branchDn'" v-model="jobForm.paramValue" :directory-id="dirId"
+                     :superadmin="auth.isSuperadmin" :authorized-roots="branchPickerRoots" />
               <FormField v-else :label="jobFormParamLabel" v-model="jobForm.paramValue" />
             </div>
             <!-- Missing Data: the attributes every entry under the branch must carry. -->
@@ -400,7 +411,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
@@ -413,12 +424,16 @@ import {
 } from '@/api/reports'
 import { listDirectories } from '@/api/directories'
 import { checkIntegrity } from '@/api/browse'
+import { listAttributeTypes } from '@/api/schema'
+import {
+  buildUserAttributeColumns, attributeDisplayName, useOperationalAttributesToggle,
+} from '@/composables/useUserAttributeColumns'
 import { getAuditActions } from '@/api/audit'
 import { actionLabel } from '@/components/dashboard/auditLabels'
 import { downloadBlob } from '@/composables/useApi'
 import {
-  friendlyColumnName, formatRelativeDate, formatFullDate,
-  truncateDn, looksLikeTimestamp, looksLikeDn,
+  formatRelativeDate, formatFullDate,
+  looksLikeTimestamp, looksLikeDn,
   integrityTypeBadgeClass, friendlyIntegrityType, sourceBadgeClass,
   DATE_COLUMNS, HIDDEN_COLUMNS,
 } from '@/composables/useReportFormatting'
@@ -491,6 +506,33 @@ const loadingDirs = ref(false)
 const selectedDir = ref('')
 
 const dirId = computed(() => routeDirId || selectedDir.value)
+
+// Roots for the Branch DN picker (Users in Branch, Missing Data). The picker
+// defaults to the superadmin-only browse endpoint, which rejects admins, so an
+// admin browses through the directory-scoped endpoint starting from the OUs
+// they hold: the picked profile's target OU, else every profile's in this
+// directory. Superadmins browse the whole tree from the base DN.
+const branchPickerRoots = computed<string[]>(() => {
+  if (auth.isSuperadmin) return []
+  const picked = profilePicker.selectedProfile?.targetUserDn
+  if (picked) return [picked]
+  const seen = new Set<string>()
+  const roots: string[] = []
+  for (const p of profilePicker.profiles ?? []) {
+    const dn = p.targetUserDn?.trim()
+    if (!dn || (p.directoryId && p.directoryId !== dirId.value) || seen.has(dn.toLowerCase())) continue
+    seen.add(dn.toLowerCase())
+    roots.push(dn)
+  }
+  return roots
+})
+
+// Base DN for the Group DN picker (Users in Group). The group search is
+// already clamped server-side to every OU the admin holds; narrow the tree to
+// the picked profile's target group OU so it matches the branch picker.
+const groupPickerBaseDn = computed<string>(() =>
+  auth.isSuperadmin ? '' : (profilePicker.selectedProfile?.targetGroupDn?.trim() || ''),
+)
 
 // Report types. INTEGRITY_CHECK is a frontend-only pseudo-type (handled via a
 // separate endpoint). ORPHANED_IVIA_ACCOUNTS is contributed by the IVIA addon
@@ -579,6 +621,8 @@ const running = ref(false)
 const exporting = ref(false)
 const hasResults = ref(false)
 const resultColumns = ref<string[]>([])
+/** Display headings by column key; entry reports key columns by attribute name. */
+const resultLabels = ref<Record<string, string>>({})
 const resultRows = ref<ReportRow[]>([])
 
 const currentRunType   = computed(() => reportTypes.value.find(t => t.value === runForm.value.reportType))
@@ -644,19 +688,87 @@ async function loadAuditActions(): Promise<void> {
 onMounted(() => { document.addEventListener('click', onAuditActionClickOutside); loadAuditActions() })
 onBeforeUnmount(() => document.removeEventListener('click', onAuditActionClickOutside))
 
-// Show max 10 columns, hide internal columns like 'id'. Use the friendly
-// column name for display (e.g. "cn" → "Name") so callers see consistent
-// labels regardless of report shape.
-const tableColumns = computed<ColumnDef[]>(() =>
-  resultColumns.value
+/** Columns shown up front; the rest start hidden but can be turned on from the Columns menu. */
+const VISIBLE_COLUMN_LIMIT = 10
+/** Each listed user's groups, added last by the backend; always shown, outside the ten-column limit. */
+const GROUPS_COLUMN = 'groups'
+
+function columnLabel(col: string): string {
+  return resultLabels.value[col] ?? col
+}
+
+/**
+ * Reports that list user entries with every attribute they carry. Their
+ * columns follow the Users page's rules (useUserAttributeColumns): the same
+ * set, order and defaults, headed by the real attribute name.
+ */
+const ENTRY_REPORT_TYPES = new Set([
+  'USERS_IN_GROUP', 'USERS_IN_BRANCH', 'USERS_WITH_NO_GROUP',
+  'RECENTLY_ADDED', 'RECENTLY_MODIFIED', 'DISABLED_ACCOUNTS',
+])
+/** The report whose results are on screen (the form may have moved on since). */
+const shownReportType = ref('')
+const isEntryReport = computed(() => ENTRY_REPORT_TYPES.has(shownReportType.value))
+
+/** Fetch operational attributes too (`+`) for entry reports; remembered per browser. */
+const includeOperational = useOperationalAttributesToggle('report-jobs')
+watch(includeOperational, () => { if (hasResults.value && isEntryReport.value) doRun() })
+
+/** Lower-cased attribute name → schema spelling, per directory; best effort. */
+const schemaNames = ref<Map<string, string>>(new Map())
+let schemaNamesDir = ''
+async function loadSchemaNames(dir: string): Promise<void> {
+  if (!dir || dir === schemaNamesDir) return
+  schemaNamesDir = dir
+  try {
+    const { data } = await listAttributeTypes(dir)
+    const map = new Map<string, string>()
+    for (const a of (Array.isArray(data) ? data : []) as Array<{ name?: string }>) {
+      if (a.name) map.set(a.name.toLowerCase(), a.name)
+    }
+    if (schemaNamesDir === dir) schemaNames.value = map
+  } catch {
+    if (schemaNamesDir === dir) schemaNames.value = new Map()
+  }
+}
+
+/** Visible column keys in display order, reported by ResultsTable; the CSV export follows them. */
+const visibleColumnKeys = ref<string[]>([])
+
+// Entry reports: the shared user-attribute columns. Every other report keeps
+// its own columns in the backend's order, headed by the backend's label or
+// the key; past the first ten start hidden in the Columns menu.
+const tableColumns = computed<ColumnDef[]>(() => {
+  if (isEntryReport.value) {
+    return buildUserAttributeColumns(resultColumns.value, {
+      groupsKey: GROUPS_COLUMN,
+      schemaNames: schemaNames.value,
+    })
+  }
+  let shown = 0
+  return resultColumns.value
     .filter(c => !HIDDEN_COLUMNS.has(c))
-    .slice(0, 10)
-    .map(c => ({ key: c, label: friendlyColumnName(c) })),
-)
+    .map(c => {
+      const label = c === 'dn' ? 'dn' : (resultLabels.value[c] ?? attributeDisplayName(c, schemaNames.value))
+      const hidden = c !== GROUPS_COLUMN && shown++ >= VISIBLE_COLUMN_LIMIT
+      return hidden ? { key: c, label, defaultHidden: true } : { key: c, label }
+    })
+})
+
+/**
+ * The columns a CSV export asks for: the visible ones in display order, each
+ * by its real attribute name (schema-cased, so the file's header matches the
+ * table's). Derived columns go by their key, which the backend knows them by.
+ */
+const exportColumns = computed<string[]>(() =>
+  visibleColumnKeys.value.map(k =>
+    (k === 'dn' || k === GROUPS_COLUMN || resultLabels.value[k] !== undefined)
+      ? k : attributeDisplayName(k, schemaNames.value)))
 
 // Smart column type detection
 function isDateColumn(col: string, val: unknown): boolean {
-  return DATE_COLUMNS.has(col) || (col.toLowerCase().includes('timestamp') && looksLikeTimestamp(val as string))
+  return DATE_COLUMNS.has(col) || DATE_COLUMNS.has(columnLabel(col))
+    || (col.toLowerCase().includes('timestamp') && looksLikeTimestamp(val as string))
 }
 function isDnColumn(col: string, val: unknown): boolean {
   if (!val) return false
@@ -668,6 +780,7 @@ function buildReportParams(): Record<string, unknown> {
   const params: Record<string, unknown> = { lookbackDays: runForm.value.lookbackDays || 30 }
   if (currentRunType.value?.param) params[currentRunType.value.param] = runForm.value.paramValue
   if (runForm.value.objectType) params.objectType = runForm.value.objectType
+  if (includeOperational.value && ENTRY_REPORT_TYPES.has(runForm.value.reportType)) params.includeOperational = true
   if (currentRunType.value?.groupCount) {
     params.groupCountOp = runForm.value.groupCountOp
     params.groupCountValue = runForm.value.groupCountValue ?? 0
@@ -698,13 +811,16 @@ async function doRun(): Promise<void> {
     if (isIntegrityCheck.value) {
       await runIntegrityCheck()
     } else {
+      loadSchemaNames(dirId.value)
       const { data } = await runOperationalReportData(dirId.value, {
         reportType: runForm.value.reportType,
         reportParams: buildReportParams(),
       })
       resultColumns.value = data.columns || []
+      resultLabels.value = data.labels || {}
       resultRows.value = data.rows || []
     }
+    shownReportType.value = runForm.value.reportType
     hasResults.value = true
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
@@ -720,6 +836,7 @@ async function runIntegrityCheck(): Promise<void> {
   const { data } = await checkIntegrity(dirId.value, '', checks)
   const issues = data.issues || []
   resultColumns.value = ['type', 'dn', 'description']
+  resultLabels.value = {}
   resultRows.value = issues.map((i: { type: string, dn: string, description: string }) => ({
     type: i.type, dn: i.dn, description: i.description,
   }))
@@ -729,8 +846,9 @@ async function doExport(format: 'CSV' | 'PDF'): Promise<void> {
   if (!dirId.value) return
   if (isIntegrityCheck.value) {
     // Export integrity results as CSV from current data
-    const header = resultColumns.value.join(',')
-    const rows = resultRows.value.map(r => resultColumns.value.map(c => {
+    const cols = visibleColumnKeys.value.length ? visibleColumnKeys.value : resultColumns.value
+    const header = cols.join(',')
+    const rows = resultRows.value.map(r => cols.map(c => {
       const v = r[c]
       const s = v == null ? '' : String(v)
       return `"${s.replace(/"/g, '""')}"`
@@ -756,6 +874,10 @@ async function doExport(format: 'CSV' | 'PDF'): Promise<void> {
     const { data } = await runOperationalReport(dirId.value, {
       reportType: runForm.value.reportType,
       reportParams: buildReportParams(),
+      // The file carries the columns on screen, in their order — unless the
+      // form now names a different report than the one shown.
+      ...(shownReportType.value === runForm.value.reportType && exportColumns.value.length
+        ? { columns: exportColumns.value } : {}),
     }, format)
     downloadBlob(data, `${runForm.value.reportType.toLowerCase()}.csv`)
   } catch (e) {
@@ -913,6 +1035,21 @@ function buildJobPayload(): Record<string, unknown> {
   }
   if (currentJobFormType.value?.attributes) params.attributes = splitAttributes(jobForm.value.attributes)
   if (jobFormNeedsObjectType.value && jobForm.value.objectType) params.objectType = jobForm.value.objectType
+  // Scheduled jobs run as the system, so the backend pins each one to a
+  // single OU at save time. Branch-based types (USERS_IN_BRANCH,
+  // MISSING_DATA) leave scopeBaseDn off — the backend derives it from the
+  // branch. Everything else keeps the scope an edited job already stores,
+  // or, for a new admin job, takes the picked profile's OU (as Run Report
+  // does) so an admin holding several OUs isn't asked for a value the form
+  // has no field for.
+  if (currentJobFormType.value?.param !== 'branchDn') {
+    const storedScope = editJob.value?.reportParams?.scopeBaseDn
+    if (typeof storedScope === 'string' && storedScope.trim()) {
+      params.scopeBaseDn = storedScope
+    } else if (!auth.isSuperadmin && profilePicker.selectedProfile?.targetUserDn) {
+      params.scopeBaseDn = profilePicker.selectedProfile.targetUserDn
+    }
+  }
   return {
     name: jobForm.value.name,
     reportType: jobForm.value.reportType,

@@ -44,3 +44,17 @@ describe('FormField password reveal', () => {
     expect(revealButton(w)).toBeUndefined()
   })
 })
+
+describe('FormField noAutofill', () => {
+  it.each(['textarea', 'select'])('turns autocomplete off on a %s only when asked', (type) => {
+    const tag = type
+    expect(mount(FormField, { props: { type, noAutofill: true } }).find(tag).attributes('autocomplete')).toBe('off')
+    expect(mount(FormField, { props: { type } }).find(tag).attributes('autocomplete')).toBeUndefined()
+  })
+
+  it('leaves the input defaults alone: off for text, new-password for passwords', () => {
+    expect(mount(FormField, { props: { type: 'text', noAutofill: true } }).find('input').attributes('autocomplete')).toBe('off')
+    expect(mount(FormField, { props: { type: 'password', noAutofill: true } }).find('input').attributes('autocomplete'))
+      .toBe('new-password')
+  })
+})

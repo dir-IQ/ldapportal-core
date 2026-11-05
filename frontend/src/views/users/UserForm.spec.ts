@@ -265,6 +265,63 @@ describe('UserForm editable DN (create mode)', () => {
       .toBe('uid=jsmith,ou=staff,dc=example,dc=com')
   })
 
+  // Operator-entered with neither a template nor an RDN attribute: the DN
+  // pre-fills with just the target OU and the operator types the RDN.
+  const noRdnConfig = {
+    rdnAttribute: null,
+    showDnField: true,
+    attributeConfigs: [
+      { attributeName: 'cn', requiredOnCreate: true, editableOnCreate: true, inputType: 'TEXT' },
+    ],
+  }
+  function mountNoRdn() {
+    return mount(UserForm, {
+      props: {
+        data: { rdnAttribute: '', rdnValue: '', parentDn: BASE, attributes: { cn: 'John Smith' } },
+        isEdit: false,
+        userTemplateConfig: noRdnConfig,
+        dirId: null,
+        profileId: null,
+      },
+    })
+  }
+
+  it('pre-fills just the target OU when the profile has no RDN attribute or template', async () => {
+    const wrapper = mountNoRdn()
+    await wrapper.vm.$nextTick()
+    expect((dnInput(wrapper).element as HTMLInputElement).value).toBe(`,${BASE}`)
+    // Not flagged until the operator types or saves.
+    expect(wrapper.text()).not.toContain('Start the DN')
+  })
+
+  it('blocks saving until the operator enters the RDN, then accepts it', async () => {
+    const wrapper = mountNoRdn()
+    await wrapper.vm.$nextTick()
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('Start the DN with the entry\'s RDN')
+
+    await dnInput(wrapper).setValue(`cn=John Smith,${BASE}`)
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(true)
+  })
+
+  it('reports a blank templated field, not a missing RDN, when the template RDN is still empty', async () => {
+    const wrapper = mount(UserForm, {
+      props: {
+        data: { rdnAttribute: 'uid', rdnValue: '', parentDn: BASE, attributes: {} },
+        isEdit: false,
+        userTemplateConfig: { ...dnTemplateConfig, showDnField: true },
+        dirId: null,
+        profileId: null,
+      },
+    })
+    await wrapper.vm.$nextTick()
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).not.toContain('Start the DN')
+    expect(wrapper.text()).toMatch(/required/i)
+  })
+
   it('rejects an overridden DN outside the target OU', async () => {
     const wrapper = mountDn(dnTemplateConfig)
     await wrapper.vm.$nextTick()
@@ -722,6 +779,108 @@ describe('UserForm DN field layout', () => {
   })
 })
 
+describe('UserForm honors the designer layout', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  type Wrapper = ReturnType<typeof mount>
+
+  // Each rendered grid cell, in order, as "<label>:<span>" — e.g. "DN:6".
+  function cells(wrapper: Wrapper): string[] {
+    return wrapper.findAll('.grid.grid-cols-6 > div').map(cell => {
+      const label = cell.find('label').text().replace(/\s*\*$/, '').trim()
+      const span = /grid-column:\s*span (\d+)/.exec(cell.attributes('style') || '')?.[1]
+      return `${label}:${span}`
+    })
+  }
+
+  function mountLayout(config: Record<string, unknown>, isEdit = false) {
+    return mount(UserForm, {
+      props: {
+        data: isEdit
+          ? { dn: 'uid=jsmith,ou=people,dc=x', attributes: { uid: 'jsmith', mail: 'a@b.com', cn: 'J' } }
+          : { attributes: {} },
+        isEdit,
+        userTemplateConfig: { rdnAttribute: 'uid', showDnField: true, ...config },
+        dirId: null,
+        profileId: null,
+      },
+    })
+  }
+
+  const identity = [
+    { attributeName: 'uid', sectionName: 'Identity', columnSpan: 3, requiredOnCreate: true, editableOnCreate: true, editableOnUpdate: false, inputType: 'TEXT' },
+    { attributeName: 'cn', sectionName: 'Identity', columnSpan: 3, editableOnCreate: true, editableOnUpdate: true, inputType: 'TEXT' },
+    { attributeName: 'mail', sectionName: 'Identity', columnSpan: 6, editableOnCreate: true, editableOnUpdate: true, inputType: 'TEXT' },
+  ]
+
+  it('renders a full-width DN at full width in edit mode, and leaves the RDN its own width', () => {
+    const wrapper = mountLayout({ attributeConfigs: identity, dnColumnSpan: 6 }, true)
+    expect(cells(wrapper)).toEqual(['uid (RDN):3', 'DN:6', 'cn:3', 'mail:6'])
+  })
+
+  it('places the DN at its configured position in edit mode', () => {
+    const wrapper = mountLayout(
+      { attributeConfigs: identity, dnColumnSpan: 6, dnSectionName: 'Identity', dnDisplayOrder: 3 }, true)
+    expect(cells(wrapper)).toEqual(['uid (RDN):3', 'cn:3', 'mail:6', 'DN:6'])
+  })
+
+  it('places the DN at its configured position in create mode', () => {
+    const wrapper = mountLayout(
+      { attributeConfigs: identity, dnColumnSpan: 6, dnSectionName: 'Identity', dnDisplayOrder: 2 })
+    expect(cells(wrapper)).toEqual(['uid:3', 'cn:3', 'DN:6', 'mail:6'])
+  })
+
+  it('places the DN in the unnamed section when that is where it was saved', () => {
+    // "" is the unnamed section — a real placement, distinct from null (unset,
+    // which falls back to the RDN's section).
+    const attrs = [...identity, { attributeName: 'description', sectionName: '', columnSpan: 6, editableOnCreate: true, inputType: 'TEXT' }]
+    const wrapper = mountLayout({ attributeConfigs: attrs, dnColumnSpan: 6, dnSectionName: '', dnDisplayOrder: 1 })
+    expect(cells(wrapper)).toEqual(['uid:3', 'cn:3', 'mail:6', 'description:6', 'DN:6'])
+  })
+
+  it('places the DN per the layout when the RDN is hidden (computed), not in a standalone top row', () => {
+    const attrs = [
+      { ...identity[0], hidden: true, computedExpression: '${cn}' },
+      identity[1], identity[2],
+    ]
+    const wrapper = mountLayout({ attributeConfigs: attrs, dnColumnSpan: 3, dnSectionName: 'Identity', dnDisplayOrder: 1 })
+    expect(cells(wrapper)).toEqual(['cn:3', 'DN:3', 'mail:6'])
+  })
+
+  it('does not render HIDDEN_FIXED fields as grid cells', () => {
+    const attrs = [...identity, { attributeName: 'employeeType', sectionName: 'Identity', columnSpan: 6, inputType: 'HIDDEN_FIXED', defaultValue: 'staff' }]
+    expect(cells(mountLayout({ attributeConfigs: attrs, showDnField: false })))
+      .toEqual(['uid:3', 'cn:3', 'mail:6'])
+    expect(cells(mountLayout({ attributeConfigs: attrs, showDnField: false }, true)))
+      .toEqual(['uid (RDN):3', 'cn:3', 'mail:6'])
+  })
+
+  it('counts the DN position against the designer list (skipping HIDDEN_FIXED and a generated password)', () => {
+    const attrs = [
+      identity[0],
+      { attributeName: 'employeeType', sectionName: 'Identity', columnSpan: 6, inputType: 'HIDDEN_FIXED', defaultValue: 'staff' },
+      { attributeName: 'userPassword', sectionName: 'Identity', columnSpan: 6, inputType: 'PASSWORD', requiredOnCreate: true },
+      identity[1],
+    ]
+    // The designer saw [uid, cn]; order 2 is the end of the section.
+    const wrapper = mountLayout({
+      attributeConfigs: attrs, passwordDisposition: 'GENERATED_DISCARDED',
+      dnColumnSpan: 6, dnSectionName: 'Identity', dnDisplayOrder: 2,
+    })
+    expect(cells(wrapper)).toEqual(['uid:3', 'cn:3', 'DN:6'])
+  })
+
+  it('renders multi-line fields at the configured width and snaps a narrow password to 1/2', () => {
+    const attrs = [
+      identity[0],
+      { attributeName: 'description', columnSpan: 2, editableOnCreate: true, inputType: 'TEXTAREA' },
+      { attributeName: 'userPassword', columnSpan: 2, editableOnCreate: true, inputType: 'PASSWORD' },
+    ]
+    const wrapper = mountLayout({ attributeConfigs: attrs, showDnField: false, passwordDisposition: 'OPERATOR_ENTERED' })
+    expect(cells(wrapper)).toEqual(['uid:3', 'description:2', 'userPassword:3'])
+  })
+})
+
 describe('UserForm IVIA attribute refresh', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
@@ -761,5 +920,69 @@ describe('UserForm IVIA attribute refresh', () => {
     // The form state the parent receives carries the refreshed value.
     const last = wrapper.emitted('update')?.at(-1)?.[0] as { attributes: Record<string, string> }
     expect(last.attributes['isva.secacctvalid']).toBe('FALSE')
+  })
+})
+
+describe('UserForm read-only mode', () => {
+  const USER_DN = 'uid=jsmith,ou=people,dc=x'
+  const DEVS = 'cn=devs,ou=groups,dc=x'
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(groupsApi.searchGroups).mockResolvedValue({
+      data: [{ dn: DEVS, attributes: { cn: ['devs'], member: [USER_DN] } }],
+    } as never)
+  })
+
+  async function mountReadOnly(iviaEnabled = false) {
+    const { getIsvaConfig } = await import('@/api/isvaConfig')
+    vi.mocked(getIsvaConfig).mockResolvedValueOnce(
+      { data: { enabled: iviaEnabled } } as Awaited<ReturnType<typeof getIsvaConfig>>)
+    const wrapper = mount(UserForm, {
+      props: {
+        data: { dn: USER_DN, attributes: { uid: 'jsmith', mail: 'a@b.com', title: 'Engineer' } },
+        isEdit: true,
+        readOnly: true,
+        userTemplateConfig: {
+          rdnAttribute: 'uid',
+          attributeConfigs: [
+            { attributeName: 'uid', inputType: 'TEXT', editableOnUpdate: true },
+            { attributeName: 'mail', inputType: 'TEXT', editableOnUpdate: true },
+          ],
+        },
+        dirId: 'dir1',
+        profileId: null,
+      },
+      global: { stubs: { IsvaAccountPanel: true } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('disables every attribute field, including the Other Attributes overflow', async () => {
+    const wrapper = await mountReadOnly()
+    await wrapper.findAll('button').find(b => b.text().startsWith('Other Attributes'))!.trigger('click')
+    const controls = wrapper.findAll('input, textarea, select')
+      .filter(c => c.attributes('aria-label') !== 'Search groups')
+    expect(controls.length).toBeGreaterThanOrEqual(3)
+    for (const c of controls) expect((c.element as HTMLInputElement).disabled).toBe(true)
+  })
+
+  it('lists group memberships without add, remove or copy controls', async () => {
+    const wrapper = await mountReadOnly()
+    expect(wrapper.text()).toContain('devs')
+    const buttons = wrapper.findAll('button').map(b => b.text().trim())
+    expect(buttons).not.toContain('Remove')
+    expect(buttons).not.toContain('Add')
+    expect(buttons).not.toContain('Search')
+    expect(buttons).not.toContain('Copy groups from another user')
+    expect(wrapper.find('[aria-label="Search groups"]').exists()).toBe(false)
+  })
+
+  it('passes read-only through to the IVIA Account panel', async () => {
+    const wrapper = await mountReadOnly(true)
+    const panel = wrapper.findComponent({ name: 'IsvaAccountPanel' })
+    expect(panel.exists()).toBe(true)
+    expect(panel.props('readOnly')).toBe(true)
   })
 })

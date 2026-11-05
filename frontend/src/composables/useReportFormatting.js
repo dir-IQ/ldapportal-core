@@ -2,6 +2,7 @@
 /**
  * Shared formatting utilities for report table rendering.
  */
+import { isIviaAttr, iviaAttrLabel } from '@/constants/productNames'
 
 /**
  * Format an ISO timestamp as a friendly relative or absolute date.
@@ -52,18 +53,6 @@ export function formatFullDate(iso) {
 }
 
 /**
- * Extract the first RDN value from a DN for compact display.
- * e.g. "cn=John Smith,ou=People,dc=example,dc=com" → "John Smith"
- */
-export function truncateDn(dn) {
-  if (!dn || !dn.includes('=')) return dn || ''
-  const firstEquals = dn.indexOf('=')
-  const firstComma = dn.indexOf(',')
-  if (firstComma === -1) return dn.substring(firstEquals + 1)
-  return dn.substring(firstEquals + 1, firstComma)
-}
-
-/**
  * Map of LDAP attribute names → friendly display labels.
  */
 const LDAP_COLUMN_MAP = {
@@ -89,7 +78,6 @@ const LDAP_COLUMN_MAP = {
   st: 'State',
   postalCode: 'Postal Code',
   street: 'Street',
-  userPassword: 'Password',
   memberOf: 'Member Of',
   manager: 'Manager',
   loginShell: 'Login Shell',
@@ -103,12 +91,21 @@ const LDAP_COLUMN_MAP = {
   nsAccountLock: 'Account Lock',
 }
 
+/** LDAP_COLUMN_MAP keyed by lower-cased name: attribute names are case-insensitive. */
+const LDAP_COLUMN_MAP_LC = Object.fromEntries(
+  Object.entries(LDAP_COLUMN_MAP).map(([k, v]) => [k.toLowerCase(), v]),
+)
+
 /**
- * Humanize a column name: use LDAP mapping if available,
- * otherwise leave as-is (backend already uses friendly names for structured reports).
+ * Humanize a column name: use the LDAP mapping (matched ignoring case) if
+ * available, otherwise leave as-is (structured reports already use friendly
+ * names, and entry reports send their own labels). IVIA enrichment
+ * attributes (internal key `isva.*`) show the product prefix instead
+ * (`ivia.seclogin`), as on the Users page.
  */
 export function friendlyColumnName(col) {
-  return LDAP_COLUMN_MAP[col] || col
+  if (isIviaAttr(String(col))) return iviaAttrLabel(String(col))
+  return LDAP_COLUMN_MAP_LC[String(col).toLowerCase()] || col
 }
 
 /**

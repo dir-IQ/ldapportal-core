@@ -29,6 +29,9 @@ public enum DirectoryType {
      *       audit source linked to an OUD directory should pick the
      *       {@code DSEE_CHANGELOG} format — no per-type strategy
      *       wiring needed in the reader.</li>
+     *   <li>Directory-sync changelog capture should pick
+     *       {@code OUD_COOKIE_CHANGELOG}: the cookie-mode cursor is valid
+     *       on every replica, unlike the per-server {@code changeNumber}.</li>
      *   <li>{@code isMemberOf} shortcut for nested-group resolution
      *       (P4 — upcoming).</li>
      * </ul>

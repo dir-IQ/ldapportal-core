@@ -45,18 +45,10 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class EffectivePermissionsService {
 
-    /** Mirror of {@link com.ldapportal.auth.PermissionService#READONLY_DEFAULT_FEATURES}.
-     *  Duplicated here so this service stays read-only of the enforcement
-     *  service. If the canonical set changes, update both. */
-    private static final Set<FeatureKey> READONLY_DEFAULT_FEATURES = Set.of(
-            FeatureKey.BULK_EXPORT,
-            FeatureKey.REPORTS_RUN,
-            FeatureKey.DIRECTORY_BROWSE,
-            FeatureKey.SCHEMA_READ,
-            FeatureKey.USER_READ,
-            FeatureKey.GROUP_READ,
-            FeatureKey.APPROVAL_MANAGE
-    );
+    /** Base-role defaults for READ_ONLY admins — the canonical set, so the
+     *  two can't drift. */
+    private static final Set<FeatureKey> READONLY_DEFAULT_FEATURES =
+            com.ldapportal.auth.PermissionService.READONLY_DEFAULT_FEATURES;
 
     private final AccountRepository                  accountRepo;
     private final AdminProfileRoleRepository         profileRoleRepo;

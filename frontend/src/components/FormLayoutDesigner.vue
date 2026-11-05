@@ -5,7 +5,7 @@
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-2">
         <button type="button" @click="addSection" class="btn-secondary text-xs">+ Add Section</button>
-        <span class="text-xs text-gray-500">Drag fields to reorder. Choose width: 1/3, 1/2, 2/3, or full.</span>
+        <span class="text-xs text-gray-500">Drag fields to reorder. Choose width: 1/3, 1/2, 2/3, or full (password and DN lookup: 1/2 or full).</span>
       </div>
       <div class="flex items-center gap-2">
         <label v-if="!hideDnToggle" class="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
@@ -74,7 +74,7 @@
                 <!-- Regular field -->
                 <div
                   v-else-if="!field.rdn"
-                  :style="{ gridColumn: `span ${field.columnSpan || 6}` }"
+                  :style="{ gridColumn: `span ${fieldSpan(field)}` }"
                 >
                   <label class="block text-sm font-medium text-gray-700 mb-1">
                     {{ field.customLabel || field.attributeName }}
@@ -255,7 +255,7 @@
               <!-- Regular field card -->
               <div
                 v-else-if="!field.rdn"
-                :style="{ gridColumn: `span ${field.columnSpan || 6}` }"
+                :style="{ gridColumn: `span ${fieldSpan(field)}` }"
                 :class="[
                   fieldDrag.field?.attributeName === field.attributeName ? 'opacity-30' : '',
                 ]"
@@ -282,16 +282,16 @@
                   <div class="text-[10px] text-gray-500">{{ field.inputType }}</div>
                 </div>
 
-                <!-- Column span selector -->
+                <!-- Column span selector (only the widths this input type allows) -->
                 <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
-                    v-for="opt in spanOptions"
+                    v-for="opt in spanOptionsFor(field.inputType)"
                     :key="opt.span"
                     type="button"
                     @click="setColumnSpan(sIdx, fIdx, opt.span)"
                     :class="[
                       'px-1.5 h-5 rounded text-[10px] font-bold border transition-colors whitespace-nowrap',
-                      (field.columnSpan || 6) === opt.span
+                      fieldSpan(field) === opt.span
                         ? 'bg-blue-600 text-white border-blue-600'
                         : 'bg-white text-gray-500 border-gray-300 hover:border-blue-400'
                     ]"
@@ -313,17 +313,45 @@
   </div>
 </template>
 
-<script setup>
-import { ref, reactive, computed, watch } from 'vue'
+<script setup lang="ts">
+import { ref, reactive, computed, watch, type PropType } from 'vue'
 import { useDragAutoScroll } from '@/composables/useDragAutoScroll'
+import { SPAN_OPTIONS, spanOptionsFor, effectiveSpan } from '@/utils/fieldWidth'
+
+/** A field as the designer lays it out (an attribute config, or the DN pseudo-field). */
+interface LayoutField {
+  attributeName: string
+  customLabel?: string | null
+  inputType?: string | null
+  requiredOnCreate?: boolean
+  sectionName?: string | null
+  columnSpan?: number | null
+  hidden?: boolean
+  rdn?: boolean
+  /** Referenced by the DN template's leading RDN (display-only badge). */
+  naming?: boolean
+  /** Marks the synthetic DN field. */
+  isDn?: boolean
+}
+
+interface Section {
+  id: string
+  name: string
+  fields: LayoutField[]
+}
+
+interface HiddenPosition {
+  sectionName: string
+  afterAttribute: string | null
+}
 
 // Root element + smooth edge auto-scroll for native drag (the browser's own
 // autoscroll inside the scrollable modal body is jerky/absent).
-const rootEl = ref(null)
+const rootEl = ref<HTMLElement | null>(null)
 const { start: startAutoScroll, stop: stopAutoScroll } = useDragAutoScroll()
 
 const props = defineProps({
-  attributeConfigs: { type: Array, required: true },
+  attributeConfigs: { type: Array as PropType<LayoutField[]>, required: true },
   showDnField: { type: Boolean, default: true },
   hideDnToggle: { type: Boolean, default: false },
   dnTemplate: { type: String, default: '' },
@@ -344,15 +372,13 @@ const localDnTemplate = ref(props.dnTemplate || '')
 watch(() => props.dnTemplate, (v) => { localDnTemplate.value = v || '' })
 watch(localDnTemplate, (v) => { emit('update:dnTemplate', v) })
 
-// Column span options: 6-column grid allows 1/3, 1/2, 2/3, and full widths
-const spanOptions = [
-  { span: 2, label: '1/3' },
-  { span: 3, label: '1/2' },
-  { span: 4, label: '2/3' },
-  { span: 6, label: 'Full' },
-]
-const spanLabels = Object.fromEntries(spanOptions.map(o => [o.span, o.label]))
-function spanLabel(span) { return spanLabels[span] || 'Full' }
+// Column span options: 6-column grid allows 1/3, 1/2, 2/3, and full widths.
+// Regular fields are limited per input type (spanOptionsFor) and render at
+// their effective width — the same rule the rendered forms apply.
+const spanOptions = SPAN_OPTIONS
+const spanLabels: Record<number, string> = Object.fromEntries(spanOptions.map(o => [o.span, o.label]))
+function spanLabel(span?: number | null): string { return (span && spanLabels[span]) || 'Full' }
+function fieldSpan(field: LayoutField): number { return effectiveSpan(field.inputType, field.columnSpan, 6) }
 
 // ── DN pseudo-field ─────────────────────────────────────────────────────────
 // The read-only DN is modelled as a synthetic layout field so it can be dragged
@@ -362,28 +388,28 @@ function spanLabel(span) { return spanLabels[span] || 'Full' }
 const DN_KEY = '__dn__'
 const DEFAULT_DN_SPAN = 4
 
-function makeDnField() {
+function makeDnField(): LayoutField {
   return { attributeName: DN_KEY, isDn: true, rdn: false, columnSpan: props.dnColumnSpan || DEFAULT_DN_SPAN }
 }
 
-function hasDnField(list) {
+function hasDnField(list: Section[]): boolean {
   return list.some(s => s.fields.some(f => f.isDn))
 }
 
-function removeDnField(list) {
+function removeDnField(list: Section[]): void {
   for (const s of list) s.fields = s.fields.filter(f => !f.isDn)
 }
 
 // Insert the DN pseudo-field at its configured position, defaulting to
 // immediately after the RDN in the RDN's section.
-function insertDnField(list) {
+function insertDnField(list: Section[]): void {
   if (!localShowDnField.value || hasDnField(list)) return
-  let section = (props.dnSectionName != null)
+  let section: Section | null | undefined = (props.dnSectionName != null)
     ? list.find(s => (s.name || '') === props.dnSectionName)
     : null
   if (!section) section = list.find(s => s.fields.some(f => f.rdn)) || list[0]
   if (!section) return
-  let idx
+  let idx: number
   if (props.dnDisplayOrder != null && props.dnDisplayOrder >= 0) {
     idx = Math.min(props.dnDisplayOrder, section.fields.length)
   } else {
@@ -420,14 +446,14 @@ function nextSectionId() { return `section-${++sectionIdCounter}` }
 
 // ── Build sections from flat attribute list ──────────────────────────────────
 
-const sections = ref([])
+const sections = ref<Section[]>([])
 
 // Tracks last-known position of hidden fields so un-hiding restores them
 // Map<attributeName, { sectionName, afterAttribute }>
-const hiddenPositions = ref(new Map())
+const hiddenPositions = ref(new Map<string, HiddenPosition>())
 
-function buildSections(attrs) {
-  const map = new Map()
+function buildSections(attrs: LayoutField[]): Section[] {
+  const map = new Map<string, Section>()
   for (const attr of attrs) {
     if (attr.hidden) {
       // Remember position relative to the previous visible field
@@ -438,7 +464,7 @@ function buildSections(attrs) {
       map.set(key, { id: nextSectionId(), name: key, fields: [] })
     }
     const field = { ...attr }
-    map.get(key).fields.push(field)
+    map.get(key)!.fields.push(field)
   }
   const result = Array.from(map.values())
   if (result.length === 0) {
@@ -453,8 +479,8 @@ function buildSections(attrs) {
   return result
 }
 
-function recordHiddenPositions(attrs) {
-  let lastVisible = null
+function recordHiddenPositions(attrs: LayoutField[]): void {
+  let lastVisible: string | null = null
   let lastSectionName = ''
   for (const attr of attrs) {
     if (!attr.hidden) {
@@ -496,10 +522,10 @@ watch(() => props.attributeConfigs, (newConfigs) => {
   // e.g. switching DN mode or editing the template moves which attributes name
   // the entry. Detect that so the "nothing changed" skip below doesn't drop it.
   const incomingByName = new Map(visibleConfigs.map(a => [a.attributeName, a]))
-  const namingChanged = currentFields.some(f =>
-    !f.isDn && incomingByName.has(f.attributeName)
-      && (!!incomingByName.get(f.attributeName).rdn !== !!f.rdn
-        || !!incomingByName.get(f.attributeName).naming !== !!f.naming))
+  const namingChanged = currentFields.some(f => {
+    const inc = f.isDn ? undefined : incomingByName.get(f.attributeName)
+    return !!inc && (!!inc.rdn !== !!f.rdn || !!inc.naming !== !!f.naming)
+  })
 
   // Detect hidden→visible transitions
   const newlyVisible = visibleConfigs.filter(a => !currentNames.has(a.attributeName) && hiddenPositions.value.has(a.attributeName))
@@ -607,8 +633,8 @@ watch(() => props.attributeConfigs, (newConfigs) => {
   }
 }, { deep: true })
 
-function flattenSections() {
-  const result = []
+function flattenSections(): LayoutField[] {
+  const result: LayoutField[] = []
   for (const section of sections.value) {
     for (const field of section.fields) {
       if (field.isDn) continue // DN isn't an attribute — emitted via emitDnLayout
@@ -623,9 +649,9 @@ function flattenSections() {
 
 // Report the DN field's current section / position / width back to the parent.
 function emitDnLayout() {
-  let span
-  let sectionName
-  let order
+  let span: number | undefined
+  let sectionName: string | undefined
+  let order: number | undefined
   for (const section of sections.value) {
     const idx = section.fields.findIndex(f => f.isDn)
     if (idx >= 0) {
@@ -654,7 +680,7 @@ function addSection() {
   sections.value.push({ id: nextSectionId(), name: '', fields: [] })
 }
 
-function removeSection(idx) {
+function removeSection(idx: number) {
   const removed = sections.value.splice(idx, 1)[0]
   // Move orphaned fields to the first section
   if (removed.fields.length && sections.value.length) {
@@ -663,14 +689,14 @@ function removeSection(idx) {
   syncToParent()
 }
 
-function moveSectionUp(idx) {
+function moveSectionUp(idx: number) {
   if (idx <= 0) return
   const arr = sections.value
   ;[arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]]
   syncToParent()
 }
 
-function moveSectionDown(idx) {
+function moveSectionDown(idx: number) {
   if (idx >= sections.value.length - 1) return
   const arr = sections.value
   ;[arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]]
@@ -679,14 +705,20 @@ function moveSectionDown(idx) {
 
 // ── Column span ──────────────────────────────────────────────────────────────
 
-function setColumnSpan(sIdx, fIdx, span) {
+function setColumnSpan(sIdx: number, fIdx: number, span: number) {
   sections.value[sIdx].fields[fIdx].columnSpan = span
   syncToParent()
 }
 
 // ── Field drag and drop (with drop position indicator) ───────────────────────
 
-const fieldDrag = reactive({
+const fieldDrag = reactive<{
+  field: LayoutField | null
+  sourceSIdx: number | null
+  sourceFIdx: number | null
+  overSection: number | null
+  overIdx: number | null
+}>({
   field: null,
   sourceSIdx: null,
   sourceFIdx: null,
@@ -694,12 +726,14 @@ const fieldDrag = reactive({
   overIdx: null,
 })
 
-function onFieldDragStart(e, sIdx, fIdx, field) {
+function onFieldDragStart(e: DragEvent, sIdx: number, fIdx: number, field: LayoutField) {
   fieldDrag.field = field
   fieldDrag.sourceSIdx = sIdx
   fieldDrag.sourceFIdx = fIdx
-  e.dataTransfer.effectAllowed = 'move'
-  e.dataTransfer.setData('text/plain', 'field')
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', 'field')
+  }
   startAutoScroll(rootEl.value)
 }
 
@@ -712,23 +746,23 @@ function onFieldDragEnd() {
   stopAutoScroll()
 }
 
-function onFieldDragOver(e, sIdx, fIdx) {
+function onFieldDragOver(e: DragEvent, sIdx: number, fIdx: number) {
   if (!fieldDrag.field) return
   fieldDrag.overSection = sIdx
 
   // Determine if cursor is in the top or bottom half of the field card
-  const rect = e.currentTarget.getBoundingClientRect()
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const midY = rect.top + rect.height / 2
   fieldDrag.overIdx = e.clientY < midY ? fIdx : fIdx + 1
 }
 
-function onFieldDrop(e, targetSIdx, targetFIdx) {
-  if (!fieldDrag.field) return
+function onFieldDrop(e: DragEvent, targetSIdx: number, targetFIdx: number) {
+  if (!fieldDrag.field || fieldDrag.sourceSIdx === null || fieldDrag.sourceFIdx === null) return
   const srcSIdx = fieldDrag.sourceSIdx
   const srcFIdx = fieldDrag.sourceFIdx
 
   // Compute actual insert index from the indicator position
-  const rect = e.currentTarget.getBoundingClientRect()
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const midY = rect.top + rect.height / 2
   let insertIdx = e.clientY < midY ? targetFIdx : targetFIdx + 1
 
@@ -754,7 +788,7 @@ function onFieldDrop(e, targetSIdx, targetFIdx) {
 }
 
 // Section-level drag/drop for field drops (when dropping on empty section area)
-function onDragOverSection(e, sIdx) {
+function onDragOverSection(_e: DragEvent, sIdx: number) {
   if (fieldDrag.field) {
     fieldDrag.overSection = sIdx
     // When dragging over the section body (not a specific field), show indicator at end
@@ -764,17 +798,17 @@ function onDragOverSection(e, sIdx) {
   }
 }
 
-function onDragLeaveSection(e) {
+function onDragLeaveSection(e: DragEvent) {
   // Only clear if we actually left the section (not entering a child)
-  if (fieldDrag.field && !e.currentTarget.contains(e.relatedTarget)) {
+  if (fieldDrag.field && !(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) {
     fieldDrag.overSection = null
     fieldDrag.overIdx = null
   }
 }
 
-function onDropSection(e, targetSIdx) {
+function onDropSection(e: DragEvent, targetSIdx: number) {
   // Handle field drop on section (not on a specific field card)
-  if (fieldDrag.field) {
+  if (fieldDrag.field && fieldDrag.sourceSIdx !== null && fieldDrag.sourceFIdx !== null) {
     const srcSIdx = fieldDrag.sourceSIdx
     const srcFIdx = fieldDrag.sourceFIdx
 
@@ -784,7 +818,7 @@ function onDropSection(e, targetSIdx) {
     // Determine insert position based on drop Y coordinate relative to field cards
     const targetFields = sections.value[targetSIdx].fields
     let insertIdx = targetFields.length
-    const sectionEl = e.currentTarget.querySelector('.grid')
+    const sectionEl = (e.currentTarget as HTMLElement).querySelector('.grid')
     if (sectionEl) {
       const fieldCards = sectionEl.querySelectorAll('[draggable="true"]')
       for (let i = 0; i < fieldCards.length; i++) {
@@ -810,15 +844,17 @@ function onDropSection(e, targetSIdx) {
 
 // ── Section drag and drop ────────────────────────────────────────────────────
 
-const sectionDrag = reactive({
+const sectionDrag = reactive<{ source: number | null, overIdx: number | null }>({
   source: null,
   overIdx: null,
 })
 
-function onSectionDragStart(e, sIdx) {
+function onSectionDragStart(e: DragEvent, sIdx: number) {
   sectionDrag.source = sIdx
-  e.dataTransfer.effectAllowed = 'move'
-  e.dataTransfer.setData('text/plain', 'section')
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', 'section')
+  }
   startAutoScroll(rootEl.value)
 }
 
@@ -828,12 +864,12 @@ function onSectionDragEnd() {
   stopAutoScroll()
 }
 
-function onSectionHeaderDragOver(e, sIdx) {
+function onSectionHeaderDragOver(_e: DragEvent, sIdx: number) {
   if (sectionDrag.source === null) return
   sectionDrag.overIdx = sIdx
 }
 
-function onSectionDrop(e, targetSIdx) {
+function onSectionDrop(_e: DragEvent, targetSIdx: number) {
   if (sectionDrag.source === null || sectionDrag.source === targetSIdx) {
     onSectionDragEnd()
     return

@@ -6,6 +6,13 @@ export const getAuditLog = (params) =>
   // suffix) so Spring binds them to `@RequestParam List<AuditAction> action`.
   client.get('/audit', { params, paramsSerializer: { indexes: null } })
 
+// Every event matching the same filters as getAuditLog (no page cap, up to the
+// server's export limit), as a CSV blob. The X-Audit-Export-Matched and
+// X-Audit-Export-Truncated response headers say how many matched and whether
+// the oldest were left out.
+export const exportAuditLog = (params) =>
+  client.get('/audit/export.csv', { params, paramsSerializer: { indexes: null }, responseType: 'blob' })
+
 // Edition-filtered audit-action catalogue (enum names) for the filter picker.
 // The set is authoritative from the backend so non-community actions never
 // appear; the client only supplies display labels.

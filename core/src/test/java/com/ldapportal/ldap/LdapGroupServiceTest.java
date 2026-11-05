@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap;
 
+import com.ldapportal.core.provisioning.DeletePlan;
+import com.ldapportal.core.provisioning.DeleteStep;
+import com.ldapportal.core.provisioning.PlanExecutor;
+import com.ldapportal.core.provisioning.ProvisioningInterceptor;
+import com.ldapportal.core.provisioning.ProvisioningInterceptorChain;
+import com.ldapportal.core.provisioning.StepFailurePolicy;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.exception.ResourceNotFoundException;
@@ -23,7 +29,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
@@ -175,9 +184,31 @@ class LdapGroupServiceTest {
         String dn = "cn=Temp,ou=groups,dc=example,dc=com";
         addGroup(dn, "Temp", "cn=Alice,ou=users,dc=example,dc=com");
 
-        groupService.deleteGroup(dc, dn);
+        assertThat(groupService.deleteGroup(dc, dn)).isEmpty();
 
         assertThatThrownBy(() -> groupService.getGroup(dc, dn))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void deleteGroup_runsTheInterceptorPlanAndReportsRelatedDeletes() throws Exception {
+        String dn = "cn=Temp,ou=groups,dc=example,dc=com";
+        String related = "cn=TempShadow,ou=groups,dc=example,dc=com";
+        addGroup(dn, "Temp", "cn=Alice,ou=users,dc=example,dc=com");
+        addGroup(related, "TempShadow", "cn=Alice,ou=users,dc=example,dc=com");
+        ProvisioningInterceptor interceptor = mock(ProvisioningInterceptor.class);
+        when(interceptor.planGroupDelete(any(), eq(dn), any())).thenReturn(new DeletePlan(List.of(
+                DeleteStep.of(dn),
+                new DeleteStep(related, StepFailurePolicy.CONTINUE))));
+        LdapGroupService withInterceptor = new LdapGroupService(connectionFactory,
+                new ProvisioningInterceptorChain(List.of(interceptor)),
+                new PlanExecutor(connectionFactory));
+
+        assertThat(withInterceptor.deleteGroup(dc, dn)).containsExactly(related);
+
+        assertThatThrownBy(() -> groupService.getGroup(dc, dn))
+                .isInstanceOf(ResourceNotFoundException.class);
+        assertThatThrownBy(() -> groupService.getGroup(dc, related))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 

@@ -102,18 +102,21 @@ public class IsvaConfigService {
                 ? IsvaSecUserPlans.normalizeModel(req.secuserAttributes())
                 : null);
 
-        // Linked-mode fields — set when LINKED, null when INLINE so
-        // a topology-mode flip doesn't leave stale linked config
-        // around to confuse the probe / interceptor.
+        // The management DIT and its containers apply to both modes: linked
+        // mode keeps secUser entries there, and either mode imports groups
+        // into the group container. Blank containers default below the DIT.
+        entity.setManagementDitBaseDn(trimToNull(req.managementDitBaseDn()));
+        entity.setUserContainerDn(trimToNull(req.userContainerDn()));
+        entity.setGroupContainerDn(trimToNull(req.groupContainerDn()));
+
+        // Linked-mode fields.
         if (req.topologyMode() == IsvaTopologyMode.LINKED) {
-            entity.setManagementDitBaseDn(req.managementDitBaseDn().trim());
             entity.setSecuserRdnAttribute(blankOrDefault(req.secuserRdnAttribute(), "secUUID"));
             entity.setSecuserRdnValueSource(req.secuserRdnValueSource() != null
                     ? req.secuserRdnValueSource() : IsvaRdnValueSource.GENERATED_UUID);
             entity.setGroupMemberTarget(req.groupMemberTarget() != null
                     ? req.groupMemberTarget() : entity.getGroupMemberTarget());
         } else {
-            entity.setManagementDitBaseDn(null);
             // Leave secuserRdnAttribute / secuserRdnValueSource /
             // groupMemberTarget at their stored defaults — they're
             // ignored in INLINE mode anyway and clearing them would be
@@ -180,7 +183,9 @@ public class IsvaConfigService {
                     // Export the raw stored model (null when the config still
                     // derives from legacy fields) so exports stay minimal and a
                     // re-apply derives the same behaviour.
-                    cfg.getSecuserAttributes());
+                    cfg.getSecuserAttributes(),
+                    cfg.getUserContainerDn(),
+                    cfg.getGroupContainerDn());
             out.add(new IsvaConfigExport(dir.getSlug(), req));
         }
         out.sort(java.util.Comparator.comparing(IsvaConfigExport::directorySlug));
@@ -225,6 +230,16 @@ public class IsvaConfigService {
                     || req.managementDitBaseDn().isBlank())) {
             throw new IllegalArgumentException(
                     "managementDitBaseDn is required when topologyMode is LINKED");
+        }
+        requireValidDnOrBlank(req.managementDitBaseDn(), "managementDitBaseDn");
+        requireValidDnOrBlank(req.userContainerDn(), "userContainerDn");
+        requireValidDnOrBlank(req.groupContainerDn(), "groupContainerDn");
+    }
+
+    private static void requireValidDnOrBlank(String dn, String field) {
+        if (dn != null && !dn.isBlank()
+                && !com.ldapportal.ldap.validation.DnValidator.isValidDn(dn.trim())) {
+            throw new IllegalArgumentException(field + " is not a valid DN: " + dn.trim());
         }
     }
 
@@ -289,6 +304,10 @@ public class IsvaConfigService {
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private static String trimToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private static String blankOrDefault(String value, String defaultValue) {

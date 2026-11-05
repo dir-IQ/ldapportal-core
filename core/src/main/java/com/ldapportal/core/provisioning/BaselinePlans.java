@@ -59,6 +59,11 @@ public final class BaselinePlans {
         return DeletePlan.singleStep(DeleteStep.of(dn));
     }
 
+    /** Single-step DEL of the group entry — the pre-SPI group delete. */
+    public static DeletePlan groupDelete(String dn) {
+        return DeletePlan.singleStep(DeleteStep.of(dn));
+    }
+
     /**
      * Single-step MODIFY replacing the password attribute. For
      * Active Directory this is {@code unicodePwd} with UTF-16LE

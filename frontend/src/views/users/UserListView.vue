@@ -53,6 +53,7 @@
         v-model="filterText"
         :directory-id="dirId"
         :relevant-attributes="profileAttributeNames"
+        :object-classes="filterObjectClasses"
       />
       <RecentSearches
         ref="recentSearchesRef"
@@ -72,8 +73,14 @@
       v-model:selectedKeys="selectedDns"
       :loading="loading"
       empty-text="No users found"
+      @visible-columns-change="visibleColumnKeys = $event"
     >
       <template #toolbar>
+        <label class="flex items-center gap-1.5 text-xs text-gray-600"
+               title="Also fetch operational attributes (createTimestamp, entryUUID, …). They appear in the Columns menu.">
+          <input v-model="includeOperational" type="checkbox" class="rounded border-gray-300" />
+          Operational attributes
+        </label>
         <button
           v-if="can.exportCsv"
           @click="doExportUsers"
@@ -163,6 +170,7 @@
         ]">
           <template #primary="{ disabled }">
             <button v-if="can.edit" @click="openEdit(row as unknown as UserRow)" :disabled="disabled" class="btn-secondary btn-compact">Edit</button>
+            <button v-else-if="can.read" @click="openView(row as unknown as UserRow)" :disabled="disabled" class="btn-secondary btn-compact">View</button>
           </template>
         </ActionMenu>
       </template>
@@ -222,16 +230,16 @@
     <!-- Create/Edit modal (step 2 of create, or edit) -->
     <AppModal v-model="showModal" size="xl" :dirty="modalDirty">
       <template #title>
-        <span class="whitespace-nowrap">{{ editingDn ? 'Edit User' : 'New User' }}</span>
+        <span class="whitespace-nowrap">{{ viewOnly ? 'User Details' : editingDn ? 'Edit User' : 'New User' }}</span>
         <ProfilePill v-if="profileConfig?.name" class="flex-1 min-w-0"
                      :name="profileConfig.name" :color="profileConfig.themeColor" />
       </template>
-      <UserForm ref="userFormRef" :data="form" :is-edit="!!editingDn" :user-template-config="profileConfig ?? undefined" :dir-id="dirId" :profile-id="selectedProfileId" @update="(v: UserFormState) => form = v" />
+      <UserForm ref="userFormRef" :data="form" :is-edit="!!editingDn" :read-only="viewOnly" :user-template-config="profileConfig ?? undefined" :dir-id="dirId" :profile-id="selectedProfileId" @update="(v: UserFormState) => form = v" />
       <template #footer="{ close }">
         <!-- Cancel routes through the AppModal close guard so unsaved values
              get the same discard confirmation as the × button and Escape. -->
-        <button @click="close()" class="btn-neutral">Cancel</button>
-        <button @click="save" :disabled="saving" class="btn-primary">{{ saving ? 'Saving…' : 'Save' }}</button>
+        <button @click="close()" class="btn-neutral">{{ viewOnly ? 'Close' : 'Cancel' }}</button>
+        <button v-if="!viewOnly" @click="save" :disabled="saving" class="btn-primary">{{ saving ? 'Saving…' : 'Save' }}</button>
       </template>
     </AppModal>
 
@@ -509,11 +517,16 @@ import { IVIA_ABBR, isIviaAttr, iviaAttrLabel } from '@/constants/productNames'
 import * as usersApi from '@/api/users'
 import * as groupsApi from '@/api/groups'
 import { exportCsv as exportUsersCsv } from '@/api/csvTemplates'
+import { listAttributeTypes } from '@/api/schema'
+import {
+  buildUserAttributeColumns, exportAttributeNames, useOperationalAttributesToggle,
+} from '@/composables/useUserAttributeColumns'
 import { listProfiles, getProfile } from '@/api/profiles'
 import { listEnabled as listEnabledPlaybooks, previewPlaybook, executePlaybook, rollbackExecution } from '@/api/playbooks'
 import { usePermissions } from '@/composables/usePermissions'
 import ResultsTable from '@/components/ResultsTable.vue'
 import LdapFilterBuilder from '@/components/LdapFilterBuilder.vue'
+import { rowObjectClasses } from '@/composables/useLdapFilter'
 import RecentSearches from '@/components/RecentSearches.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import AppModal from '@/components/AppModal.vue'
@@ -638,6 +651,7 @@ const { loading, call } = useApi()
 // action the caller can actually perform.
 const { hasFeature } = usePermissions()
 const can = computed(() => ({
+  read:          hasFeature('user.read'),
   create:        hasFeature('user.create'),
   edit:          hasFeature('user.edit'),
   delete:        hasFeature('user.delete'),
@@ -710,6 +724,9 @@ const showModal      = ref(false)
 const showMove       = ref(false)
 const showDelete     = ref(false)
 const editingDn      = ref<string | null>(null)
+// The edit dialog opened view-only (see openView); reset whenever it closes
+// so the create and edit flows never inherit it.
+const viewOnly       = ref(false)
 // Snapshot of the attribute values as loaded into the edit form, in the same
 // joined-string shape the form holds. save() diffs against it so only
 // actually-changed attributes ship as modifications.
@@ -732,13 +749,14 @@ function dirtyComparable(state: UserFormState): string {
 }
 const formSnapshot = ref('')
 watch(showModal, (open) => {
+  if (!open) viewOnly.value = false
   formSnapshot.value = ''
   if (open) {
     nextTick(() => { formSnapshot.value = dirtyComparable(form.value) })
   }
 })
 const modalDirty = computed(() =>
-  showModal.value && formSnapshot.value !== '' && (
+  showModal.value && !viewOnly.value && formSnapshot.value !== '' && (
     dirtyComparable(form.value) !== formSnapshot.value
     || !!userFormRef.value?.hasPendingMembershipChanges
   ))
@@ -792,28 +810,10 @@ const pwStrengthTextColor = computed(() => {
   return 'text-green-600'
 })
 
-// Curated default-visible attributes for user lists. Anything in this
-// list shows by default if the search returned it; everything else
-// the search surfaces is registered as a column too but starts
-// hidden — users can opt in via the column picker. Order here is
-// also the column order shown in the table.
-const DEFAULT_USER_COLUMNS = [
-  'cn', 'sn', 'givenName', 'displayName', 'mail', 'uid', 'title',
-]
-
-// Lower-cased lookup. LDAP attributes are case-insensitive at the
-// protocol level but servers may return mixed case (givenName vs
-// givenname). The backend lower-cases keys, so we compare against
-// the lower-case form.
-const DEFAULT_USER_COLUMNS_LC = new Set(DEFAULT_USER_COLUMNS.map(s => s.toLowerCase()))
-
 /**
- * Union of attribute keys appearing on any returned user row. The
- * page used to flatten to four hard-coded fields (cn / mail /
- * enabled / dn) and discard the rest, which left the column picker
- * with nothing to offer. Now every attribute the search surfaces
- * becomes a column, ordered: dn → curated defaults → other
- * discovered → actions.
+ * Union of attribute keys appearing on any returned user row. Every attribute
+ * the search surfaces becomes a column (see buildUserAttributeColumns for the
+ * order, defaults and what's left out — the same rules the user reports use).
  */
 const discoveredAttrs = computed<string[]>(() => {
   const seen = new Set<string>()
@@ -825,53 +825,52 @@ const discoveredAttrs = computed<string[]>(() => {
   return [...seen]
 })
 
-// ResultsTable doesn't expose a per-row `actions` slot the way the
-// thinner DataTable did; the row-action menu renders via a synthetic
-// `actions` column. alwaysVisible keeps it from being hidden by the
-// column picker; sortable=false because there's nothing to sort on.
-const cols = computed(() => {
-  // Match the curated order; only emit a column if the search
-  // actually returned it (so picker doesn't list attributes the user
-  // can never populate).
-  const discoveredSet = new Set(discoveredAttrs.value.map(s => s.toLowerCase()))
-  const defaults = DEFAULT_USER_COLUMNS.filter(k => discoveredSet.has(k.toLowerCase()))
-  // memberOf surfaces through the dedicated, pretty 'Groups' column
-  // below, so drop the raw (joined-DN) discovered column to avoid a
-  // duplicate.
-  const extras = discoveredAttrs.value.filter(k =>
-    !DEFAULT_USER_COLUMNS_LC.has(k.toLowerCase()) && k.toLowerCase() !== 'memberof')
-  // Every column carries an explicit defaultWidth. ResultsTable is
-  // table-layout:fixed and renders columns at exactly their set widths (a
-  // single trailing filler column soaks up any slack), so a column without a
-  // width would fall back to width:auto and compete with that filler for the
-  // leftover space — sizing unpredictably. Giving each column a real width
-  // means every column (including one the user just enabled in the picker)
-  // renders at a known size; the table scrolls horizontally when the columns
-  // outgrow the container and parks any spare width to the right otherwise.
-  return [
-    { key: 'dn', label: 'DN', alwaysVisible: true, defaultWidth: 360 },
-    // Row cells are keyed by the backend's lower-cased attribute names
-    // (see load(): `row[attr]` where attr comes straight from the
-    // server, which lower-cases keys). DEFAULT_USER_COLUMNS keeps the
-    // pretty mixed case (givenName / displayName) for the header label,
-    // so the column key must be lower-cased to match the row data —
-    // otherwise `row['givenName']` is undefined and the cell renders
-    // blank even though the attribute is populated.
-    ...defaults.map(k => ({ key: k.toLowerCase(), label: k, defaultWidth: 180 })),
-    // Group membership as name pills. Default-hidden (opt-in via the
-    // column picker); not sortable (a list has no natural order).
-    { key: '__groups', label: 'Groups', sortable: false, defaultHidden: true, defaultWidth: 280 },
+/** Fetch operational attributes too (`+`); remembered per browser. */
+const includeOperational = useOperationalAttributesToggle('users-list')
+
+/**
+ * Lower-cased attribute name → schema spelling, so headings read `givenName`
+ * rather than the backend's lower-cased `givenname`. Best effort: without
+ * schema access the headings fall back to the known defaults' casing.
+ */
+const schemaNames = ref<Map<string, string>>(new Map())
+async function loadSchemaNames(): Promise<void> {
+  try {
+    const { data } = await listAttributeTypes(dirId)
+    const map = new Map<string, string>()
+    for (const a of (Array.isArray(data) ? data : []) as Array<{ name?: string }>) {
+      if (a.name) map.set(a.name.toLowerCase(), a.name)
+    }
+    schemaNames.value = map
+  } catch {
+    schemaNames.value = new Map()
+  }
+}
+
+/** Visible column keys in display order, reported by ResultsTable; the CSV export follows them. */
+const visibleColumnKeys = ref<string[]>([])
+
+// Every column carries an explicit defaultWidth. ResultsTable is
+// table-layout:fixed and renders columns at exactly their set widths (a
+// single trailing filler column soaks up any slack), so a column without a
+// width would fall back to width:auto and compete with that filler for the
+// leftover space — sizing unpredictably. Row cells are keyed by the backend's
+// lower-cased attribute names, which the column keys keep; only the heading
+// is re-cased. The row-action menu renders via a synthetic `actions` column
+// (alwaysVisible, pinned to the right edge so it stays reachable).
+const cols = computed(() => [
+  ...buildUserAttributeColumns(discoveredAttrs.value, {
+    groupsKey: '__groups',
+    groupsDefaultHidden: true,
+    schemaNames: schemaNames.value,
     // IVIA enrichment columns (keyed `isva.*` by the backend) keep their
     // stable internal key but display the marketing `ivia.` prefix.
-    ...extras.map(k => ({ key: k, label: iviaAttrLabel(k), defaultHidden: true, defaultWidth: 180 })),
-    // The actions cell renders just two elements side-by-side now: the
-    // primary Edit button and the kebab dropdown trigger (Disable and the
-    // rest live inside the kebab — see inlineThreshold below). 120px fits
-    // both comfortably. `pinned` keeps the column stuck to the right edge so
-    // the row actions stay reachable no matter how far the table is scrolled.
-    { key: 'actions', label: '', alwaysVisible: true, sortable: false, defaultWidth: 120, pinned: true },
-  ]
-})
+    labelOverride: k => (isIviaAttr(k) ? iviaAttrLabel(k) : undefined),
+    columnDefaults: { defaultWidth: 180 },
+    dnColumn: { defaultWidth: 360 },
+  }).map(c => (c.key === '__groups' ? { ...c, defaultWidth: 280 } : c)),
+  { key: 'actions', label: '', alwaysVisible: true, sortable: false, defaultWidth: 120, pinned: true },
+])
 
 const allProfiles       = ref<ProfileLite[]>([])
 const selectedProfileId = ref('')
@@ -925,15 +924,25 @@ const moveDestTargetDn = computed(() =>
   moveTargets.value.find(p => p.id === moveDestProfileId.value)?.targetUserDn ?? '')
 
 // Attribute names the active profile declares — fed to LdapFilterBuilder
-// so the attribute picker defaults to this subset (typically ~10-30 attrs)
-// instead of the directory's full schema (often 1500+). The builder
-// exposes a "Show all attributes" toggle for power users; empty array
-// means no scoping and the builder shows the full schema list.
+// alongside filterObjectClasses below. The builder suggests the superset
+// of attributes those classes allow; these cover any profile field no
+// listed class declares.
 const profileAttributeNames = computed<string[]>(() =>
   (profileData.value?.attributeConfigs ?? [])
     .map(a => a.attributeName)
     .filter((n): n is string => typeof n === 'string' && n.length > 0),
 )
+
+// objectClasses fed to LdapFilterBuilder so its scoped suggestions cover
+// every attribute those classes allow, not just the profile's form fields:
+// the profile's own objectClassNames plus every objectClass value present
+// on the loaded rows (entries in the branch often carry auxiliary classes —
+// posixAccount, shadowAccount, vendor extensions — the profile doesn't list).
+const filterObjectClasses = computed<string[]>(() => {
+  const out = [...(profileData.value?.objectClassNames ?? [])]
+  for (const row of users.value) out.push(...rowObjectClasses(row.__entry?.attributes))
+  return out
+})
 
 const emptyForm = (): UserFormState => {
   // Pre-populate default values from profile attribute configs
@@ -947,7 +956,9 @@ const emptyForm = (): UserFormState => {
   }
   return {
     parentDn: profileData.value?.targetUserDn || '',
-    rdnAttribute: profileData.value?.rdnAttribute || 'uid',
+    // No profile: the fallback form's RDN field starts at uid. A profile with
+    // no RDN attribute (operator-entered DN, no template) leaves it blank.
+    rdnAttribute: profileData.value ? (profileData.value.rdnAttribute || '') : 'uid',
     rdnValue: '',
     attributes,
   }
@@ -992,7 +1003,7 @@ async function load(all: boolean = searchMeta.value?.all === true) {
       // (OpenLDAP memberof overlay) or `isMemberOf` (OUD/OpenDJ) — not just
       // where it's a plain attribute (AD). Directories that expose neither
       // yield an empty Groups cell.
-      attributes: '*,memberOf,isMemberOf',
+      attributes: includeOperational.value ? '*,+,memberOf,isMemberOf' : '*,memberOf,isMemberOf',
     }
     const { data } = await usersApi.searchUsersPage(dirId, params)
     const page = (data ?? {}) as UserSearchPage
@@ -1055,9 +1066,18 @@ async function doExportUsers() {
   if (exporting.value) return
   exporting.value = true
   try {
+    // The file carries the columns on screen, in their order: dn (always
+    // first in the export), the visible attributes by their real names, and
+    // the groups column when it's shown. IVIA enrichment columns aren't
+    // directory attributes, so the raw export can't carry them.
+    const attrs = exportAttributeNames(visibleColumnKeys.value, cols.value,
+      ['dn', '__groups', 'actions', ...visibleColumnKeys.value.filter(isIviaAttr)])
     const params = {
       filter: filterText.value || undefined,
       baseDn: profileData.value?.targetUserDn || undefined,
+      // An empty list would mean "every attribute"; ask for dn alone instead.
+      attributes: attrs.length ? attrs.join(',') : 'dn',
+      includeGroups: visibleColumnKeys.value.includes('__groups') || undefined,
     }
     const { data } = await exportUsersCsv(dirId, params)
     downloadBlob(data, 'users.csv')
@@ -1069,10 +1089,19 @@ async function doExportUsers() {
   }
 }
 
+/**
+ * New User. With a profile selected (the sidebar picker, or this page's
+ * Profile dropdown), create through it; the dialog's header names it. Only
+ * under "All", which lists several profiles' users at once, is there no
+ * single profile to use, so the operator picks one.
+ */
 async function openCreate() {
   editingDn.value = null
   profileConfig.value = null
-  if (allProfiles.value.length === 1) {
+  const selected = allProfiles.value.find(p => p.id === selectedProfileId.value)
+  if (selected) {
+    await selectProfileAndCreate(selected)
+  } else if (allProfiles.value.length === 1) {
     await selectProfileAndCreate(allProfiles.value[0])
   } else if (allProfiles.value.length > 1) {
     showTemplatePicker.value = true
@@ -1086,7 +1115,9 @@ async function selectProfileAndCreate(p: ProfileLite) {
   showTemplatePicker.value = false
   try {
     const { data } = await getProfile(dirId, p.id)
-    profileData.value = data
+    // Refresh the page's profile only when it's the one the list shows: under
+    // "All", the profile picked for the new user mustn't narrow the list.
+    if (p.id === selectedProfileId.value) profileData.value = data
     profileConfig.value = data
   } catch (e) {
     const err = e as { message?: string }
@@ -1105,7 +1136,14 @@ async function selectProfileAndCreate(p: ProfileLite) {
   showModal.value = true
 }
 
-async function openEdit(row: UserRow) {
+// View-only details (user.read without user.edit): the edit dialog with
+// every field disabled and no Save — same layout, groups and IVIA status.
+function openView(row: UserRow) {
+  return openEdit(row, true)
+}
+
+async function openEdit(row: UserRow, readOnly = false) {
+  viewOnly.value = readOnly
   editingDn.value = row.dn
   // Fetch full entry from LDAP to get all attributes (search results may be incomplete)
   let attrs: Record<string, string[] | string | null> = row._raw?.attributes || {}
@@ -1194,12 +1232,16 @@ async function save() {
         // save from REPLACE-ing every attribute it never touched (audit
         // noise, needless writes).
         .filter(([attr, val]) => !unchanged(attr, val))
-        .map(([attr, val]) => ({
-          operation: 'REPLACE',
-          attribute: attr,
-          values: toValueList(val),
-        }))
-        .filter(m => m.values.length > 0)
+        // A changed attribute whose new value list is empty was cleared
+        // (e.g. the last line removed from a multi-valued field): send a
+        // value-less DELETE, which removes the attribute. Dropping it — as an
+        // empty REPLACE used to be — silently discarded the edit.
+        .map(([attr, val]) => {
+          const values = toValueList(val)
+          return values.length
+            ? { operation: 'REPLACE', attribute: attr, values }
+            : { operation: 'DELETE', attribute: attr, values: [] as string[] }
+        })
       // Nothing changed → no MODIFY at all: an empty modification list is
       // an LDAP protocol error, and there's nothing worth an audit row.
       if (mods.length) {
@@ -1623,10 +1665,13 @@ function onProfileChange() {
 // dialog is open — the create/edit form, bulk update, bulk membership, move,
 // password reset or playbook run — since whatever was typed there is lost.
 useUnsavedChangesGuard('Users', () =>
-  showModal.value || showBulkUpdate.value || showBulkMembership.value
+  (showModal.value && !viewOnly.value) || showBulkUpdate.value || showBulkMembership.value
   || showMove.value || showResetPassword.value || showPlaybookModal.value)
 
+watch(includeOperational, () => load())
+
 onMounted(async () => {
+  loadSchemaNames()
   await loadProfiles()
   load()
 })

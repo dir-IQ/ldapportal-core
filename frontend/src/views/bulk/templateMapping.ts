@@ -2,23 +2,52 @@
 /**
  * Column-mapping model for the bulk-import template editor.
  *
- * The editor shows two independent stacks: CSV input columns on the left and
- * LDAP attributes on the right. Row N of one stack maps to row N of the other.
- * Either side can hold an empty slot (`null`) so items can be lined up without
- * disturbing the rest of the other stack. Everything here is pure so the
- * component and its specs share one source of truth.
+ * The editor is a plain list: each row is one CSV input column and the LDAP
+ * attribute the operator typed for it. A blank attribute means the column is
+ * ignored on import. The selected object classes only feed suggestions and
+ * checks; they never add rows. Everything here is pure so the component and
+ * its specs share one source of truth.
  */
 
-export interface MappingAttr {
+/** An attribute of the selected object classes (or a special mapping target). */
+export interface SchemaAttr {
   name: string
   required: boolean
+  /** Shown instead of `name` in suggestions, for special targets. */
+  label?: string
+  /** One-line explanation under the label. */
+  hint?: string
 }
 
-export interface MappingStacks {
-  /** CSV column names; `null` (or '' while typing) is an empty slot. */
-  inputs: (string | null)[]
-  /** LDAP attributes; `null` is an empty slot. */
-  attrs: (MappingAttr | null)[]
+/**
+ * Mapping target for a column of groups to add each user to. Not an LDAP
+ * attribute: the importer writes these memberships to the groups (matches
+ * the backend's CsvColumnMap.GROUP_MEMBERSHIPS).
+ */
+export const GROUP_MEMBERSHIPS = '@groups'
+
+/** Column name that maps to group memberships without being asked. */
+export const GROUPS_COLUMN = 'groups'
+
+/** The suggestion entry for group memberships, listed above the schema's attributes. */
+export const GROUP_MEMBERSHIPS_OPTION: SchemaAttr = {
+  name: GROUP_MEMBERSHIPS,
+  required: false,
+  label: 'Group memberships',
+  hint: 'Adds the user to groups, by cn or DN',
+}
+
+export function isGroupMemberships(attribute: string | null | undefined): boolean {
+  return (attribute ?? '').trim() === GROUP_MEMBERSHIPS
+}
+
+export interface MappingRow {
+  /** CSV column; '' while being typed. */
+  column: string
+  /** LDAP attribute; '' means the column is ignored. */
+  attribute: string
+  /** Kept from the template although the loaded sample file doesn't have it. */
+  notInSample?: boolean
 }
 
 /** Persisted template entry shape (matches the backend's CsvColumnMappingDto). */
@@ -28,7 +57,13 @@ export interface SavedEntry {
   ignored: boolean
 }
 
-export type RowStatus = 'mapped' | 'ignored' | 'missing' | 'unmapped' | 'blank'
+/**
+ * mapped: column + attribute. groups: column holding group memberships.
+ * ignored: column, no attribute. incomplete: attribute with no column (can't
+ * be saved). dn: the template's DN column, which is never mapped. blank:
+ * nothing typed yet.
+ */
+export type RowStatus = 'mapped' | 'groups' | 'ignored' | 'incomplete' | 'dn' | 'blank'
 
 export interface SampleHeader {
   /** Input column names, in file order. */
@@ -37,8 +72,24 @@ export interface SampleHeader {
   samples: string[] | null
 }
 
-function hasInput(v: string | null | undefined): v is string {
-  return v != null && v.trim() !== ''
+/**
+ * Whether two column names refer to the same column. Matches the importer,
+ * which ignores case and a leading byte-order mark.
+ */
+export function sameColumn(a: string | null | undefined, b: string | null | undefined): boolean {
+  const k = (s: string) => s.replace(/^\uFEFF/, '').trim().toLowerCase()
+  return !!a && !!b && k(a) !== '' && k(a) === k(b)
+}
+
+function sameAttr(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase()
+}
+
+/** Attributes the template sets itself, so an operator can't map a column to them. */
+const RESERVED_ATTRS = ['objectclass', 'dn']
+
+export function isReservedAttr(name: string): boolean {
+  return RESERVED_ATTRS.includes(name.trim().toLowerCase())
 }
 
 /**
@@ -82,36 +133,140 @@ export function parseSampleHeader(text: string, delimiter: string, hasHeader: bo
   return { columns: record.map((_, i) => `Column ${i + 1}`), samples: record }
 }
 
-/**
- * Pads the shorter stack with empty slots and drops trailing rows that are
- * empty on both sides. Mutates and returns `stacks`.
- */
-export function padStacks(stacks: MappingStacks): MappingStacks {
-  const n = Math.max(stacks.inputs.length, stacks.attrs.length)
-  while (stacks.inputs.length < n) stacks.inputs.push(null)
-  while (stacks.attrs.length < n) stacks.attrs.push(null)
-  while (stacks.inputs.length && !hasInput(stacks.inputs[stacks.inputs.length - 1])
-         && stacks.attrs[stacks.attrs.length - 1] == null) {
-    stacks.inputs.pop(); stacks.attrs.pop()
-  }
-  return stacks
+/** True when the row's column is the template's DN column. */
+export function isDnRow(row: MappingRow, dnColumn: string | null | undefined): boolean {
+  return sameColumn(row.column, dnColumn)
 }
 
-/** Moves one item within a single stack. Out-of-range moves are ignored. */
-export function moveItem<T>(arr: T[], from: number, to: number): boolean {
-  if (from === to || from < 0 || to < 0 || from >= arr.length || to >= arr.length) return false
-  const [item] = arr.splice(from, 1)
-  arr.splice(to, 0, item)
-  return true
-}
-
-export function rowStatus(input: string | null | undefined, attr: MappingAttr | null | undefined): RowStatus {
-  const has = hasInput(input)
-  if (has && attr) return 'mapped'
-  if (has) return 'ignored'
-  if (attr?.required) return 'missing'
-  if (attr) return 'unmapped'
+export function rowStatus(row: MappingRow, dnColumn: string | null | undefined): RowStatus {
+  const hasCol = row.column.trim() !== ''
+  const hasAttr = row.attribute.trim() !== ''
+  if (hasCol && isDnRow(row, dnColumn)) return 'dn'
+  if (hasCol && isGroupMemberships(row.attribute)) return 'groups'
+  if (hasCol && hasAttr) return 'mapped'
+  if (hasCol) return 'ignored'
+  if (hasAttr) return 'incomplete'
   return 'blank'
+}
+
+/**
+ * Rebuilds the rows from a sample file's columns, in file order. A column
+ * already in the template keeps its attribute (names match ignoring case).
+ * Mapped columns the file doesn't have stay at the bottom, flagged
+ * `notInSample`, so a mapping is never dropped just because a sample export
+ * left a column out; unmapped ones are dropped. Repeated column names in the
+ * file give one row. The DN column stays in the rows; the editor hides it.
+ * A new column named `groups` holds group memberships, unless another
+ * column already does.
+ */
+export function applySampleColumns(rows: MappingRow[], columns: string[]): MappingRow[] {
+  const used = new Set<MappingRow>()
+  const out: MappingRow[] = []
+  let groupsTaken = rows.some(r => isGroupMemberships(r.attribute))
+  for (const col of columns) {
+    if (col.trim() === '' || out.some(r => sameColumn(r.column, col))) continue
+    const prev = rows.find(r => !used.has(r) && sameColumn(r.column, col))
+    if (prev) used.add(prev)
+    let attribute = prev?.attribute ?? ''
+    if (!prev && !groupsTaken && sameColumn(col, GROUPS_COLUMN)) {
+      attribute = GROUP_MEMBERSHIPS
+      groupsTaken = true
+    }
+    out.push({ column: col, attribute })
+  }
+  for (const r of rows) {
+    if (used.has(r) || r.column.trim() === '' || r.attribute.trim() === '') continue
+    if (out.some(o => sameColumn(o.column, r.column))) continue
+    out.push({ column: r.column, attribute: r.attribute, notInSample: true })
+  }
+  return out
+}
+
+/** Problems on one row. Errors block saving; warnings don't. */
+export interface RowIssues {
+  errors: string[]
+  warnings: string[]
+}
+
+export interface MappingCheck {
+  /** Per-row issues, by row index. */
+  rows: RowIssues[]
+  /** Attributes that must be mapped but aren't: schema-required, plus the RDN attribute. */
+  missingRequired: string[]
+  /** Whether anything blocks saving. */
+  blocking: boolean
+}
+
+export interface CheckOptions {
+  /** Attributes of the selected object classes, or null while unknown. */
+  schema: SchemaAttr[] | null
+  /** The DN column when the DN is read from a column, else null. */
+  dnColumn: string | null
+  /** The RDN attribute when the DN is built from RDN + parent DN, else null. */
+  rdnAttribute: string | null
+  /** Columns the sample file has more than once (one row each). */
+  repeatedColumns?: string[]
+}
+
+/** Validates the rows against the schema and the template's DN settings. */
+export function checkMappings(rows: MappingRow[], opts: CheckOptions): MappingCheck {
+  const live = rows.map(r => rowStatus(r, opts.dnColumn) === 'mapped')
+  const result: RowIssues[] = rows.map(() => ({ errors: [], warnings: [] }))
+  rows.forEach((r, i) => {
+    const status = rowStatus(r, opts.dnColumn)
+    const attr = r.attribute.trim()
+    if (status === 'dn') {
+      // Not saved, but not an error: the importer reads the DN from it.
+      result[i].warnings.push(r.attribute.trim()
+        ? `This is the DN column, so its mapping to ${attr} isn't saved`
+        : "This is the DN column; it isn't mapped")
+      return
+    }
+    if (status === 'groups') {
+      if (rows.some((o, j) => j < i && rowStatus(o, opts.dnColumn) === 'groups')) {
+        result[i].errors.push('Only one column can hold group memberships')
+      }
+      if (r.notInSample) result[i].warnings.push('Not in the sample file')
+      return
+    }
+    if (status === 'incomplete') result[i].errors.push('Enter the CSV column for this attribute')
+    if (!attr) {
+      if (opts.repeatedColumns?.some(c => sameColumn(c, r.column))) {
+        result[i].warnings.push('The sample file has this column more than once')
+      }
+      return
+    }
+    if (isReservedAttr(attr)) {
+      result[i].errors.push(`${attr} is set by the template and can't be mapped`)
+      return
+    }
+    if (opts.schema && !opts.schema.some(a => sameAttr(a.name, attr))) {
+      result[i].warnings.push('Not in the selected object classes')
+    }
+    if (live[i] && rows.some((o, j) => j !== i && live[j] && sameAttr(o.attribute, attr))) {
+      result[i].warnings.push(`Another column also maps to ${attr}; their values are added together`)
+    }
+    if (r.notInSample) result[i].warnings.push('Not in the sample file')
+    if (opts.repeatedColumns?.some(c => sameColumn(c, r.column))) {
+      result[i].warnings.push('The sample file has this column more than once')
+    }
+  })
+
+  const mapped = rows.filter((_, i) => live[i]).map(r => r.attribute.trim().toLowerCase())
+  const needed: string[] = []
+  for (const a of opts.schema ?? []) if (a.required && !isReservedAttr(a.name)) needed.push(a.name)
+  const rdn = opts.rdnAttribute?.trim()
+  if (rdn && !needed.some(n => sameAttr(n, rdn))) needed.push(rdn)
+  const missingRequired = needed.filter(n => !mapped.includes(n.toLowerCase()))
+
+  const blocking = missingRequired.length > 0 || result.some(r => r.errors.length > 0)
+  return { rows: result, missingRequired, blocking }
+}
+
+/** The schema's spelling of an attribute typed in another case, else the input trimmed. */
+export function canonicalAttr(name: string, schema: SchemaAttr[] | null): string {
+  const t = name.trim()
+  return schema?.find(a => sameAttr(a.name, t))?.name ?? t
 }
 
 /** Common CSV header spellings for standard attributes, keyed by normalised name. */
@@ -135,111 +290,70 @@ function norm(s: string): string {
 }
 
 /**
- * Lines inputs up with attributes by name: an exact case-insensitive match
- * wins, then a small alias table (Email → mail, FirstName → givenName, …).
- * Unmatched inputs keep their relative order and fill the first rows that
- * have no attribute, then any rows after the end of the attribute stack.
- * Returns a new inputs array; attrs are untouched.
+ * Fills blank attributes from the column name: an attribute of the same name
+ * (ignoring case and punctuation), else a common alias (Email → mail,
+ * FirstName → givenName). A column named `groups` gets group memberships.
+ * Only schema attributes are suggested, never one already mapped, and rows
+ * with an attribute are left alone. Returns new rows and how many were filled.
  */
-export function autoMatch(stacks: MappingStacks): (string | null)[] {
-  const attrIndex = new Map<string, number>()
-  stacks.attrs.forEach((a, i) => { if (a) attrIndex.set(norm(a.name), i) })
-  const next: (string | null)[] = stacks.attrs.map(() => null)
-  const leftovers: string[] = []
-  for (const col of stacks.inputs) {
-    if (!hasInput(col)) continue
-    const key = norm(col)
-    let idx = attrIndex.get(key)
-    if (idx === undefined && ALIASES[key]) idx = attrIndex.get(norm(ALIASES[key]))
-    if (idx !== undefined && next[idx] == null) next[idx] = col
-    else leftovers.push(col)
-  }
-  for (const col of leftovers) {
-    const free = next.findIndex((v, j) => v == null && stacks.attrs[j] == null)
-    if (free >= 0) next[free] = col
-    else next.push(col)
-  }
-  return next
-}
-
-/**
- * Replaces the input stack with a sample file's columns. Rows whose current
- * input still exists in the file keep it, so existing pairings survive.
- * With no surviving pairing (a fresh template), the columns fill the rows
- * top-down in file order. Otherwise the new columns go below as ignored
- * rows, so they never pair with an attribute by accident.
- * Mutates and returns `stacks`.
- */
-export function applySampleColumns(stacks: MappingStacks, columns: string[]): MappingStacks {
-  const remaining = [...columns]
-  const take = (name: string): boolean => {
-    const i = remaining.indexOf(name)
-    if (i < 0) return false
-    remaining.splice(i, 1)
-    return true
-  }
-  stacks.inputs = stacks.inputs.map(v => (hasInput(v) && take(v) ? v : null))
-  const kept = stacks.inputs.some(v => v != null)
-  for (let i = 0; i < stacks.inputs.length && remaining.length; i++) {
-    if (stacks.inputs[i] == null && (!kept || stacks.attrs[i] == null)) stacks.inputs[i] = remaining.shift()!
-  }
-  // Below the last row; pad first so appended columns land after every attribute.
-  padStacks(stacks)
-  while (stacks.inputs.length < stacks.attrs.length) stacks.inputs.push(null)
-  stacks.inputs.push(...remaining)
-  return padStacks(stacks)
-}
-
-/**
- * Rebuilds the attribute stack for a new set of schema attributes (required
- * first, then optional, in schema order), carrying each attribute's current
- * input across by name. Inputs whose attribute is gone, and unpaired inputs,
- * go below as ignored rows. With `keepUnknown`, attributes already in the
- * stack but absent from the schema are kept after the schema ones — used when
- * opening a saved template so no saved mapping silently disappears.
- */
-export function rebuildAttrs(stacks: MappingStacks, schema: MappingAttr[], keepUnknown = false): MappingStacks {
-  const paired = new Map<string, string | null>()
-  const orphans: string[] = []
-  stacks.attrs.forEach((a, i) => {
-    const input = stacks.inputs[i]
-    if (a) paired.set(a.name.toLowerCase(), hasInput(input) ? input : null)
-    else if (hasInput(input)) orphans.push(input)
+export function suggestAttributes(rows: MappingRow[], schema: SchemaAttr[], dnColumn: string | null):
+  { rows: MappingRow[], filled: number } {
+  const byNorm = new Map<string, string>()
+  for (const a of schema) if (!isReservedAttr(a.name)) byNorm.set(norm(a.name), a.name)
+  const taken = new Set(rows.filter(r => r.attribute.trim()).map(r => r.attribute.trim().toLowerCase()))
+  let filled = 0
+  const out = rows.map(r => {
+    if (r.attribute.trim() || !r.column.trim() || isDnRow(r, dnColumn)) return r
+    const key = norm(r.column)
+    // A column named "groups" holds group memberships.
+    const hit = key === GROUPS_COLUMN ? GROUP_MEMBERSHIPS
+      : byNorm.get(key) ?? (ALIASES[key] ? byNorm.get(norm(ALIASES[key])) : undefined)
+    if (!hit || taken.has(hit.toLowerCase())) return r
+    taken.add(hit.toLowerCase())
+    filled++
+    return { ...r, attribute: hit }
   })
-  const attrs: MappingAttr[] = [...schema]
-  const known = new Set(schema.map(a => a.name.toLowerCase()))
-  if (keepUnknown) {
-    for (const a of stacks.attrs) {
-      if (a && !known.has(a.name.toLowerCase())) { attrs.push(a); known.add(a.name.toLowerCase()) }
-    }
-  }
-  for (const [name, input] of paired) {
-    if (!known.has(name) && input) orphans.push(input)
-  }
-  const inputs: (string | null)[] = attrs.map(a => paired.get(a.name.toLowerCase()) ?? null)
-  return padStacks({ inputs: [...inputs, ...orphans], attrs })
+  return { rows: out, filled }
 }
 
-/** Stacks → payload entries. Inputs without an attribute are saved as ignored. */
-export function stacksToEntries(stacks: MappingStacks): SavedEntry[] {
+/**
+ * Rows → payload entries, in row order. Columns without an attribute are
+ * saved as ignored. The DN column, blank rows, rows without a column and
+ * repeats of a column already listed are left out.
+ */
+export function rowsToEntries(rows: MappingRow[], dnColumn: string | null): SavedEntry[] {
   const out: SavedEntry[] = []
-  stacks.inputs.forEach((input, i) => {
-    if (!hasInput(input)) return
-    const attr = stacks.attrs[i]
-    const csvColumn = input.trim()
+  for (const r of rows) {
+    const csvColumn = r.column.trim()
+    if (!csvColumn || isDnRow(r, dnColumn) || out.some(e => sameColumn(e.csvColumn, csvColumn))) continue
+    const attr = r.attribute.trim()
     out.push(attr
-      ? { csvColumn, ldapAttribute: attr.name, ignored: false }
+      ? { csvColumn, ldapAttribute: attr, ignored: false }
       : { csvColumn, ldapAttribute: null, ignored: true })
-  })
+  }
   return out
 }
 
-/** Saved entries → stacks. Mapped entries first (saved order), ignored ones below. */
-export function entriesToStacks(entries: SavedEntry[]): MappingStacks {
-  const mapped = entries.filter(e => !e.ignored && e.ldapAttribute)
-  const ignored = entries.filter(e => e.ignored || !e.ldapAttribute)
-  return padStacks({
-    inputs: [...mapped.map(e => e.csvColumn), ...ignored.map(e => e.csvColumn)],
-    attrs: mapped.map(e => ({ name: e.ldapAttribute!, required: false })),
+/**
+ * Saved entries → rows, in saved order. The DN column is left out (older
+ * editors saved it as an ignored entry; the importer skips it anyway).
+ */
+export function entriesToRows(entries: SavedEntry[], dnColumn: string | null): MappingRow[] {
+  return entries
+    .filter(e => !sameColumn(e.csvColumn, dnColumn))
+    .map(e => ({ column: e.csvColumn, attribute: e.ignored ? '' : (e.ldapAttribute ?? '') }))
+}
+
+/** Sample columns that look like they hold a DN, for the "pick one" hint. */
+export function dnLikeColumns(columns: string[]): string[] {
+  return columns.filter(c => /(^|[^a-z])dn([^a-z]|$)|distinguished/i.test(c))
+}
+
+/** Column names that appear more than once in `columns` (ignoring case), each listed once. */
+export function repeatedColumns(columns: string[]): string[] {
+  const out: string[] = []
+  columns.forEach((c, i) => {
+    if (columns.findIndex(o => sameColumn(o, c)) !== i && !out.some(o => sameColumn(o, c))) out.push(c)
   })
+  return out
 }

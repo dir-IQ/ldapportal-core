@@ -362,9 +362,38 @@ class ScheduledReportJobServiceTest {
     @Test
     void create_admin_branchDnParam_isCheckedAgainstTheirScope() {
         AuthPrincipal admin = new AuthPrincipal(PrincipalType.ADMIN, UUID.randomUUID(), "admin");
-        when(permissionService.resolveSearchBaseDns(admin, dirId, null)).thenReturn(List.of("ou=people,dc=example,dc=com"));
+        when(permissionService.resolveSearchBaseDns(admin, dirId, "ou=people,dc=example,dc=com"))
+                .thenReturn(List.of("ou=people,dc=example,dc=com"));
         org.mockito.Mockito.doThrow(new org.springframework.security.access.AccessDeniedException("outside"))
                 .when(permissionService).requireDnWithinScope(admin, dirId, "ou=other,dc=example,dc=com");
+
+        assertThatThrownBy(() -> service.create(dirId,
+                reqWithParams(Map.of("scopeBaseDn", "ou=people,dc=example,dc=com",
+                        "branchDn", "ou=other,dc=example,dc=com")), admin))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        verify(jobRepo, never()).save(any());
+    }
+
+    @Test
+    void create_admin_severalOus_noScope_branchDnSettlesTheScope() {
+        when(jobRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.ADMIN, UUID.randomUUID(), "admin");
+        String branch = "ou=staff,ou=b,dc=example,dc=com";
+        when(permissionService.resolveSearchBaseDns(admin, dirId, branch)).thenReturn(List.of(branch));
+
+        ScheduledReportJob saved = service.create(dirId, reqWithParams(Map.of("branchDn", branch)), admin);
+
+        assertThat(saved.getReportParams())
+                .containsEntry("scopeBaseDn", branch)
+                .containsEntry("branchDn", branch);
+        verify(permissionService).requireDnWithinScope(admin, dirId, branch);
+    }
+
+    @Test
+    void create_admin_branchDnOutsideTheirOus_isRefusedBeforeSaving() {
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.ADMIN, UUID.randomUUID(), "admin");
+        when(permissionService.resolveSearchBaseDns(admin, dirId, "ou=other,dc=example,dc=com"))
+                .thenThrow(new org.springframework.security.access.AccessDeniedException("outside"));
 
         assertThatThrownBy(() -> service.create(dirId,
                 reqWithParams(Map.of("branchDn", "ou=other,dc=example,dc=com")), admin))

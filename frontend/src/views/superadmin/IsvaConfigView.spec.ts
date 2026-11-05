@@ -482,3 +482,42 @@ describe('IsvaConfigView secUser attributes table', () => {
     expect(payload.secuserOverlayAttributes).toContain('secUUID')
   })
 })
+
+describe('IsvaConfigView management DIT and containers', () => {
+  it('defaults the containers below the management DIT, and sends what is entered', async () => {
+    hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['LINKED'] } })
+    hoisted.getIsvaConfig.mockResolvedValue({ data: { ...linkedConfigDto(),
+      managementDitBaseDn: 'secAuthority=Default,cn=treasury', userContainerDn: null, groupContainerDn: null } })
+    hoisted.upsertIsvaConfig.mockImplementation((_dir, payload) =>
+      Promise.resolve({ data: { ...linkedConfigDto(), ...payload } }))
+
+    const wrapper = await mountView()
+
+    expect(wrapper.find('#userContainerDn').attributes('placeholder'))
+      .toBe('cn=Users,secAuthority=Default,cn=treasury')
+    expect(wrapper.find('#groupContainerDn').attributes('placeholder'))
+      .toBe('cn=Groups,secAuthority=Default,cn=treasury')
+
+    await wrapper.find('#groupContainerDn').setValue('  ou=roles,secAuthority=Default,cn=treasury ')
+    const saveBtn = wrapper.findAll('button')
+      .find((b) => b.text() === 'Save' && b.attributes('class')?.includes('btn-primary'))
+    await saveBtn!.trigger('click')
+    await flushPromises()
+
+    const payload = hoisted.upsertIsvaConfig.mock.calls[0][1]
+    expect(payload.managementDitBaseDn).toBe('secAuthority=Default,cn=treasury')
+    expect(payload.userContainerDn).toBeNull()
+    expect(payload.groupContainerDn).toBe('ou=roles,secAuthority=Default,cn=treasury')
+  })
+
+  it('offers the management DIT and group container in inline mode too, without the user container', async () => {
+    hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['INLINE'] } })
+    hoisted.getIsvaConfig.mockResolvedValue({ data: inlineConfigDto() })
+
+    const wrapper = await mountView()
+
+    expect(wrapper.find('#managementDitBaseDn').exists()).toBe(true)
+    expect(wrapper.find('#groupContainerDn').exists()).toBe(true)
+    expect(wrapper.find('#userContainerDn').exists()).toBe(false)
+  })
+})

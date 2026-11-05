@@ -19,7 +19,11 @@ import java.util.List;
  * <p>Linked-mode-only fields are nullable; the controller
  * validates that {@code managementDitBaseDn} is non-blank when
  * {@code topologyMode = LINKED}. The DB-level CHECK constraint
- * is the second line of defence.</p>
+ * is the second line of defence. {@code managementDitBaseDn} names the
+ * IVIA management DIT itself; secUser entries go in
+ * {@code userContainerDn} and secGroup registrations in
+ * {@code groupContainerDn}, each defaulting (null / blank) to
+ * {@code cn=Users} / {@code cn=Groups} below it.</p>
  */
 public record UpsertIsvaConfigRequest(
         boolean enabled,
@@ -41,7 +45,8 @@ public record UpsertIsvaConfigRequest(
         // secuserAttributes below when that is supplied.
         List<String> secuserOverlayAttributes,
 
-        // Linked-mode-only
+        // The IVIA management DIT: required when LINKED, optional when INLINE
+        // (needed there only to import groups into IVIA)
         String managementDitBaseDn,
         String secuserRdnAttribute,
         IsvaRdnValueSource secuserRdnValueSource,
@@ -52,5 +57,22 @@ public record UpsertIsvaConfigRequest(
         // supplied, this is the authoritative source for what a grant writes;
         // it's normalized to the canonical full set server-side. null → the
         // server derives an equivalent model from the legacy value fields.
-        List<SecUserAttribute> secuserAttributes) {
+        List<SecUserAttribute> secuserAttributes,
+
+        // Containers below the management DIT. null / blank → cn=Users and
+        // cn=Groups under managementDitBaseDn.
+        String userContainerDn,
+        String groupContainerDn) {
+
+    /** The request without explicit containers: both default below the management DIT. */
+    public UpsertIsvaConfigRequest(boolean enabled, IsvaTopologyMode topologyMode, String secAuthority,
+                                   String secLoginType, int defaultValidUntilYears, boolean requireSecGroup,
+                                   List<String> secuserObjectClasses, List<String> secuserOverlayAttributes,
+                                   String managementDitBaseDn, String secuserRdnAttribute,
+                                   IsvaRdnValueSource secuserRdnValueSource, IsvaGroupMemberTarget groupMemberTarget,
+                                   List<SecUserAttribute> secuserAttributes) {
+        this(enabled, topologyMode, secAuthority, secLoginType, defaultValidUntilYears, requireSecGroup,
+                secuserObjectClasses, secuserOverlayAttributes, managementDitBaseDn, secuserRdnAttribute,
+                secuserRdnValueSource, groupMemberTarget, secuserAttributes, null, null);
+    }
 }

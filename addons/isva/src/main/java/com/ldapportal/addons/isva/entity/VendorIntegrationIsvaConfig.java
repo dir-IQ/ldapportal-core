@@ -30,7 +30,8 @@ import java.util.UUID;
  * {@code docs/superpowers/specs/2026-05-20-isva-full-mode-integration-design.md}
  * for what each field controls.</p>
  *
- * <p>Linked-mode-only fields ({@link #managementDitBaseDn},
+ * <p>Linked-mode-only fields ({@link #managementDitBaseDn} — required
+ * there, optional in inline mode —
  * {@link #secuserRdnAttribute}, {@link #secuserRdnValueSource},
  * {@link #groupMemberTarget}) are nullable.
  * ({@link #secuserObjectClasses} applies to both modes.)
@@ -146,13 +147,27 @@ public class VendorIntegrationIsvaConfig {
     @Column(name = "secuser_attributes", columnDefinition = "TEXT")
     private List<SecUserAttribute> secuserAttributes;
 
-    // ── LINKED-mode-only ─────────────────────────────────────────────
+    // ── Management DIT ───────────────────────────────────────────────
 
-    /** Base DN of the ISVA management DIT (e.g.
+    /** Base DN of the IVIA management DIT itself (e.g.
      * {@code secAuthority=Default,o=ibm,c=us}). Required when
-     * topologyMode = LINKED; NULL when INLINE. */
+     * topologyMode = LINKED (secUser entries live below it); optional when
+     * INLINE, where it's only needed to import groups into IVIA. */
     @Column(name = "management_dit_base_dn", columnDefinition = "TEXT")
     private String managementDitBaseDn;
+
+    /** Where linked-mode secUser entries are created (and looked up). NULL
+     * = {@code cn=Users,<managementDitBaseDn>}; see {@link #effectiveUserContainerDn()}. */
+    @Column(name = "user_container_dn", columnDefinition = "TEXT")
+    private String userContainerDn;
+
+    /** Where secGroup registration entries (an IVIA group import) are
+     * created and looked up. NULL = {@code cn=Groups,<managementDitBaseDn>};
+     * see {@link #effectiveGroupContainerDn()}. */
+    @Column(name = "group_container_dn", columnDefinition = "TEXT")
+    private String groupContainerDn;
+
+    // ── LINKED-mode-only ─────────────────────────────────────────────
 
     /** RDN attribute used for secUser entries — free-form. Stock
      * deployments use {@code secUUID} (the default) or {@code secLogin};
@@ -171,6 +186,28 @@ public class VendorIntegrationIsvaConfig {
     @Enumerated(EnumType.STRING)
     @Column(name = "group_member_target", length = 16)
     private IsvaGroupMemberTarget groupMemberTarget = IsvaGroupMemberTarget.DEMOGRAPHIC_DN;
+
+    /** The secUser container: the configured one, else {@code cn=Users} below
+     * the management DIT; null when neither is set. */
+    public String effectiveUserContainerDn() {
+        return containerOrDefault(userContainerDn, "cn=Users");
+    }
+
+    /** The secGroup container: the configured one, else {@code cn=Groups}
+     * below the management DIT; null when neither is set. */
+    public String effectiveGroupContainerDn() {
+        return containerOrDefault(groupContainerDn, "cn=Groups");
+    }
+
+    private String containerOrDefault(String configured, String defaultRdn) {
+        if (configured != null && !configured.isBlank()) {
+            return configured.trim();
+        }
+        if (managementDitBaseDn == null || managementDitBaseDn.isBlank()) {
+            return null;
+        }
+        return defaultRdn + "," + managementDitBaseDn.trim();
+    }
 
     // ── Audit columns ────────────────────────────────────────────────
 

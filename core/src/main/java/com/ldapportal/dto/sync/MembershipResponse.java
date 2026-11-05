@@ -8,7 +8,8 @@ import java.util.UUID;
 
 /**
  * Inventory view of one {@link Membership} row — "where is identity X on the
- * target, in what state, and why (if FAILED/REVIEW)".
+ * target, in what state, and why (if FAILED/REVIEW)". {@code reviewKind} says
+ * which decision a REVIEW row waits on ({@code null} for other states).
  */
 public record MembershipResponse(
         UUID syncSetId,
@@ -18,10 +19,12 @@ public record MembershipResponse(
         MembershipState state,
         String failReason,
         Long lastSrcCursor,
-        Long lastScanEpoch) {
+        Long lastScanEpoch,
+        SyncReviewKind reviewKind) {
 
     public static MembershipResponse of(Membership m) {
         return new MembershipResponse(m.getSyncSetId(), m.getIdentity(), m.getSourceDn(), m.getTargetDn(),
-                m.getState(), m.getFailReason(), m.getLastSrcCursor(), m.getLastScanEpoch());
+                m.getState(), m.getFailReason(), m.getLastSrcCursor(), m.getLastScanEpoch(),
+                SyncReviewKind.of(m.getState(), m.getFailReason()));
     }
 }

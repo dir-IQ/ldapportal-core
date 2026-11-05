@@ -4,6 +4,7 @@ package com.ldapportal.repository;
 import com.ldapportal.entity.ProvisioningProfile;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -19,6 +20,18 @@ public interface ProvisioningProfileRepository extends JpaRepository<Provisionin
     List<ProvisioningProfile> findAllByDirectoryIdAndEnabledTrue(UUID directoryId);
 
     List<ProvisioningProfile> findAllByDirectoryIdAndSelfRegistrationAllowedTrue(UUID directoryId);
+
+    /**
+     * Whether any profile allows self-registration — the self-registration
+     * half of {@link com.ldapportal.service.ApprovalUsageService}'s "can any
+     * approval source produce requests?" check. Global, directory-set and
+     * single-directory variants mirror {@code ProfileApprovalConfigRepository}.
+     */
+    boolean existsBySelfRegistrationAllowedTrue();
+
+    boolean existsBySelfRegistrationAllowedTrueAndDirectory_IdIn(Collection<UUID> directoryIds);
+
+    boolean existsBySelfRegistrationAllowedTrueAndDirectory_Id(UUID directoryId);
 
     boolean existsByDirectoryIdAndName(UUID directoryId, String name);
 

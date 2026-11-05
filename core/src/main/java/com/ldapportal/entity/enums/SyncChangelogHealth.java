@@ -6,11 +6,15 @@ package com.ldapportal.entity.enums;
  *
  * <ul>
  *   <li>{@code HEALTHY} — polling, cursor advancing.</li>
- *   <li>{@code LAGGING} — falling behind the source head (lag &gt; threshold).</li>
+ *   <li>{@code LAGGING} — falling behind the source head (lag &gt; threshold;
+ *       cookie mode, which has no numeric lag: the last poll filled a page).</li>
  *   <li>{@code STALLED} — repeated poll errors.</li>
  *   <li>{@code GAP_DETECTED} — the cursor fell off the bottom of the changelog
- *       (purged before it was read); a reconcile is triggered to re-derive state.</li>
- *   <li>{@code CURSOR_RESET} — the source changelog restarted (head &lt; cursor).</li>
+ *       (purged before it was read; cookie mode: the source refused the cookie);
+ *       the cursor jumps to the head and a reconcile is requested to re-derive
+ *       state.</li>
+ *   <li>{@code CURSOR_RESET} — the source changelog restarted (head &lt; cursor).
+ *       DSEE only; a cookie is never "behind" the head.</li>
  *   <li>{@code DISABLED_CONFIG_ERROR} — misconfiguration; polling suspended.</li>
  * </ul>
  */

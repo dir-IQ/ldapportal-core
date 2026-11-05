@@ -155,6 +155,19 @@ class IsvaSecUserPlansTest {
     }
 
     @Test
+    void grantLinked_createsTheSecUserInTheUserContainer_cnUsersByDefault() {
+        VendorIntegrationIsvaConfig cfg = linkedConfig();
+        cfg.setUserContainerDn(null);
+
+        assertThat(plans.grantLinked(cfg, payload("uid=alice,dc=x", "alice")).targetDn())
+                .endsWith(",cn=Users,secAuthority=Default,o=acme,c=us");
+
+        cfg.setUserContainerDn("ou=people,secAuthority=Default,o=acme,c=us");
+        assertThat(plans.grantLinked(cfg, payload("uid=alice,dc=x", "alice")).targetDn())
+                .endsWith(",ou=people,secAuthority=Default,o=acme,c=us");
+    }
+
+    @Test
     void grantLinked_secLoginRdn_usesUidAsRdnValue() {
         VendorIntegrationIsvaConfig cfg = linkedConfig();
         cfg.setSecuserRdnAttribute("secLogin");
@@ -427,6 +440,8 @@ class IsvaSecUserPlansTest {
         VendorIntegrationIsvaConfig cfg = inlineConfig();
         cfg.setTopologyMode(IsvaTopologyMode.LINKED);
         cfg.setManagementDitBaseDn("secAuthority=Default,o=acme,c=us");
+        // secUser entries sit directly under this DIT in the fixture.
+        cfg.setUserContainerDn("secAuthority=Default,o=acme,c=us");
         return cfg;
     }
 

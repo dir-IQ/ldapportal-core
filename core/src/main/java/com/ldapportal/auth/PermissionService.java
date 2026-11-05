@@ -23,7 +23,6 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -60,6 +59,13 @@ public class PermissionService {
      * Everything else requires {@link BaseRole#ADMIN}. The same set is what a
      * superadmin without {@link SuperadminPermission#MANAGE_DIRECTORY_DATA}
      * may use — see {@link #superadminMayUseFeature}.
+     *
+     * <p>{@link FeatureKey#APPROVAL_MANAGE} is deliberately absent: approving
+     * or rejecting a request applies a directory change, so it is a write.
+     * Grant it to a read-only admin with an explicit feature override.</p>
+     *
+     * <p>This is the single source of truth — {@code EffectivePermissionsService},
+     * {@code NotificationService} and {@code /auth/me} all read it.</p>
      */
     public static final Set<FeatureKey> READONLY_DEFAULT_FEATURES = Set.of(
             FeatureKey.BULK_EXPORT,
@@ -67,8 +73,7 @@ public class PermissionService {
             FeatureKey.DIRECTORY_BROWSE,
             FeatureKey.SCHEMA_READ,
             FeatureKey.USER_READ,
-            FeatureKey.GROUP_READ,
-            FeatureKey.APPROVAL_MANAGE
+            FeatureKey.GROUP_READ
     );
 
     private final AdminProfileRoleRepository        profileRoleRepo;

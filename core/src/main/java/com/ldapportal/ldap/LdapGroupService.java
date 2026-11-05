@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap;
 
+import com.ldapportal.core.provisioning.DeletePlan;
 import com.ldapportal.core.provisioning.GroupMemberPlan;
+import com.ldapportal.core.provisioning.LdapOperationStep;
 import com.ldapportal.core.provisioning.PlanExecutor;
 import com.ldapportal.core.provisioning.ProvisioningContext;
 import com.ldapportal.core.provisioning.ProvisioningInterceptorChain;
@@ -58,7 +60,7 @@ public class LdapGroupService {
      *
      * @param dc         directory connection
      * @param filter     LDAP filter string
-     * @param baseDn     search base (null falls back to connection's base DN)
+     * @param baseDn     search base (null searches every root of the connection)
      * @param attributes attributes to retrieve; empty = all
      */
     public List<LdapGroup> searchGroups(DirectoryConnection dc,
@@ -77,7 +79,7 @@ public class LdapGroupService {
      *
      * @param dc         directory connection
      * @param filter     LDAP filter string
-     * @param baseDn     search base (null falls back to connection's base DN)
+     * @param baseDn     search base (null searches every root of the connection)
      * @param maxResults maximum number of entries to return
      * @param attributes attributes to retrieve; empty = all
      */
@@ -86,7 +88,25 @@ public class LdapGroupService {
                                         String baseDn,
                                         int maxResults,
                                         String... attributes) {
-        String searchBase = baseDn != null ? baseDn : dc.getBaseDn();
+        if (baseDn != null) {
+            return searchGroupsUnder(dc, filter, baseDn, maxResults, attributes);
+        }
+        List<LdapGroup> merged = new ArrayList<>();
+        for (String root : dc.getBaseDns()) {
+            int remaining = maxResults - merged.size();
+            if (remaining <= 0) {
+                break;
+            }
+            merged.addAll(searchGroupsUnder(dc, filter, root, remaining, attributes));
+        }
+        return merged;
+    }
+
+    private List<LdapGroup> searchGroupsUnder(DirectoryConnection dc,
+                                              String filter,
+                                              String searchBase,
+                                              int maxResults,
+                                              String... attributes) {
         int pageSize = Math.min(dc.getPagingSize(), maxResults);
         List<LdapGroup> results = new ArrayList<>();
 
@@ -144,11 +164,18 @@ public class LdapGroupService {
      * {@link LdapEntryCounter}.</p>
      */
     public long countGroups(DirectoryConnection dc, String baseDn, long max) {
-        String searchBase = baseDn != null ? baseDn : dc.getBaseDn();
         String filter = DirectoryObjectClassDefaults.groupSearchFilter(dc);
         int pageSize = Math.max(1, dc.getPagingSize());
-        return connectionFactory.withConnection(dc,
-                conn -> LdapEntryCounter.count(conn, searchBase, filter, pageSize, max));
+        long total = 0;
+        for (String searchBase : baseDn != null ? List.of(baseDn) : dc.getBaseDns()) {
+            long remaining = max - total;
+            if (remaining <= 0) {
+                break;
+            }
+            total += connectionFactory.withConnection(dc,
+                    conn -> LdapEntryCounter.count(conn, searchBase, filter, pageSize, remaining));
+        }
+        return total;
     }
 
     // ── Read ──────────────────────────────────────────────────────────────────
@@ -198,15 +225,21 @@ public class LdapGroupService {
     // ── Delete ────────────────────────────────────────────────────────────────
 
     /**
-     * Deletes the group entry at {@code dn}.
+     * Deletes the group entry at {@code dn}. Routed through the interceptor
+     * chain so a vendor-aware interceptor can remove its own record of the
+     * group alongside it (e.g. ISVA's secGroup registration).
+     *
+     * @return the DNs other than {@code dn} the plan deleted or tried to
+     *         delete (best-effort steps), empty for the baseline plan
      */
-    public void deleteGroup(DirectoryConnection dc, String dn) {
-        connectionFactory.withConnection(dc, conn -> {
-            LDAPResult result = conn.delete(dn);
-            checkResult(result, "deleteGroup", dn);
-            log.info("Deleted LDAP group {}", dn);
-            return null;
-        });
+    public List<String> deleteGroup(DirectoryConnection dc, String dn) {
+        DeletePlan plan = interceptors.planGroupDelete(dc, dn, ProvisioningContext.empty());
+        planExecutor.execute(dc, plan);
+        log.info("Deleted LDAP group {}", dn);
+        return plan.steps().stream()
+                .map(LdapOperationStep::targetDn)
+                .filter(target -> !target.equalsIgnoreCase(dn))
+                .toList();
     }
 
     /**
@@ -354,13 +387,21 @@ public class LdapGroupService {
     /**
      * Server-side paged search returning entry DNs only. Shared by the AD
      * matching-rule branch and the OUD {@code isMemberOf} branch — both
-     * produce the same shape (filter-only, base = directory base DN, no
+     * produce the same shape (filter-only, every root of the directory, no
      * attributes wanted), only the filter differs.
      */
     private List<String> pagedDnSearch(DirectoryConnection dc, String filter) {
+        List<String> members = new java.util.ArrayList<>();
+        for (String root : dc.getBaseDns()) {
+            members.addAll(pagedDnSearch(dc, root, filter));
+        }
+        return members;
+    }
+
+    private List<String> pagedDnSearch(DirectoryConnection dc, String base, String filter) {
         return connectionFactory.withConnection(dc, conn -> {
             List<String> members = new java.util.ArrayList<>();
-            SearchRequest request = new SearchRequest(dc.getBaseDn(), SearchScope.SUB, filter, "1.1");
+            SearchRequest request = new SearchRequest(base, SearchScope.SUB, filter, "1.1");
             ASN1OctetString cookie = null;
             do {
                 request.setControls(new SimplePagedResultsControl(dc.getPagingSize(), cookie));

@@ -48,4 +48,19 @@ describe('AllClearPanel', () => {
     const w = mountWith({ unavailableCount: 1 })
     expect(w.text()).toContain('1 directory is unavailable')
   })
+
+  it('mentions pending actions when approvals are in use (the default)', () => {
+    expect(mountWith().text()).toContain('No pending actions.')
+    expect(mountWith({ unavailableCount: 1 }).text()).toContain('No other pending actions.')
+  })
+
+  it('drops the "pending actions" wording when approvals are not in use', () => {
+    const healthy = mountWith({ showApprovals: false }).text()
+    expect(healthy).toContain('Nothing needs your attention.')
+    expect(healthy).not.toMatch(/pending/i)
+
+    const degraded = mountWith({ showApprovals: false, unavailableCount: 2 }).text()
+    expect(degraded).toContain('2 directories are unavailable. Nothing else needs your attention.')
+    expect(degraded).not.toMatch(/pending/i)
+  })
 })

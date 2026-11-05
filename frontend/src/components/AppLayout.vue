@@ -77,7 +77,7 @@
                 <span v-if="!collapsed">Approvals</span>
                 <span v-if="pendingCount > 0 && !collapsed" class="ml-auto bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">{{ pendingCount }}</span>
               </RouterLink>
-              <RouterLink v-if="auth.isPlaybooksEnabled" :to="{ path: `/directories/${currentDirId}/playbooks` }" class="nav-item">
+              <RouterLink v-if="showPlaybooksNav" :to="{ path: `/directories/${currentDirId}/playbooks` }" class="nav-item">
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12M4 8h12M4 12h8M4 16h6"/><path d="M15 12l2 2-2 2"/></svg>
                 <span v-if="!collapsed">Playbooks</span>
               </RouterLink>
@@ -146,6 +146,10 @@
           <RouterLink to="/superadmin/reports" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16V10M10 16V4M15 16v-4"/></svg>
             <span v-if="!collapsed">Operational Reports</span>
+          </RouterLink>
+          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.manage_directory_diff')" to="/superadmin/directory-diff" class="nav-item">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="6.5" height="14" rx="1.5"/><rect x="11.5" y="3" width="6.5" height="14" rx="1.5"/><path d="M4.5 7h2M4.5 10h2M13.5 7h2M13.5 13h2"/></svg>
+            <span v-if="!collapsed">Directory Diff</span>
           </RouterLink>
           <RouterLink to="/superadmin/audit-log" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="2" width="14" height="16" rx="2"/><path d="M7 6h6M7 10h6M7 14h3"/></svg>
@@ -247,14 +251,17 @@
         </div>
       </div>
 
-      <!-- Build identifier. Prefers the backend image's tag (e.g. "v1.4.2")
-           when the image carries one, otherwise the bundle's git short-SHA.
-           Lets a quick glance answer "is this the version I think it is?".
-           Hidden when the sidebar is collapsed to keep the icon strip
-           uncluttered. -->
-      <div v-if="!collapsed" class="px-3 py-1.5 border-t border-white/10 text-[10px] text-white/70 font-mono leading-none"
+      <!-- Build identifier: the frontend and backend image tags (e.g.
+           "FE 1.4.2 · BE 1.4.2"), then where the app is deployed when the
+           operator set DEPLOYMENT_LOCATION. Each tag falls back to its git short-SHA
+           when the image was built without a tag. Amber when the two
+           builds' SHAs differ. Lets a quick glance answer "is this the
+           version I think it is?". Hidden when the sidebar is collapsed to
+           keep the icon strip uncluttered. -->
+      <div v-if="!collapsed" class="px-3 py-1.5 border-t border-white/10 text-[10px] font-mono leading-none truncate"
+           :class="skewDetected ? 'text-amber-300/80' : 'text-white/70'"
            :title="buildStampTitle">
-        {{ buildStamp }}<span v-if="!serverImageVersion && serverSha && serverSha !== clientSha" class="text-amber-300/80"> ≠ {{ serverSha }}</span>
+        FE {{ frontendStamp }} · BE {{ backendStamp }}<template v-if="deploymentLocation"> · {{ deploymentLocation }}</template>
       </div>
     </aside>
 
@@ -354,17 +361,19 @@ const unsavedChanges = useUnsavedChangesStore()
 // Build identifier + skew detector. clientSha comes from
 // vite.config.js's `define` block; serverSha / serverImageVersion are
 // fetched once on first call. See composables/useVersionCheck.ts.
-const { clientSha, serverSha, serverImageVersion, skewDetected } = useVersionCheck()
+const { clientSha, clientImageVersion, serverSha, serverImageVersion, deploymentLocation, skewDetected } =
+  useVersionCheck()
 
-// The sidebar build stamp prefers the backend image's tag (e.g. "v1.4.2")
-// when the image was built with one, falling back to the bundle's git SHA.
-const buildStamp = computed(() => serverImageVersion.value || clientSha)
+// The sidebar build stamp shows each side's image tag when its image was
+// built with one, falling back to that build's git SHA.
+const frontendStamp = computed(() => clientImageVersion || clientSha)
+const backendStamp = computed(() => serverImageVersion.value || serverSha.value || '…')
 const buildStampTitle = computed(() => {
-  const parts: string[] = []
-  if (serverImageVersion.value) parts.push(`Image ${serverImageVersion.value}`)
-  parts.push(`Bundle ${clientSha}`)
-  parts.push(`server ${serverSha.value || '…'}`)
-  return parts.join(' · ')
+  const frontend = clientImageVersion ? `${clientImageVersion} (${clientSha})` : clientSha
+  const sha = serverSha.value || '…'
+  const backend = serverImageVersion.value ? `${serverImageVersion.value} (${sha})` : sha
+  const where = deploymentLocation.value ? ` · deployed in ${deploymentLocation.value}` : ''
+  return `Frontend image ${frontend} · backend image ${backend}${where}`
 })
 
 function reloadHard() {
@@ -402,6 +411,7 @@ const pendingCount   = ref(0)
  * directory-scoped link.
  */
 const approvalsConfigured = ref(false)
+const canManageApprovals = computed(() => hasFeature('approval.manage'))
 const activeReviewCount = ref(0)
 const alertCount     = ref(0)
 const collapsed      = ref(false)
@@ -562,8 +572,10 @@ watch(currentDirId, (newDirId) => {
 // Load pending approval count + "is the workflow configured?" for the
 // current directory. Endpoint returns both in one call so we don't pay a
 // second round trip just to decide whether to render the link.
-watch(currentDirId, async (newDirId) => {
-  if (!newDirId) {
+// Skipped without approval.manage (e.g. READ_ONLY admins) — the endpoint
+// would 403 and the link stays hidden anyway.
+watch([currentDirId, canManageApprovals], async ([newDirId, canManage]) => {
+  if (!newDirId || !canManage) {
     pendingCount.value = 0
     approvalsConfigured.value = false
     return
@@ -589,7 +601,14 @@ watch(currentDirId, async (newDirId) => {
 // The superadmin Approvals entry stays reachable regardless, so in-flight
 // requests can always be drained.
 const showApprovalsNav = computed(() =>
-  auth.isAnyApprovalEnabled && (approvalsConfigured.value || pendingCount.value > 0)
+  canManageApprovals.value
+    && auth.isAnyApprovalEnabled && (approvalsConfigured.value || pendingCount.value > 0)
+)
+
+// The directory Playbooks page lists playbooks, which needs playbook.manage;
+// without it (e.g. READ_ONLY admins) the page would only 403.
+const showPlaybooksNav = computed(() =>
+  auth.isPlaybooksEnabled && hasFeature('playbook.manage')
 )
 
 // Load active review count for badge. Skip the call entirely when the

@@ -3,6 +3,7 @@ package com.ldapportal.service;
 
 import com.ldapportal.core.governance.MembershipGate;
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.ldap.model.LdapEntry;
 import com.ldapportal.ldap.validation.DnValidator;
 import com.ldapportal.ldap.validation.LdapAttributeValidator;
 import com.ldapportal.ldap.validation.NamingAttributes;
@@ -50,6 +51,7 @@ import com.ldapportal.ldap.LdapSchemaService.AttributeTypeInfo;
 import com.ldapportal.ldap.LdapSchemaService.ObjectClassAttributes;
 import com.ldapportal.ldap.LdapSchemaService.SchemaListItem;
 import com.ldapportal.ldap.LdapUserService;
+import com.ldapportal.ldap.UserGroupIndex;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.util.CsvUtils;
 import com.unboundid.ldap.sdk.LDAPException;
@@ -65,6 +67,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -165,6 +168,47 @@ public class LdapOperationService {
                 permissionService.requireFeature(principal, directoryId, FeatureKey.GROUP_MANAGE_MEMBERS);
             }
         }
+    }
+
+    /**
+     * The per-row permissions a bulk import runs with (see
+     * {@link BulkImportPermissions}). With several principals — the requester
+     * and the approver of an approved import — a feature counts only when
+     * every one of them holds it; {@code null} entries are ignored.
+     */
+    BulkImportPermissions importPermissions(UUID directoryId, DirectoryConnection dc,
+                                            AuthPrincipal... principals) {
+        boolean resetPasswords = holdsAll(directoryId, FeatureKey.USER_RESET_PASSWORD, principals);
+        boolean enableDisable  = holdsAll(directoryId, FeatureKey.USER_ENABLE_DISABLE, principals);
+        Map<String, String> protectedAttrs = new HashMap<>();
+        if (!resetPasswords) {
+            PASSWORD_ATTRIBUTES.forEach(a -> protectedAttrs.put(a, BulkImportPermissions.RESET_PASSWORDS));
+        }
+        if (!enableDisable) {
+            ENABLE_DISABLE_ATTRIBUTES.forEach(a -> protectedAttrs.put(a, BulkImportPermissions.ENABLE_DISABLE));
+            String configured = dc.getEnableDisableAttribute();
+            if (configured != null && !configured.isBlank()) {
+                protectedAttrs.put(attributeKey(configured), BulkImportPermissions.ENABLE_DISABLE);
+            }
+        }
+        return new BulkImportPermissions(
+                holdsAll(directoryId, FeatureKey.USER_CREATE, principals),
+                holdsAll(directoryId, FeatureKey.USER_EDIT, principals),
+                Map.copyOf(protectedAttrs),
+                holdsAll(directoryId, FeatureKey.GROUP_CREATE_DELETE, principals),
+                holdsAll(directoryId, FeatureKey.GROUP_EDIT, principals));
+    }
+
+    private boolean holdsAll(UUID directoryId, FeatureKey feature, AuthPrincipal... principals) {
+        for (AuthPrincipal p : principals) {
+            if (p == null) continue;
+            try {
+                permissionService.requireFeature(p, directoryId, feature);
+            } catch (AccessDeniedException e) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ── Browse ────────────────────────────────────────────────────────────────
@@ -427,12 +471,13 @@ public class LdapOperationService {
         LdapAttributeValidator.validateSyntax(dc.getDirectoryType(), req.attributes(), inputTypes);
 
         userService.createUser(dc, req.dn(), req.attributes(), profileId);
-        LdapEntryResponse result = LdapEntryResponse.from(userService.getUser(dc, req.dn()));
+        // Audit as soon as the add succeeds, so a failed read-back can't drop it.
         Map<String, Object> detail = new java.util.LinkedHashMap<>();
         detail.put("attributes", req.attributes().keySet());
         if (profileId != null) detail.put("profileId", profileId.toString());
         auditService.record(principal, directoryId, AuditAction.USER_CREATE, req.dn(), detail);
-        return result;
+        String createdDn = req.dn();
+        return readBackCreated(createdDn, req.attributes(), () -> userService.getUser(dc, createdDn));
     }
 
     public LdapEntryResponse updateUser(UUID directoryId, AuthPrincipal principal,
@@ -796,18 +841,61 @@ public class LdapOperationService {
         LdapAttributeValidator.validateSyntax(dc.getDirectoryType(), req.attributes(), Map.of());
 
         groupService.createGroup(dc, req.dn(), req.attributes());
-        LdapEntryResponse result = LdapEntryResponse.from(groupService.getGroup(dc, req.dn()));
         auditService.record(principal, directoryId, AuditAction.GROUP_CREATE, req.dn(),
                 Map.of("attributes", req.attributes().keySet()));
-        return result;
+        return readBackCreated(req.dn(), req.attributes(), () -> groupService.getGroup(dc, req.dn()));
+    }
+
+    /** Waits between read-back attempts of a just-created entry (~1.85 s in all). */
+    long[] readBackDelaysMs = {100, 250, 500, 1000};
+
+    /** Password attributes left out of a response built from the submitted values. */
+    private static final Set<String> READ_BACK_HIDDEN = Set.of(
+            "userpassword", "authpassword", "unicodepwd");
+
+    /**
+     * Reads back an entry this request just created, for the response. On a
+     * replicated directory behind a load balancer the read can reach a replica
+     * the add hasn't reached yet (the pool hands out whichever connection is
+     * free), so a miss is retried briefly. If the entry still isn't visible,
+     * the response is built from the submitted attributes, minus password
+     * values, rather than reporting a create that succeeded as a failure.
+     */
+    private LdapEntryResponse readBackCreated(String dn, Map<String, List<String>> submitted,
+                                              java.util.function.Supplier<? extends LdapEntry> read) {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return LdapEntryResponse.from(read.get());
+            } catch (ResourceNotFoundException e) {
+                if (attempt >= readBackDelaysMs.length) {
+                    break;
+                }
+                try {
+                    Thread.sleep(readBackDelaysMs[attempt]);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        log.warn("Created {} but could not read it back (replication lag on a load-balanced "
+                + "directory?); responding with the submitted attributes", dn);
+        Map<String, List<String>> attributes = new java.util.LinkedHashMap<>();
+        submitted.forEach((name, values) -> {
+            if (!READ_BACK_HIDDEN.contains(name.toLowerCase(Locale.ROOT))) {
+                attributes.put(name, List.copyOf(values));
+            }
+        });
+        return new LdapEntryResponse(dn, attributes);
     }
 
     public void deleteGroup(UUID directoryId, AuthPrincipal principal, String dn) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, dn);
 
-        groupService.deleteGroup(dc, dn);
-        auditService.record(principal, directoryId, AuditAction.GROUP_DELETE, dn, null);
+        List<String> relatedDeletes = groupService.deleteGroup(dc, dn);
+        auditService.record(principal, directoryId, AuditAction.GROUP_DELETE, dn,
+                relatedDeletes.isEmpty() ? null : Map.of("relatedDeletes", relatedDeletes));
     }
 
     public void addGroupMember(UUID directoryId, AuthPrincipal principal,
@@ -865,6 +953,20 @@ public class LdapOperationService {
     public MembershipChangeResult applyMembershipChanges(
             UUID directoryId, AuthPrincipal principal,
             String memberDn, List<MembershipChangeRequest.Change> changes) {
+        return applyMembershipChanges(directoryId, principal, memberDn, null, changes);
+    }
+
+    /**
+     * {@link #applyMembershipChanges(UUID, AuthPrincipal, String, List)} with
+     * the member's uid as well, for callers that resolved it (bulk group
+     * import). Changes targeting a {@code memberUid} (posixGroup) group write
+     * {@code memberUid} instead of the DN; every other attribute still takes
+     * the DN. A {@code null} uid keeps the DN for every change.
+     */
+    public MembershipChangeResult applyMembershipChanges(
+            UUID directoryId, AuthPrincipal principal,
+            String memberDn, String memberUid,
+            List<MembershipChangeRequest.Change> changes) {
 
         loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, memberDn);
@@ -884,17 +986,19 @@ public class LdapOperationService {
         ApprovalWorkflowService approvalService = approvalServiceProvider.getIfAvailable();
         List<MembershipChangeResult.Item> items = new ArrayList<>(ordered.size());
         for (MembershipChangeRequest.Change c : ordered) {
-            items.add(applyMembershipChange(directoryId, principal, memberDn, c, approvalService));
+            String memberValue = memberUid != null && "memberUid".equalsIgnoreCase(c.memberAttribute())
+                    ? memberUid : memberDn;
+            items.add(applyMembershipChange(directoryId, principal, memberValue, c, approvalService));
         }
         return MembershipChangeResult.of(items);
     }
 
     private MembershipChangeResult.Item applyMembershipChange(
-            UUID directoryId, AuthPrincipal principal, String memberDn,
+            UUID directoryId, AuthPrincipal principal, String memberValue,
             MembershipChangeRequest.Change c, ApprovalWorkflowService approvalService) {
         try {
             if (c.op() == MembershipChangeRequest.Op.REMOVE) {
-                removeGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberDn);
+                removeGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberValue);
                 return MembershipChangeResult.Item.applied(c);
             }
 
@@ -906,13 +1010,13 @@ public class LdapOperationService {
                         directoryId, c.groupDn(), principal, ApprovalRequestType.GROUP_MEMBER_ADD,
                         Map.of("groupDn", c.groupDn(),
                                 "memberAttribute", c.memberAttribute(),
-                                "memberValue", memberDn));
+                                "memberValue", memberValue));
                 if (pending.isPresent()) {
                     return MembershipChangeResult.Item.queued(c, pending.get().getId());
                 }
             }
 
-            addGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberDn);
+            addGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberValue);
             return MembershipChangeResult.Item.applied(c);
 
         } catch (ProvisioningRefusedException e) {
@@ -971,6 +1075,27 @@ public class LdapOperationService {
     }
 
     // ── Bulk import / export ──────────────────────────────────────────────────
+
+    /**
+     * The attribute a bulk import matches rows to existing entries by, before a
+     * template or the request overrides it: the profile's RDN attribute; else,
+     * for an operator-entered profile without one, the first attribute of its
+     * DN template's leading RDN; else {@code uid}.
+     */
+    static String defaultImportKeyAttribute(ProvisioningProfile profile) {
+        if (profile == null) return "uid";
+        String rdn = profile.getRdnAttribute();
+        if (rdn != null && !rdn.isBlank()) return rdn;
+        String tpl = profile.getDnTemplate();
+        if (tpl != null) {
+            int eq = tpl.indexOf('=');
+            if (eq > 0) {
+                String name = tpl.substring(0, eq).trim();
+                if (name.matches("[A-Za-z][A-Za-z0-9-]*")) return name;
+            }
+        }
+        return "uid";
+    }
 
     /**
      * Resolve a bulk-import request's {@code profileId} to its profile entity,
@@ -1043,7 +1168,7 @@ public class LdapOperationService {
         // create.
         permissionService.requireDnWithinScope(principal, directoryId, parentDn);
 
-        String targetKeyAttr = importProfile != null ? importProfile.getRdnAttribute() : "uid";
+        String targetKeyAttr = defaultImportKeyAttribute(importProfile);
         String dnSourceColumn = null;
         List<CsvColumnMappingDto> mappings = req.columnMappings() != null
                 ? new ArrayList<>(req.columnMappings()) : new ArrayList<>();
@@ -1072,6 +1197,16 @@ public class LdapOperationService {
         if (req.dnSourceColumn() != null) dnSourceColumn = req.dnSourceColumn();
         if (dnSourceColumn != null && dnSourceColumn.isBlank()) dnSourceColumn = null;
 
+        // Same resolution as bulkImportUsers, so the preview can say which rows
+        // the admin's permissions would refuse (an overwrite needs user.edit).
+        ConflictHandling conflictHandling = ConflictHandling.SKIP;
+        if (req.templateId() != null) {
+            ConflictHandling fromTemplate = csvTemplateService
+                    .loadTemplate(req.templateId(), directoryId, principal).getConflictHandling();
+            if (fromTemplate != null) conflictHandling = fromTemplate;
+        }
+        if (req.conflictHandling() != null) conflictHandling = req.conflictHandling();
+
         boolean skipHeader = resolveSkipHeaderRow(req.skipHeaderRow(), req.templateId(), directoryId, principal);
 
         // Resolve the object classes' MUST attributes via schema so the preview
@@ -1092,9 +1227,16 @@ public class LdapOperationService {
 
         char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
 
+        // A template is the contract for the file: columns it doesn't mention are
+        // dropped (and reported in the preview). Only template-less imports use
+        // each header as an attribute name.
+        boolean passthroughUnmapped = req.templateId() == null;
         return bulkUserService.previewImport(
                 csvInput, parentDn, targetKeyAttr, mappings, skipHeader, requiredAttrs, dnSourceColumn,
-                delimiter);
+                delimiter, passthroughUnmapped, userImportGroups(dc, directoryId, principal),
+                conflictHandling == ConflictHandling.OVERWRITE,
+                importPermissions(directoryId, dc, principal),
+                dn -> userService.entryExists(dc, dn));
     }
 
     /**
@@ -1106,6 +1248,18 @@ public class LdapOperationService {
     public BulkImportResult bulkImportUsers(UUID directoryId, AuthPrincipal principal,
                                             InputStream csvInput,
                                             BulkImportRequest req) throws IOException {
+        return bulkImportUsers(directoryId, principal, csvInput, req, null);
+    }
+
+    /**
+     * {@link #bulkImportUsers(UUID, AuthPrincipal, InputStream, BulkImportRequest)}
+     * replayed after approval: {@code principal} is the approver, and a row runs
+     * only when {@code requester} also holds the features it needs.
+     */
+    public BulkImportResult bulkImportUsers(UUID directoryId, AuthPrincipal principal,
+                                            InputStream csvInput,
+                                            BulkImportRequest req,
+                                            AuthPrincipal requester) throws IOException {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
 
@@ -1117,7 +1271,7 @@ public class LdapOperationService {
 
         // Defaults — seeded from the profile when present, then may be overridden
         // by template or request fields.
-        String              targetKeyAttr    = importProfile != null ? importProfile.getRdnAttribute() : "uid";
+        String              targetKeyAttr    = defaultImportKeyAttribute(importProfile);
         ConflictHandling    conflictHandling = ConflictHandling.SKIP;
         ImportErrorHandling errorHandling    = ImportErrorHandling.SKIP_ERRORS;
         List<String>        objectClasses    = importProfile != null
@@ -1190,10 +1344,14 @@ public class LdapOperationService {
 
         char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
 
+        // Same rule as the preview: under a template, unmapped columns are dropped.
+        boolean passthroughUnmapped = req.templateId() == null;
         BulkImportResult result = bulkUserService.importCsv(
                 dc, csvInput, parentDn, targetKeyAttr, conflictHandling, mappings,
                 objectClasses, skipHeader, dnSourceColumn, profileContext,
-                requiredAttrs, errorHandling, delimiter);
+                requiredAttrs, errorHandling, delimiter, passthroughUnmapped,
+                userImportGroups(dc, directoryId, principal),
+                importPermissions(directoryId, dc, principal, requester));
 
         // Fold the created DNs into the detail so the audit trail names exactly
         // which users were added — symmetric with bulkDelete's deletedDns.
@@ -1221,6 +1379,21 @@ public class LdapOperationService {
     public byte[] bulkExportUsers(UUID directoryId, AuthPrincipal principal,
                                   String filter, String baseDn,
                                   List<String> attributes, UUID templateId) throws IOException {
+        return bulkExportUsers(directoryId, principal, filter, baseDn, attributes, templateId, false);
+    }
+
+    /**
+     * {@link #bulkExportUsers(UUID, AuthPrincipal, String, String, List, UUID)}
+     * with an optional {@code groups} column: each user's direct group
+     * memberships, from the groups within the caller's scope, written the way
+     * the import's groups column reads them. It's included when asked for,
+     * when {@code groups} is one of the requested attributes, or when the
+     * template maps a column to group memberships.
+     */
+    public byte[] bulkExportUsers(UUID directoryId, AuthPrincipal principal,
+                                  String filter, String baseDn,
+                                  List<String> attributes, UUID templateId,
+                                  boolean includeGroups) throws IOException {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
 
@@ -1231,15 +1404,25 @@ public class LdapOperationService {
         // OUs so the CSV doesn't leak entries outside scope.
         List<String> bases = permissionService.resolveSearchBaseDns(principal, directoryId, baseDn);
 
+        // "groups" among the attributes asks for the groups column, not an attribute.
+        boolean groupsColumn = includeGroups
+                || attributes.stream().anyMatch(a -> a.equalsIgnoreCase(CsvColumnMap.GROUPS_COLUMN));
         List<String> effectiveAttrs = new ArrayList<>(attributes);
+        effectiveAttrs.removeIf(a -> a.equalsIgnoreCase(CsvColumnMap.GROUPS_COLUMN));
         if (effectiveAttrs.isEmpty() && templateId != null) {
-            csvTemplateService.loadEntries(templateId).stream()
-                    .filter(e -> !e.isIgnored() && e.getLdapAttribute() != null)
-                    .map(CsvMappingTemplateEntry::getLdapAttribute)
-                    .forEach(effectiveAttrs::add);
+            for (CsvMappingTemplateEntry e : csvTemplateService.loadEntries(templateId)) {
+                if (e.isIgnored() || e.getLdapAttribute() == null) continue;
+                // Group memberships come from the groups, not from an attribute.
+                if (CsvColumnMap.GROUP_MEMBERSHIPS.equals(e.getLdapAttribute())) {
+                    groupsColumn = true;
+                    continue;
+                }
+                effectiveAttrs.add(e.getLdapAttribute());
+            }
         }
 
-        return bulkUserService.exportCsvFromBases(dc, filter, bases, effectiveAttrs);
+        UserGroupIndex groups = groupsColumn ? UserGroupIndex.build(groupService, dc, bases) : null;
+        return bulkUserService.exportCsvFromBases(dc, filter, bases, effectiveAttrs, groups);
     }
 
     // ── Bulk delete ───────────────────────────────────────────────────────────
@@ -1511,8 +1694,14 @@ public class LdapOperationService {
 
         char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
 
+        // Under a template, columns it doesn't mention are dropped (see bulkImportUsers).
+        // The preview resolves members and looks groups up exactly as the import
+        // will, so it can say what each member change will do.
         return bulkGroupService.previewImport(
-                csvInput, parentDn, mappings, skipHeader, requiredAttrs, memberAttribute, delimiter);
+                csvInput, parentDn, mappings, skipHeader, requiredAttrs, memberAttribute,
+                List.of(oc.split(",")), delimiter,
+                req.templateId() == null, groupImportMembers(dc, directoryId, principal),
+                importPermissions(directoryId, dc, principal));
     }
 
     public BulkImportResult bulkImportGroups(UUID directoryId, AuthPrincipal principal,
@@ -1520,6 +1709,20 @@ public class LdapOperationService {
                                               BulkImportRequest req,
                                               String memberAttribute,
                                               String objectClass) throws IOException {
+        return bulkImportGroups(directoryId, principal, csvInput, req, memberAttribute, objectClass, null);
+    }
+
+    /**
+     * {@link #bulkImportGroups(UUID, AuthPrincipal, InputStream, BulkImportRequest, String, String)}
+     * replayed after approval: {@code principal} is the approver, and a row runs
+     * only when {@code requester} also holds the features it needs.
+     */
+    public BulkImportResult bulkImportGroups(UUID directoryId, AuthPrincipal principal,
+                                              InputStream csvInput,
+                                              BulkImportRequest req,
+                                              String memberAttribute,
+                                              String objectClass,
+                                              AuthPrincipal requester) throws IOException {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
 
@@ -1529,7 +1732,9 @@ public class LdapOperationService {
         String parentDn = effectiveImportParentDn(req, importProfile, true);
         permissionService.requireDnWithinScope(principal, directoryId, parentDn);
 
-        ConflictHandling  conflictHandling = ConflictHandling.SKIP;
+        // No conflict handling for groups: an existing group always takes the
+        // attributes a row provides (see BulkGroupService), so a template's or
+        // request's conflictHandling is not consulted here.
         List<String>      objectClasses    = (objectClass != null && !objectClass.isBlank())
                 ? List.of(objectClass.split(",")) : List.of("groupOfNames");
         List<CsvColumnMappingDto> mappings = req.columnMappings() != null
@@ -1540,7 +1745,6 @@ public class LdapOperationService {
                     csvTemplateService.loadTemplate(req.templateId(), directoryId, principal);
             List<CsvMappingTemplateEntry> entries =
                     csvTemplateService.loadEntries(req.templateId());
-            conflictHandling = template.getConflictHandling();
             if (template.getObjectClass() != null && !template.getObjectClass().isBlank()) {
                 objectClasses = List.of(template.getObjectClass().split(","));
             }
@@ -1552,8 +1756,6 @@ public class LdapOperationService {
             }
         }
 
-        if (req.conflictHandling() != null) conflictHandling = req.conflictHandling();
-
         boolean skipHeader = resolveSkipHeaderRow(req.skipHeaderRow(), req.templateId(), directoryId, principal);
 
         String effectiveMemberAttr = (memberAttribute != null && !memberAttribute.isBlank())
@@ -1562,8 +1764,10 @@ public class LdapOperationService {
         char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
 
         BulkImportResult result = bulkGroupService.importCsv(
-                dc, csvInput, parentDn, conflictHandling, mappings,
-                objectClasses, effectiveMemberAttr, skipHeader, delimiter);
+                dc, csvInput, parentDn, mappings,
+                objectClasses, effectiveMemberAttr, skipHeader, delimiter,
+                req.templateId() == null, groupImportMembers(dc, directoryId, principal),
+                importPermissions(directoryId, dc, principal, requester));
 
         auditService.record(principal, directoryId, AuditAction.GROUP_BULK_IMPORT, parentDn,
                 Map.of("operation", "bulkGroupImport",
@@ -1572,6 +1776,60 @@ public class LdapOperationService {
                        "skipped",   result.skipped(),
                        "errors",    result.errors()));
         return result;
+    }
+
+    /**
+     * Refuses (403) a group-import file that lists members when the caller
+     * lacks {@code group.manage_members}. The controller calls this before a
+     * file is queued for approval, so the requester is checked, not only the
+     * approver when the approved file is replayed.
+     */
+    public void requireGroupImportMemberPermission(UUID directoryId, AuthPrincipal principal,
+                                                   byte[] csv, BulkImportRequest req,
+                                                   String memberAttribute) throws IOException {
+        List<CsvColumnMappingDto> mappings = req.columnMappings() != null
+                ? new ArrayList<>(req.columnMappings()) : new ArrayList<>();
+        if (req.templateId() != null && mappings.isEmpty()) {
+            mappings = csvTemplateService.loadEntries(req.templateId()).stream()
+                    .map(e -> new CsvColumnMappingDto(
+                            e.getCsvColumnName(), e.getLdapAttribute(), e.isIgnored()))
+                    .toList();
+        }
+        boolean skipHeader = resolveSkipHeaderRow(req.skipHeaderRow(), req.templateId(), directoryId, principal);
+        char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
+        String effectiveMemberAttr = (memberAttribute != null && !memberAttribute.isBlank())
+                ? memberAttribute : "member";
+        if (bulkGroupService.listsMembers(new java.io.ByteArrayInputStream(csv), mappings,
+                skipHeader, delimiter, req.templateId() == null, effectiveMemberAttr)) {
+            permissionService.requireFeature(principal, directoryId, FeatureKey.GROUP_MANAGE_MEMBERS);
+        }
+    }
+
+    /**
+     * Member resolution and governed member writes for a group import run by
+     * {@code principal}: member changes on existing groups go through
+     * {@link #applyMembershipChanges(UUID, AuthPrincipal, String, String, List)}.
+     */
+    private GroupImportMembers groupImportMembers(DirectoryConnection dc, UUID directoryId,
+                                                  AuthPrincipal principal) {
+        return new ScopedGroupImportMembers(dc, directoryId, principal, permissionService,
+                userService, groupService,
+                (memberDn, memberUid, changes) ->
+                        applyMembershipChanges(directoryId, principal, memberDn, memberUid, changes),
+                (memberDn, groupDn) ->
+                        membershipGate.checkMembership(directoryId, memberDn, groupDn, principal));
+    }
+
+    /**
+     * Group resolution and governed member writes for the group memberships a
+     * user import lists, run by {@code principal}: each add goes through
+     * {@link #applyMembershipChanges(UUID, AuthPrincipal, String, String, List)}.
+     */
+    private UserImportGroups userImportGroups(DirectoryConnection dc, UUID directoryId,
+                                              AuthPrincipal principal) {
+        return new ScopedUserImportGroups(dc, directoryId, principal, permissionService, groupService,
+                (memberDn, memberUid, changes) ->
+                        applyMembershipChanges(directoryId, principal, memberDn, memberUid, changes));
     }
 
     public byte[] bulkExportGroups(UUID directoryId, AuthPrincipal principal,

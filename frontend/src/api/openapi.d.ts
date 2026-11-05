@@ -2795,6 +2795,8 @@ export interface components {
             /** Format: int64 */
             reconcileCadenceSeconds?: number;
             enabled?: boolean;
+            /** @enum {string} */
+            loggingLevel?: "SUMMARY" | "DETAILED";
         };
         SyncTransformRule: {
             sourceAttr?: string;
@@ -2824,6 +2826,8 @@ export interface components {
             /** Format: date-time */
             reconcileLastRunAt?: string;
             enabled?: boolean;
+            /** @enum {string} */
+            loggingLevel?: "SUMMARY" | "DETAILED";
             /** Format: date-time */
             createdAt?: string;
             /** Format: date-time */
@@ -2844,7 +2848,7 @@ export interface components {
             /** @enum {string} */
             captureMode?: "APP_INTERCEPT" | "CHANGELOG";
             /** @enum {string} */
-            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC" | "OUD_COOKIE_CHANGELOG";
             changelogBaseDn?: string;
         };
         SyncLinkResponse: {
@@ -2859,7 +2863,7 @@ export interface components {
             /** @enum {string} */
             captureMode?: "APP_INTERCEPT" | "CHANGELOG";
             /** @enum {string} */
-            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC" | "OUD_COOKIE_CHANGELOG";
             changelogBaseDn?: string;
             /** @enum {string} */
             changelogHealth?: "HEALTHY" | "LAGGING" | "STALLED" | "GAP_DETECTED" | "CURSOR_RESET" | "DISABLED_CONFIG_ERROR";
@@ -3012,6 +3016,7 @@ export interface components {
             entraClientSecret?: string;
             graphEndpoint?: string;
             slug?: string;
+            additionalBaseDns?: string[];
         };
         BaseDnItem: {
             /** Format: uuid */
@@ -3097,6 +3102,8 @@ export interface components {
             updatedAt?: string;
             bindPasswordSet?: boolean;
             entraClientSecretSet?: boolean;
+            additionalBaseDns?: string[];
+            warnings?: string[];
         };
         AttributeModification: {
             /** @enum {string} */
@@ -3117,6 +3124,7 @@ export interface components {
             /** Format: int32 */
             childCount?: number;
             childCountApproximate?: boolean;
+            otherRoots?: string[];
         };
         ChildEntry: {
             dn?: string;
@@ -3137,7 +3145,7 @@ export interface components {
             changelogBaseDn: string;
             branchFilterDn?: string;
             /** @enum {string} */
-            changelogFormat: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogFormat: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC" | "OUD_COOKIE_CHANGELOG";
             enabled?: boolean;
         };
         AuditSourceResponse: {
@@ -3154,7 +3162,7 @@ export interface components {
             changelogBaseDn?: string;
             branchFilterDn?: string;
             /** @enum {string} */
-            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC" | "OUD_COOKIE_CHANGELOG";
             enabled?: boolean;
             /** Format: date-time */
             createdAt?: string;
@@ -3542,9 +3550,13 @@ export interface components {
             registrationSectionName?: string;
             /** Format: int32 */
             registrationColumnSpan?: number;
+            /** Format: int32 */
+            registrationDisplayOrder?: number;
             selfServiceSectionName?: string;
             /** Format: int32 */
             selfServiceColumnSpan?: number;
+            /** Format: int32 */
+            selfServiceDisplayOrder?: number;
         };
         GroupAssignmentEntry: {
             groupDn: string;
@@ -3556,7 +3568,7 @@ export interface components {
             targetUserDn: string;
             targetGroupDn?: string;
             objectClassNames: string[];
-            rdnAttribute: string;
+            rdnAttribute?: string | null;
             showDnField?: boolean;
             dnTemplate?: string;
             /** Format: int32 */
@@ -3597,7 +3609,7 @@ export interface components {
             targetUserDn?: string;
             targetGroupDn?: string;
             objectClassNames?: string[];
-            rdnAttribute?: string;
+            rdnAttribute?: string | null;
             showDnField?: boolean;
             dnTemplate?: string;
             /** Format: int32 */
@@ -3860,7 +3872,7 @@ export interface components {
             targetUserDn: string;
             targetGroupDn?: string;
             objectClassNames: string[];
-            rdnAttribute: string;
+            rdnAttribute?: string | null;
             showDnField?: boolean;
             dnTemplate?: string;
             /** Format: int32 */
@@ -4099,6 +4111,7 @@ export interface components {
             /** Format: int32 */
             totalRows?: number;
             rows?: components["schemas"]["BulkImportPreviewRow"][];
+            unmappedColumns?: string[];
         };
         BulkImportPreviewRow: {
             /** Format: int32 */
@@ -4167,6 +4180,7 @@ export interface components {
             reportParams?: {
                 [key: string]: unknown;
             };
+            columns?: string[];
         };
         ReportData: {
             columns?: string[];
@@ -10175,6 +10189,7 @@ export interface operations {
                 actorId?: string;
                 action?: ("USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ENABLE" | "USER_DISABLE" | "USER_MOVE" | "PASSWORD_RESET" | "GROUP_CREATE" | "GROUP_UPDATE" | "GROUP_DELETE" | "GROUP_MEMBER_ADD" | "GROUP_MEMBER_REMOVE" | "GROUP_BULK_IMPORT" | "ENTRY_CREATE" | "ENTRY_UPDATE" | "ENTRY_DELETE" | "ENTRY_MOVE" | "ENTRY_RENAME" | "LDIF_IMPORT" | "INTEGRITY_CHECK" | "BULK_ATTRIBUTE_UPDATE" | "APPROVAL_SUBMITTED" | "APPROVAL_APPROVED" | "APPROVAL_AUTO_APPROVED" | "APPROVAL_REJECTED" | "APPROVAL_REQUEST_EDITED" | "CAMPAIGN_CREATED" | "CAMPAIGN_ACTIVATED" | "CAMPAIGN_CLOSED" | "CAMPAIGN_CANCELLED" | "CAMPAIGN_EXPIRED" | "REVIEW_CONFIRMED" | "REVIEW_REVOKED" | "REVIEW_AUTO_REVOKED" | "SOD_POLICY_CREATED" | "SOD_POLICY_UPDATED" | "SOD_POLICY_DELETED" | "SOD_SCAN_EXECUTED" | "SOD_VIOLATION_DETECTED" | "SOD_VIOLATION_EXEMPTED" | "SOD_VIOLATION_BLOCKED" | "SOD_VIOLATION_RESOLVED" | "PLAYBOOK_EXECUTED" | "PLAYBOOK_ROLLED_BACK" | "PROFILE_CREATE" | "PROFILE_UPDATE" | "PROFILE_DELETE" | "PROFILE_CLONE" | "ACCOUNT_CREATE" | "ACCOUNT_UPDATE" | "ACCOUNT_DELETE" | "ACCOUNT_PERMISSION_CHANGED" | "HR_SYNC_STARTED" | "HR_SYNC_COMPLETED" | "HR_SYNC_FAILED" | "HR_EMPLOYEE_MATCHED" | "HR_ORPHAN_DETECTED" | "AUDITOR_LINK_CREATED" | "AUDITOR_LINK_REVOKED" | "AUDITOR_LINK_ACCESSED" | "LDAP_CHANGE" | "API_TOKEN_CREATED" | "API_TOKEN_UPDATED" | "API_TOKEN_REVOKED" | "API_TOKEN_ROTATED")[];
                 targetDn?: string;
+                targetDnContains?: string;
                 source?: string;
                 correlationId?: string;
                 from?: string;

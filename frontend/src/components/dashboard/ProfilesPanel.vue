@@ -6,7 +6,7 @@
  * Admins think in terms of profiles (their actual grants) rather than raw
  * directories, so this panel renders one row per AdminProfileRole the
  * caller holds: profile name, owning directory, base role, target OU,
- * and the pending approval count for that profile. Clicking a row deep-
+ * and (when approvals are in use) the pending approval count for that profile. Clicking a row deep-
  * links to the profile's directory Users page — the most common entry
  * point once an admin knows which scope they want to work in.
  *
@@ -38,10 +38,17 @@ withDefaults(defineProps<{
    * placeholder zero. Defaults to true so other callers are unaffected.
    */
   countsLoaded?: boolean
+  /**
+   * Whether to render the Pending (approvals) column. The dashboard turns it
+   * off when no approval source can produce requests in the caller's scope
+   * (see DashboardView's showApprovalsUI). Defaults to true.
+   */
+  showPending?: boolean
 }>(), {
   profiles: () => [],
   rowClickable: false,
   countsLoaded: true,
+  showPending: true,
 })
 defineEmits<{
   rowClick: [ProfileRole]
@@ -87,7 +94,7 @@ function directoryUnavailable(p: ProfileRole): boolean {
           <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Scope</th>
           <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Users</th>
           <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Groups</th>
-          <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Pending</th>
+          <th v-if="showPending" class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Pending</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-50">
@@ -140,13 +147,13 @@ function directoryUnavailable(p: ProfileRole): boolean {
               <span class="sr-only">Loading</span>
             </span>
           </td>
-          <td class="px-4 py-2.5 text-right">
+          <td v-if="showPending" class="px-4 py-2.5 text-right">
             <span v-if="p.pendingApprovals > 0" class="text-amber-600 font-medium">{{ p.pendingApprovals }}</span>
             <span v-else class="text-gray-500">0</span>
           </td>
         </tr>
         <tr v-if="!profiles.length">
-          <td colspan="5">
+          <td :colspan="showPending ? 5 : 4">
             <EmptyState icon="folder" title="No profile roles assigned." />
           </td>
         </tr>

@@ -10,9 +10,11 @@ package com.ldapportal.ldap.sync;
  *   <li><b>DSEE numeric family</b> (and any monotonic-changeNumber feed): the
  *       token is the decimal changeNumber as text — {@link #toChangeNumber} /
  *       {@link #fromChangeNumber} convert it.</li>
- *   <li><b>Cookie-based feeds</b> (AD DirSync, syncrepl, Entra delta): their poll
- *       loop reads the token verbatim as its cookie / delta link — no numeric
- *       interpretation. (Those poll loops land with their adapters.)</li>
+ *   <li><b>Cookie-based feeds</b>: the poll loop reads the token verbatim as
+ *       its cookie / delta link — no numeric interpretation. Shipped: the OUD
+ *       external changelog cookie ({@code OUD_COOKIE_CHANGELOG}, in
+ *       {@code SyncChangelogPoller}). Planned: AD DirSync, syncrepl, Entra delta
+ *       (their poll loops land with their adapters).</li>
  * </ul>
  */
 public final class SyncChangelogCursor {

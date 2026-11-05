@@ -142,7 +142,24 @@ For operational reports, go to **Reports** in the sidebar:
   lists every entry under the branch that has any of those attributes absent or
   blank, with a "Missing Attributes" column naming the gaps. Optionally narrow
   to users or groups. Can also be scheduled.
-- All available in CSV and PDF format
+- All available in CSV and PDF format.
+- Reports that list users (Users in Group / Branch, Users with No Group,
+  Recently Added / Modified, Disabled Accounts) offer the same columns as the
+  **Users** page, in the same order: `dn`, then `cn`, `sn`, `givenName`,
+  `displayName`, `mail`, `uid` and `title` when present (shown), then a
+  `groups` column (each user's groups, `|`-separated, limited to groups under
+  your authorized OUs), then every other attribute A–Z, off until you turn it
+  on from the **Columns** menu. Other reports show their first ten columns.
+- Columns are always headed by the real LDAP attribute name (`givenName`, not
+  "First Name"). Password attributes are never included.
+- Tick **Operational attributes** above the table (here or on the Users page)
+  to also fetch operational attributes such as `createTimestamp` and
+  `entryUUID`; they appear in the **Columns** menu. Active Directory doesn't
+  return operational attributes this way.
+- **Export CSV** carries the columns the table shows, in the order shown, on
+  both the Users page and the reports — hide or reorder a column and the file
+  follows. (`dn` always comes first, and on the Users page `groups` always
+  comes last.)
 
 ---
 
@@ -282,6 +299,8 @@ Base DN:  dc=corp,dc=local
 |---------|----------|
 | "Test Connection" fails | Check host/port reachability from the Docker container. Try: `docker exec ldap-admin-app wget -qO- ldap://your-host:389` |
 | Zero users/groups found | Verify the Base DN matches your directory structure. Use the **Directory Browser** (superadmin sidebar) to explore the tree. |
+| Directory has several top-level roots (suffixes) | Keep one connection: put the main root in Base DN and the others under **Additional base DNs**. See [multi-root-directories.md](multi-root-directories.md). |
+| A just-created user or group "doesn't exist", or is missing from the next page you open | The directory is replicated and a load balancer spreads LDAP Portal's connections across the replicas, so a read can reach one the change hasn't replicated to yet. Creates now retry the read-back briefly and still succeed, but later reads can still lag. Point **Host** at one server and **Secondary Host** at another (failover rather than round-robin), give the load balancer source-IP affinity or active/passive routing, or enable the directory's assured replication. |
 | SSL certificate errors | Enable "Trust all certificates" for testing, or paste your CA certificate PEM in the directory settings. |
 | Login fails after setup | Check that the bootstrap password hasn't been changed. If locked out, reset via the database. |
 | Audit log is empty | Audit events are recorded for admin actions. Log in and perform an operation (e.g., search users) to generate entries. |
@@ -299,3 +318,31 @@ Base DN:  dc=corp,dc=local
   playbook definitions and execution history are kept for when it is re-enabled.
 - **Scheduled Reports** — Set up recurring reports with email or S3 delivery in the Reports section.
 - **Bulk Operations** — Import/export users via CSV in the Bulk Import/Export section.
+  **Group import** creates groups and adds or removes their members from one CSV:
+  `cn`, optional attributes, optional `members` (separated by `|`; each a uid or a full
+  DN) and `member-operation`, which is required whenever `members` is filled in (`add`, or
+  `delete` to remove the listed members from an existing group). Each row names its own
+  group; a group that doesn't exist is created (a new `groupOfNames` or
+  `groupOfUniqueNames` needs at least one member), while a `delete` for a missing group is
+  an error. A `dn` column, as written by group export, is
+  ignored, so an exported file can be edited and re-imported. There is no conflict-handling
+  setting: on an existing group, a `description`, `owner` or other attribute the row provides
+  replaces the current value, and a blank or missing one leaves it unchanged. Preview shows whether each
+  row creates or updates its group and what every member change will do (will add,
+  already a member, not found, out of scope…) before anything is written. Member changes
+  on existing groups follow the same approval, separation-of-duties and audit rules as
+  editing a group by hand, so an add to a group that requires approval is queued; a new
+  group gets its members in the create itself, each checked against separation-of-duties
+  policies first (a blocked member is left out). At most 2,000 member changes per file.
+  Needs **bulk.import**; a file that lists any members also needs **group.manage_members**
+  (checked for the requester before a file is queued for approval, and for the approver
+  when it runs).
+  **Per-row permissions** (user and group imports): beyond **bulk.import**, each row needs
+  the permission its single-entry equivalent needs, and a row that lacks one fails on its
+  own while the rest of the file runs. Creating a user needs **user.create**; overwriting an
+  existing one needs **user.edit**, plus **user.reset_password** to change its password and
+  **user.enable_disable** to change its account-control attribute (a new user's initial
+  password is part of creating it). Creating a group needs **group.create_delete**; changing
+  an existing group's attributes needs **group.edit**. Preview shows these as row issues. An
+  import that runs after approval needs each permission from both the requester and the
+  approver.

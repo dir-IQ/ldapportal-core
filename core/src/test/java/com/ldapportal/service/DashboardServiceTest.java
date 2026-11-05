@@ -29,7 +29,7 @@ class DashboardServiceTest {
     @Mock private DirectoryConnectionRepository dirRepo;
     @Mock private PendingApprovalRepository approvalRepo;
     @Mock private AuditQueryService auditQueryService;
-    @Mock private ProfileApprovalConfigRepository approvalConfigRepo;
+    @Mock private ApprovalUsageService approvalUsageService;
     @Mock private GovernanceDashboardProvider governance;
     @Mock private ReportJobHealthProvider reportJobHealthProvider;
     @Mock private ScopeCountService scopeCountService;
@@ -43,7 +43,7 @@ class DashboardServiceTest {
     void setUp() {
         service = new DashboardService(
                 dirRepo, approvalRepo, auditQueryService,
-                approvalConfigRepo, governance, reportJobHealthProvider, scopeCountService);
+                approvalUsageService, governance, reportJobHealthProvider, scopeCountService);
         service.invalidateCache();
 
         directory = new DirectoryConnection();

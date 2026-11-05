@@ -73,7 +73,8 @@ public class SyncLink {
     /**
      * Opaque cursor token — the canonical position in the source feed. For the
      * DSEE numeric family it is the decimal changeNumber as text; cookie-based
-     * feeds (DirSync / syncrepl / Entra delta) persist their cookie here verbatim.
+     * feeds (the OUD external changelog cookie today; DirSync / syncrepl / Entra
+     * delta planned) persist their cookie here verbatim.
      */
     @Column(name = "changelog_cursor_token")
     private String changelogCursorToken;

@@ -176,6 +176,8 @@ public class SecurityConfig {
             config.setAllowCredentials(true); // required for cookie-based auth
             config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
             config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
+            // The audit export reports how many events matched, and whether it was cut short, in headers.
+            config.setExposedHeaders(List.of("X-Audit-Export-Matched", "X-Audit-Export-Truncated"));
             config.setMaxAge(3600L);
             source.registerCorsConfiguration("/api/v1/**", config);
         }

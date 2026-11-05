@@ -94,8 +94,10 @@ publish-backend:
   script:
     - IMAGE="$ECR_REGISTRY/ldapportal-community-plus-isva"
     # Build context is the repo root so the Dockerfile COPY can reach
-    # distribution/community-plus-isva/target/.
-    - docker build -f docker/community-plus-isva/Dockerfile -t "$IMAGE:$CI_COMMIT_TAG" -t "$IMAGE:latest" .
+    # distribution/community-plus-isva/target/. IMAGE_VERSION bakes the release
+    # tag into the image for the sidebar build stamp (the image can't see its
+    # own tag at runtime); the commit SHA comes from the JAR's build info.
+    - docker build -f docker/community-plus-isva/Dockerfile --build-arg "IMAGE_VERSION=$CI_COMMIT_TAG" -t "$IMAGE:$CI_COMMIT_TAG" -t "$IMAGE:latest" .
     - docker push "$IMAGE:$CI_COMMIT_TAG"
     - docker push "$IMAGE:latest"
   rules:
@@ -109,7 +111,9 @@ publish-frontend:
     - IMAGE="$ECR_REGISTRY/ldapportal-frontend"
     # Add --build-arg VITE_BASE_PATH=/idm/ when the app is exposed under a URL
     # prefix (e.g. a WebSEAL path junction). See docs/deployment-webseal-dual-frontend.md §3.5.
-    - docker build -f frontend/Dockerfile -t "$IMAGE:$CI_COMMIT_TAG" -t "$IMAGE:latest" frontend
+    # IMAGE_VERSION + BUILD_SHA bake the release tag and commit into the bundle
+    # for the sidebar build stamp (the frontend/ context has no .git).
+    - docker build -f frontend/Dockerfile --build-arg "IMAGE_VERSION=$CI_COMMIT_TAG" --build-arg "BUILD_SHA=$CI_COMMIT_SHORT_SHA" -t "$IMAGE:$CI_COMMIT_TAG" -t "$IMAGE:latest" frontend
     - docker push "$IMAGE:$CI_COMMIT_TAG"
     - docker push "$IMAGE:latest"
   rules:

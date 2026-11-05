@@ -3,6 +3,7 @@ package com.ldapportal.ldap.sync;
 
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
+import com.ldapportal.entity.enums.SyncNotInSetReason;
 import com.ldapportal.ldap.sync.identity.IdentityStrategy;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Entry;
@@ -52,7 +53,7 @@ public class MembershipFunction {
         if (filter != null && !filter.isBlank()) {
             try {
                 if (!Filter.create(filter).matchesEntry(entry)) {
-                    return MembershipDecision.out(identity);
+                    return MembershipDecision.out(identity, SyncNotInSetReason.FILTER);
                 }
             } catch (LDAPException ex) {
                 // A filter that cannot be evaluated is a fault, not an OUT: an OUT
@@ -67,16 +68,29 @@ public class MembershipFunction {
 
         String targetDn = SyncPlacement.targetDn(set, entry.getDN());
         if (targetDn == null) {
-            return MembershipDecision.out(identity);
+            return MembershipDecision.out(identity, SyncNotInSetReason.PLACEMENT);
         }
 
-        List<Attribute> desired = project(set, strategy, entry, identity, resolver);
-        byte[] hash = SyncContentHash.of(targetDn, desired);
-        return MembershipDecision.in(identity, targetDn, desired, hash);
+        Projection projected = project(set, strategy, entry, identity, resolver);
+        java.util.Map<String, List<String>> untranslated = new LinkedHashMap<>(projected.held());
+        untranslated.putAll(projected.unresolved());
+        byte[] hash = SyncContentHash.of(targetDn, projected.attrs(), untranslated);
+        return MembershipDecision.in(identity, targetDn, projected.attrs(), hash, projected.held(),
+                projected.unresolved());
     }
 
-    private List<Attribute> project(SyncSet set, IdentityStrategy strategy, Entry entry,
-                                    String identity, ReferenceResolver resolver) {
+    /**
+     * The projected attributes, plus the reference values that couldn't be
+     * translated yet (target name → untranslated source DNs): {@code held} for
+     * attributes none of whose values translated, {@code unresolved} for those
+     * that kept some.
+     */
+    private record Projection(List<Attribute> attrs, Map<String, List<String>> held,
+                              Map<String, List<String>> unresolved) {
+    }
+
+    private Projection project(SyncSet set, IdentityStrategy strategy, Entry entry,
+                               String identity, ReferenceResolver resolver) {
         Set<String> excluded = SyncExcludedAttributes.effectiveFor(set);
         List<String> refAttrs = SyncReferenceAttributes.forSet(set);
         String idAttr = SyncIdentity.attribute(set, strategy);
@@ -84,6 +98,19 @@ public class MembershipFunction {
         // the same target name.
         Map<String, List<String>> byTarget = new LinkedHashMap<>();
         Map<String, String> targetCase = new LinkedHashMap<>();
+        Map<String, List<String>> unresolved = new LinkedHashMap<>();
+
+        // Resolve every reference value in one go rather than one lookup each.
+        List<String> refValues = new ArrayList<>();
+        for (Attribute a : entry.getAttributes()) {
+            if (SyncReferenceAttributes.containsIgnoreCase(refAttrs, a.getName())
+                    && !excluded.contains(a.getName().toLowerCase(Locale.ROOT))) {
+                refValues.addAll(java.util.Arrays.asList(a.getValues()));
+            }
+        }
+        if (refValues.size() > 1) {
+            resolver = resolver.prefetched(refValues);
+        }
 
         for (Attribute a : entry.getAttributes()) {
             String name = a.getName();
@@ -101,9 +128,20 @@ public class MembershipFunction {
             if (SyncReferenceAttributes.containsIgnoreCase(refAttrs, name)) {
                 // DN-reference remapping: rewrite each value through the index;
                 // drop unsynced referents (a closure trigger re-emits later).
+                // Note every value that doesn't translate, so the target's own
+                // copy of it can be kept rather than deleted until it lands.
                 values = new ArrayList<>();
                 for (String v : a.getValues()) {
-                    resolver.resolveTargetDn(v).ifPresent(values::add);
+                    java.util.Optional<String> translated = resolver.resolveTargetDn(v);
+                    if (translated.isPresent()) {
+                        values.add(translated.get());
+                    } else {
+                        // One entry per target attribute whatever the case it's
+                        // written in (two mappings may target "Member" and "member").
+                        String key = targetCase.computeIfAbsent(m.targetAttr().toLowerCase(Locale.ROOT),
+                                k -> m.targetAttr());
+                        unresolved.computeIfAbsent(key, k -> new ArrayList<>()).add(v);
+                    }
                 }
                 if (values.isEmpty()) {
                     continue;
@@ -125,7 +163,15 @@ public class MembershipFunction {
         List<Attribute> out = new ArrayList<>(byTarget.size());
         byTarget.forEach((key, values) ->
                 out.add(new Attribute(targetCase.get(key), values.toArray(new String[0]))));
-        return out;
+        // Held (the whole target attribute kept) only when the attribute ends up
+        // with no values at all; otherwise the untranslated values are kept one
+        // by one, where the target already has them. Another source attribute
+        // mapped onto the same target may have supplied some values.
+        Map<String, List<String>> held = new LinkedHashMap<>();
+        Map<String, List<String>> partial = new LinkedHashMap<>();
+        unresolved.forEach((name, dns) -> (byTarget.containsKey(name.toLowerCase(Locale.ROOT)) ? partial : held)
+                .put(name, List.copyOf(dns)));
+        return new Projection(out, held.isEmpty() ? Map.of() : held, partial.isEmpty() ? Map.of() : partial);
     }
 
     private static void addValues(Map<String, List<String>> byTarget,

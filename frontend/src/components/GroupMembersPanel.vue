@@ -38,28 +38,24 @@
         aria-label="Group members"
         data-testid="member-list"
       >
+        <!-- Each value exactly as the group stores it (a DN, or a uid for posixGroup). -->
         <li
-          v-for="row in filteredRows"
-          :key="row.value"
+          v-for="value in filteredMembers"
+          :key="value"
           class="flex items-center gap-2 bg-gray-50 rounded px-3 py-1.5 font-mono text-[13px] text-gray-700 break-all"
         >
-          <template v-if="row.parent">
-            <span class="font-medium text-gray-900">{{ row.rdn }}</span>
-            <span class="text-gray-500">—</span>
-            <span class="flex-1">{{ row.parent }}</span>
-          </template>
-          <span v-else class="flex-1 font-medium text-gray-900">{{ row.rdn }}</span>
+          <span class="flex-1 text-gray-900" data-testid="member-value">{{ value }}</span>
           <button
             v-if="isDnValued"
             type="button"
             class="font-sans text-xs text-blue-600 hover:underline shrink-0"
-            :title="`Open ${row.value}`"
-            @click="emit('open', row.value)"
+            :title="`Open ${value}`"
+            @click="emit('open', value)"
           >
             Open
           </button>
         </li>
-        <li v-if="!filteredRows.length" class="py-2 text-center text-sm text-gray-500">
+        <li v-if="!filteredMembers.length" class="py-2 text-center text-sm text-gray-500">
           No members match “{{ filter }}”.
         </li>
       </ul>
@@ -100,15 +96,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'open', dn: string): void
 }>()
-
-interface MemberRow {
-  /** The raw attribute value (a DN, or a uid for posixGroup). */
-  value: string
-  /** Leading RDN of a DN value, or the whole value when not a DN. */
-  rdn: string
-  /** Everything after the first RDN; empty when the value is not a DN. */
-  parent: string
-}
 
 /** Object classes (lower-cased) whose entries carry a membership attribute. */
 const GROUP_CLASSES = new Set([
@@ -198,33 +185,14 @@ const members = computed(() => resolved.value.members)
 const memberAttr = computed(() => resolved.value.memberAttr)
 const isDnValued = computed(() => memberAttr.value !== 'memberUid')
 
-const rows = computed<MemberRow[]>(() =>
-  members.value.map(value => (isDnValued.value ? splitDn(value) : { value, rdn: value, parent: '' })),
-)
-
-const filteredRows = computed(() => {
+const filteredMembers = computed<string[]>(() => {
   const q = filter.value.trim().toLowerCase()
-  if (!q) return rows.value
-  return rows.value.filter(r => r.value.toLowerCase().includes(q))
+  if (!q) return members.value
+  return members.value.filter(v => v.toLowerCase().includes(q))
 })
 
 // A new entry means a new member list; a stale filter would hide it.
 watch(() => props.attributes, () => { filter.value = '' })
-
-/**
- * Split a DN at its first unescaped comma. LDAP allows `\,` inside an RDN
- * value ("cn=Doe\, Jane,ou=People,…"), so a plain indexOf(',') would cut
- * the RDN short for those entries.
- */
-function splitDn(dn: string): MemberRow {
-  for (let i = 0; i < dn.length; i++) {
-    if (dn[i] === '\\') { i++; continue }
-    if (dn[i] === ',') {
-      return { value: dn, rdn: dn.slice(0, i), parent: dn.slice(i + 1).trim() }
-    }
-  }
-  return { value: dn, rdn: dn, parent: '' }
-}
 
 async function copyAll(): Promise<void> {
   try {

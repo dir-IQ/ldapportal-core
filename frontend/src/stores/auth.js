@@ -2,6 +2,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { login as apiLogin, logout as apiLogout, me, websealAuthorize } from '@/api/auth'
+import { isSignedOut, markSignedOut, clearSignedOut } from '@/utils/signedOut'
 import { selfServiceLogin as apiSelfServiceLogin } from '@/api/selfservice'
 import { getSetupStatus } from '@/api/setup'
 import { useTheme } from '@/composables/useTheme'
@@ -87,6 +88,8 @@ export const useAuthStore = defineStore('auth', () => {
       features:           data.features || [],
       hrIntegrationEnabled: data.hrIntegrationEnabled !== false,
       complianceEnabled: data.complianceEnabled !== false,
+      // True on the community jar (no ee/ classes). Backs isCommunityDistribution.
+      communityDistribution: data.communityDistribution === true,
       alertingEnabled: data.alertingEnabled !== false,
       isvaIntegrationEnabled: data.isvaIntegrationEnabled === true,
       directorySyncEnabled: data.directorySyncEnabled === true,
@@ -165,13 +168,20 @@ export const useAuthStore = defineStore('auth', () => {
    * method. Returns true when the server accepted the trusted iv-user header
    * and set the JWT cookie. Gated on the public branding payload so
    * deployments without WebSEAL never pay for the extra request.
+   *
+   * Skipped after an explicit logout in this browser session (see
+   * utils/signedOut): with certificate sign-in WebSEAL re-authenticates
+   * silently after /pkmslogout, and the probe would sign the user straight
+   * back in. The login page offers "Sign in again" instead.
    */
   async function tryWebsealPreAuth() {
+    if (isSignedOut()) return false
     const settings = useSettingsStore()
     try { await settings.init() } catch { /* store already swallows */ }
     if (!settings.enabledAuthTypes.includes('WEBSEAL')) return false
     try {
       await websealAuthorize()
+      clearSignedOut()
       return true
     } catch {
       return false  // 401 or network error — no WebSEAL session, carry on.
@@ -230,6 +240,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function login(username, password) {
     const { data } = await apiLogin(username, password)
+    clearSignedOut()
     principal.value = {
       id:          data.id,
       username:    data.username,
@@ -254,6 +265,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function selfServiceLogin(directoryId, username, password) {
     const { data } = await apiSelfServiceLogin(directoryId, username, password)
+    clearSignedOut()
     principal.value = {
       id:          data.id,
       username:    data.username,
@@ -270,6 +282,10 @@ export const useAuthStore = defineStore('auth', () => {
    * the router can hand the browser off before landing on /login — otherwise
    * the IdP session stays open and the user gets silently re-authenticated
    * next visit. Always clears local principal even if the API call fails.
+   *
+   * Marks the browser session as signed out once the server has taken the
+   * logout, so the boot-time WebSEAL probe doesn't sign the user straight
+   * back in (see tryWebsealPreAuth).
    */
   async function logout() {
     let logoutUrl
@@ -280,6 +296,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const { data } = await apiLogout()
       logoutUrl = data?.logoutUrl || null
+      markSignedOut()
     } finally {
       principal.value = null
       prefs.clear()

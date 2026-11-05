@@ -32,8 +32,15 @@ const props = withDefaults(defineProps<{
    * otherwise showed beside the Profiles/Directories panel's "Unavailable" cue.
    */
   unavailableCount?: number
+  /**
+   * Whether approval workflows are in use for the caller. When false the
+   * copy avoids "pending actions" wording, which reads as an approval-queue
+   * status in environments that don't use approvals. Defaults to true.
+   */
+  showApprovals?: boolean
 }>(), {
   unavailableCount: 0,
+  showApprovals: true,
 })
 
 const auth = useAuthStore()
@@ -47,10 +54,12 @@ const degraded = computed(() => props.unavailableCount > 0)
 const subtitle = computed(() => {
   if (degraded.value) {
     const n = props.unavailableCount
-    return `${n} director${n === 1 ? 'y is' : 'ies are'} unavailable. No other pending actions.`
+    const rest = props.showApprovals ? 'No other pending actions.' : 'Nothing else needs your attention.'
+    return `${n} director${n === 1 ? 'y is' : 'ies are'} unavailable. ${rest}`
   }
+  const lead = props.showApprovals ? 'No pending actions.' : 'Nothing needs your attention.'
   return auth.isComplianceEnabled
-    ? 'No pending actions. Your directories are healthy and reviews are on track.'
-    : 'No pending actions. Your directories are healthy.'
+    ? `${lead} Your directories are healthy and reviews are on track.`
+    : `${lead} Your directories are healthy.`
 })
 </script>

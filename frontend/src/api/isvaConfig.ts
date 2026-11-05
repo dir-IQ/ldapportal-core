@@ -45,8 +45,15 @@ export interface IsvaConfigDto {
   // legacy fields server-side when no explicit model is stored).
   secuserAttributes: SecUserAttribute[];
 
-  // Linked-mode-only — null in INLINE responses
+  // The management DIT (required in linked mode, optional inline) and the
+  // containers below it: stored values (null = default) and effective DNs.
   managementDitBaseDn: string | null;
+  userContainerDn: string | null;
+  groupContainerDn: string | null;
+  effectiveUserContainerDn: string | null;
+  effectiveGroupContainerDn: string | null;
+
+  // Linked-mode-only
   secuserRdnAttribute: string | null;
   secuserRdnValueSource: IsvaRdnValueSource | null;
   groupMemberTarget: IsvaGroupMemberTarget | null;
@@ -76,8 +83,11 @@ export interface UpsertIsvaConfigRequest {
   // legacy value fields.
   secuserAttributes: SecUserAttribute[] | null;
 
-  // Required when topologyMode = LINKED
+  // Required when topologyMode = LINKED; optional inline (group import)
   managementDitBaseDn: string | null;
+  // null = cn=Users / cn=Groups below the management DIT
+  userContainerDn: string | null;
+  groupContainerDn: string | null;
   secuserRdnAttribute: string | null;
   secuserRdnValueSource: IsvaRdnValueSource | null;
   groupMemberTarget: IsvaGroupMemberTarget | null;

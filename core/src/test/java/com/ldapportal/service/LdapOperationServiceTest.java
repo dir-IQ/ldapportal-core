@@ -433,6 +433,60 @@ class LdapOperationServiceTest {
                 .containsEntry("mail", List.of("sm@example.com"));
     }
 
+    // ── create read-back (replication lag behind a load balancer) ────────────
+
+    @Test
+    void createUser_readBackMissesThenSucceeds_returnsTheEntry() {
+        service.readBackDelaysMs = new long[] {0, 0, 0};
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String dn = "uid=new,ou=people,dc=example,dc=com";
+        when(userService.getUser(dc, dn))
+                .thenThrow(new ResourceNotFoundException("LDAP user", dn))
+                .thenReturn(new LdapUser(dn, Map.of("uid", List.of("new"), "entryUUID", List.of("u-1"))));
+
+        LdapEntryResponse result = service.createUser(dirId, adminPrincipal(),
+                new CreateEntryRequest(dn, Map.of("uid", List.of("new"))));
+
+        assertThat(result.attributes()).containsEntry("entryUUID", List.of("u-1"));
+        verify(userService, org.mockito.Mockito.times(2)).getUser(dc, dn);
+    }
+
+    @Test
+    void createUser_entryNeverVisible_respondsWithSubmittedAttributesMinusPasswords_andStillAudits() {
+        service.readBackDelaysMs = new long[] {0, 0};
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String dn = "uid=new,ou=people,dc=example,dc=com";
+        when(userService.getUser(dc, dn)).thenThrow(new ResourceNotFoundException("LDAP user", dn));
+
+        LdapEntryResponse result = service.createUser(dirId, adminPrincipal(),
+                new CreateEntryRequest(dn, Map.of("uid", List.of("new"), "userPassword", List.of("s3cret"))));
+
+        assertThat(result.dn()).isEqualTo(dn);
+        assertThat(result.attributes()).containsEntry("uid", List.of("new")).doesNotContainKey("userPassword");
+        verify(userService, org.mockito.Mockito.times(3)).getUser(dc, dn);
+        verify(auditService).record(any(), eq(dirId),
+                eq(com.ldapportal.entity.enums.AuditAction.USER_CREATE), eq(dn), any());
+    }
+
+    @Test
+    void createGroup_entryNeverVisible_respondsWithSubmittedAttributes_andStillAudits() {
+        service.readBackDelaysMs = new long[] {0};
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String dn = "cn=new,ou=groups,dc=example,dc=com";
+        when(groupService.getGroup(dc, dn)).thenThrow(new ResourceNotFoundException("LDAP group", dn));
+
+        LdapEntryResponse result = service.createGroup(dirId, adminPrincipal(),
+                new CreateEntryRequest(dn, Map.of("cn", List.of("new"),
+                        "objectClass", List.of("groupOfNames"))));
+
+        assertThat(result.attributes()).containsEntry("cn", List.of("new"));
+        verify(auditService).record(any(), eq(dirId),
+                eq(com.ldapportal.entity.enums.AuditAction.GROUP_CREATE), eq(dn), any());
+    }
+
     @Test
     void updateUser_malformedMailAttribute_throwsAndSkipsWrite() {
         String dn = "uid=jsmith,ou=people,dc=example,dc=com";
@@ -688,6 +742,21 @@ class LdapOperationServiceTest {
     }
 
     @Test
+    void applyMembershipChanges_withUid_writesUidToMemberUidGroupsOnly() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        MembershipChangeResult result = service.applyMembershipChanges(
+                dirId, adminPrincipal(), MEMBER_DN, "jdoe", List.of(
+                        add(GROUP_A),
+                        new MembershipChangeRequest.Change(GROUP_B, "memberUid", MembershipChangeRequest.Op.ADD)));
+
+        assertThat(result.applied()).isEqualTo(2);
+        verify(groupService).addMember(eq(dc), eq(GROUP_A), eq("member"), eq(MEMBER_DN), isNull());
+        verify(groupService).addMember(eq(dc), eq(GROUP_B), eq("memberUid"), eq("jdoe"), isNull());
+    }
+
+    @Test
     void applyMembershipChanges_queuesAddWhenApprovalRequired() {
         DirectoryConnection dc = enabledDir(true);
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
@@ -899,7 +968,7 @@ class LdapOperationServiceTest {
                 List.of(BulkImportRowResult.created(1, createdDn),
                         BulkImportRowResult.error(2, null, "Missing value for key attribute 'uid'")));
         when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), anyChar())).thenReturn(importResult);
+                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean(), any(), any())).thenReturn(importResult);
 
         BulkImportRequest req = new BulkImportRequest(
                 null, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of(), null);
@@ -983,7 +1052,7 @@ class LdapOperationServiceTest {
         when(ps.getEntityInDirectory(dirId, profileId)).thenReturn(profile);
 
         when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), anyChar()))
+                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean(), any(), any()))
                 .thenReturn(new BulkImportResult(1, 1, 0, 0, 0,
                         List.of(BulkImportRowResult.created(1, "uid=a,ou=eng,dc=example,dc=com"))));
 
@@ -1000,10 +1069,45 @@ class LdapOperationServiceTest {
         verify(permissionService).requireDnWithinScope(admin, dirId, "ou=eng,dc=example,dc=com");
         verify(bulkUserService).importCsv(eq(dc), any(), eq("ou=eng,dc=example,dc=com"),
                 eq("uid"), any(), any(), eq(List.of("inetOrgPerson")),
-                anyBoolean(), any(), captor.capture(), any(), any(), eq(','));
+                anyBoolean(), any(), captor.capture(), any(), any(), eq(','), anyBoolean(), any(), any());
         // The chosen profile is used directly — never resolved from the DN.
         verify(ps, never()).resolveProfileForDn(any(), any());
         assertThat(captor.getValue().profileId()).isEqualTo(profileId);
+    }
+
+    @Test
+    void bulkImportUsers_withTemplate_dropsUnmappedColumns() throws Exception {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        UUID templateId = UUID.randomUUID();
+        when(csvTemplateService.loadTemplate(eq(templateId), eq(dirId), any()))
+                .thenReturn(new com.ldapportal.entity.CsvMappingTemplate());
+        when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean(), any(), any()))
+                .thenReturn(new BulkImportResult(0, 0, 0, 0, 0, List.of()));
+
+        BulkImportRequest req = new BulkImportRequest(
+                templateId, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of(), null);
+        service.bulkImportUsers(dirId, adminPrincipal(), new java.io.ByteArrayInputStream(new byte[0]), req);
+
+        verify(bulkUserService).importCsv(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), anyChar(), eq(false), any(), any());
+    }
+
+    @Test
+    void bulkImportUsers_withoutTemplate_passesUnmappedColumnsThrough() throws Exception {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean(), any(), any()))
+                .thenReturn(new BulkImportResult(0, 0, 0, 0, 0, List.of()));
+
+        BulkImportRequest req = new BulkImportRequest(
+                null, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of(), null);
+        service.bulkImportUsers(dirId, adminPrincipal(), new java.io.ByteArrayInputStream(new byte[0]), req);
+
+        verify(bulkUserService).importCsv(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), anyChar(), eq(true), any(), any());
     }
 
     @Test
@@ -1015,7 +1119,7 @@ class LdapOperationServiceTest {
         template.setFieldDelimiter(";");
         when(csvTemplateService.loadTemplate(eq(templateId), eq(dirId), any())).thenReturn(template);
         when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), anyChar()))
+                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean(), any(), any()))
                 .thenReturn(new BulkImportResult(0, 0, 0, 0, 0, List.of()));
 
         BulkImportRequest req = new BulkImportRequest(
@@ -1024,7 +1128,7 @@ class LdapOperationServiceTest {
                 new java.io.ByteArrayInputStream(new byte[0]), req);
 
         verify(bulkUserService).importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), eq(';'));
+                anyBoolean(), any(), any(), any(), any(), eq(';'), anyBoolean(), any(), any());
     }
 
     @Test
@@ -1036,7 +1140,7 @@ class LdapOperationServiceTest {
         template.setFieldDelimiter(";");
         when(csvTemplateService.loadTemplate(eq(templateId), eq(dirId), any())).thenReturn(template);
         when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), anyChar()))
+                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean(), any(), any()))
                 .thenReturn(new BulkImportResult(0, 0, 0, 0, 0, List.of()));
 
         BulkImportRequest req = new BulkImportRequest(
@@ -1045,7 +1149,7 @@ class LdapOperationServiceTest {
                 new java.io.ByteArrayInputStream(new byte[0]), req);
 
         verify(bulkUserService).importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), eq('\t'));
+                anyBoolean(), any(), any(), any(), any(), eq('\t'), anyBoolean(), any(), any());
     }
 
     @Test
@@ -1197,5 +1301,80 @@ class LdapOperationServiceTest {
                 16, true, true, true, true, "!@#$%^&*", false,
                 "OPERATOR_ENTERED", false, false,
                 List.of(), List.of(), List.of(), List.of(), null, null);
+    }
+
+    // ── Bulk import row permissions ──────────────────────────────────────────
+
+    @Test
+    void importPermissions_holdEveryFeatureTheAdminHas() {
+        DirectoryConnection dc = new DirectoryConnection();
+        BulkImportPermissions perms = service.importPermissions(dirId, dc, adminPrincipal());
+
+        assertThat(perms.createUsers()).isTrue();
+        assertThat(perms.editUsers()).isTrue();
+        assertThat(perms.createGroups()).isTrue();
+        assertThat(perms.editGroups()).isTrue();
+        assertThat(perms.protectedUserAttributes()).isEmpty();
+    }
+
+    @Test
+    void importPermissions_needEveryPrincipalToHoldAFeature() {
+        AuthPrincipal approver = adminPrincipal();
+        AuthPrincipal requester = new AuthPrincipal(PrincipalType.ADMIN, UUID.randomUUID(), "requester");
+        lenient().doThrow(new AccessDeniedException("no")).when(permissionService)
+                .requireFeature(requester, dirId, FeatureKey.GROUP_CREATE_DELETE);
+        lenient().doThrow(new AccessDeniedException("no")).when(permissionService)
+                .requireFeature(requester, dirId, FeatureKey.USER_RESET_PASSWORD);
+        DirectoryConnection dc = new DirectoryConnection();
+
+        BulkImportPermissions perms = service.importPermissions(dirId, dc, approver, requester);
+
+        assertThat(perms.createGroups()).isFalse();
+        assertThat(perms.editGroups()).isTrue();
+        assertThat(perms.createUsers()).isTrue();
+        assertThat(perms.protectedUserAttributes())
+                .containsEntry("userpassword", BulkImportPermissions.RESET_PASSWORDS)
+                .containsEntry("unicodepwd", BulkImportPermissions.RESET_PASSWORDS)
+                .doesNotContainKey("nsaccountlock");
+        // A null requester (no approval) adds nothing.
+        assertThat(service.importPermissions(dirId, dc, approver, null).createGroups()).isTrue();
+    }
+
+    @Test
+    void importPermissions_protectTheDirectorysConfiguredAccountControlAttribute() {
+        AuthPrincipal admin = adminPrincipal();
+        lenient().doThrow(new AccessDeniedException("no")).when(permissionService)
+                .requireFeature(admin, dirId, FeatureKey.USER_ENABLE_DISABLE);
+        DirectoryConnection dc = new DirectoryConnection();
+        dc.setEnableDisableAttribute("customLock");
+
+        BulkImportPermissions perms = service.importPermissions(dirId, dc, admin);
+
+        assertThat(perms.protectedUserAttributes())
+                .containsEntry("customlock", BulkImportPermissions.ENABLE_DISABLE)
+                .containsEntry("nsaccountlock", BulkImportPermissions.ENABLE_DISABLE)
+                .doesNotContainKey("userpassword");
+    }
+
+    // ── default bulk-import key attribute ─────────────────────────────────────
+
+    @org.junit.jupiter.api.Test
+    void defaultImportKeyAttribute_prefersRdnThenTemplateThenUid() {
+        assertThat(LdapOperationService.defaultImportKeyAttribute(null)).isEqualTo("uid");
+
+        var p = new com.ldapportal.entity.ProvisioningProfile();
+        p.setRdnAttribute("cn");
+        p.setDnTemplate("uid=${uid},ou=People,dc=example,dc=com");
+        assertThat(LdapOperationService.defaultImportKeyAttribute(p)).isEqualTo("cn");
+
+        // Operator-entered with no RDN attribute: the template's leading RDN.
+        p.setRdnAttribute(null);
+        assertThat(LdapOperationService.defaultImportKeyAttribute(p)).isEqualTo("uid");
+        p.setDnTemplate(" employeeNumber=${employeeNumber}+cn=${cn},ou=People,dc=example,dc=com");
+        assertThat(LdapOperationService.defaultImportKeyAttribute(p)).isEqualTo("employeeNumber");
+
+        // Neither: uid.
+        p.setDnTemplate(null);
+        assertThat(LdapOperationService.defaultImportKeyAttribute(p)).isEqualTo("uid");
     }
 }

@@ -5,7 +5,8 @@
  * UI should only show the verbs the admin's effective feature set (from
  * /auth/me) actually grants. These tests pin that: a read-only feature set
  * hides Create / Export / Edit / Delete / Move / Reset / Disable / Run
- * playbook, and a full set shows them.
+ * playbook (offering a view-only View instead of Edit), and a full set
+ * shows them.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -39,7 +40,10 @@ vi.mock('@/api/users', () => ({
   bulkUpdateAttributes: vi.fn(), getPasswordStatus: vi.fn(), applyMemberships: vi.fn(),
 }))
 vi.mock('@/api/groups', () => ({ addGroupMember: vi.fn(), removeGroupMember: vi.fn(), searchGroups: vi.fn() }))
-vi.mock('@/api/csvTemplates', () => ({ exportCsv: vi.fn() }))
+vi.mock('@/api/csvTemplates', () => ({ exportCsv: vi.fn().mockResolvedValue({ data: new Blob() }) }))
+vi.mock('@/api/schema', () => ({
+  listAttributeTypes: vi.fn().mockResolvedValue({ data: [{ name: 'employeeNumber' }, { name: 'createTimestamp' }] }),
+}))
 vi.mock('@/api/profiles', () => ({ listProfiles: vi.fn().mockResolvedValue({ data: [] }), getProfile: vi.fn() }))
 vi.mock('@/api/playbooks', () => ({
   listEnabled: vi.fn().mockResolvedValue({ data: [] }),
@@ -54,6 +58,7 @@ import UserListView from './UserListView.vue'
 import * as usersApi from '@/api/users'
 import { useUnsavedChangesStore } from '@/stores/unsavedChanges'
 import { listProfiles, getProfile } from '@/api/profiles'
+import { exportCsv } from '@/api/csvTemplates'
 
 const stubs = {
   LdapFilterBuilder: true,
@@ -113,6 +118,8 @@ describe('UserListView feature gating', () => {
     expect(t).toContain('Move')
     expect(t).toContain('Reset password')
     expect(t).toContain('Run playbook')
+    // Edit supersedes the view-only button.
+    expect(t).not.toContain('View')
   })
 
   it('hides Move when the directory exposes no other provisioning profile', async () => {
@@ -137,6 +144,43 @@ describe('UserListView feature gating', () => {
     expect(t).not.toContain('Run playbook')
     // Read-only action that isn't feature-gated stays available.
     expect(t).toContain('View history')
+    // ...and user.read gets a view-only details button in place of Edit.
+    expect(t).toContain('View')
+  })
+
+  it('opens the edit dialog view-only (no Save) for a read-only admin', async () => {
+    vi.mocked(usersApi.getUser).mockResolvedValueOnce({
+      data: { dn: 'uid=jdoe,ou=people,dc=x', attributes: { uid: ['jdoe'], mail: ['jdoe@x'] } },
+    } as never)
+    state.features = ['user.read']
+    // Render the title and footer slots so the dialog chrome is assertable.
+    const wrapper = mount(UserListView, { global: { stubs: {
+      ...stubs,
+      AppModal: {
+        props: ['modelValue', 'dirty'],
+        template: '<div v-if="modelValue" data-testid="modal"><slot name="title" /><slot /><slot name="footer" :close="() => {}" /></div>',
+      },
+    } } })
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'View')!.trigger('click')
+    await flushPromises()
+    expect(usersApi.getUser).toHaveBeenCalledWith('d1', 'uid=jdoe,ou=people,dc=x')
+    const form = wrapper.findComponent({ name: 'UserForm' })
+    expect(form.exists()).toBe(true)
+    expect(form.props('readOnly')).toBe(true)
+    expect(form.props('isEdit')).toBe(true)
+    const modal = wrapper.find('[data-testid="modal"]')
+    expect(modal.text()).toContain('User Details')
+    const footer = modal.findAll('button').map(b => b.text())
+    expect(footer).toContain('Close')
+    expect(footer).not.toContain('Save')
+    // Viewing never registers unsaved work.
+    expect(useUnsavedChangesStore().dirtyPage()).toBeNull()
+  })
+
+  it('offers no View button without user.read', async () => {
+    const wrapper = await mountWith([])
+    expect(texts(wrapper)).not.toContain('View')
   })
 
   it('hides Run playbook when the Lifecycle Playbooks setting is off, even with the feature', async () => {
@@ -161,6 +205,62 @@ describe('UserListView feature gating', () => {
       'd1',
       expect.objectContaining({ attributes: '*,memberOf,isMemberOf' }),
     )
+  })
+
+  it('also requests operational attributes when the switch is on', async () => {
+    localStorage.setItem('ldapportal:operational-attributes:users-list', 'true')
+    try {
+      await mountWith(ALL)
+      expect(usersApi.searchUsersPage).toHaveBeenCalledWith(
+        'd1', expect.objectContaining({ attributes: '*,+,memberOf,isMemberOf' }))
+    } finally {
+      localStorage.removeItem('ldapportal:operational-attributes:users-list')
+    }
+  })
+
+  it('heads columns by the schema-cased attribute name and never offers secrets or raw memberOf', async () => {
+    vi.mocked(usersApi.searchUsersPage).mockResolvedValueOnce({ data: {
+      entries: [{ dn: 'uid=a,dc=x', attributes: {
+        cn: ['A'], employeenumber: ['7'], userpassword: ['{SSHA}x'], memberof: ['cn=g,dc=x'],
+      } }],
+      truncated: false, total: 1,
+    } } as never)
+    const wrapper = await mountWith(ALL)
+    const cols = wrapper.findComponent({ name: 'ResultsTable' }).props('columns') as Array<{ key: string, label: string }>
+    expect(cols.find(c => c.key === 'employeenumber')!.label).toBe('employeeNumber')
+    expect(cols.find(c => c.key === 'dn')!.label).toBe('dn')
+    expect(cols.find(c => c.key === '__groups')!.label).toBe('groups')
+    expect(cols.some(c => c.key === 'userpassword' || c.key === 'memberof')).toBe(false)
+  })
+
+  it('exports the visible columns in display order, with groups when shown', async () => {
+    vi.mocked(usersApi.searchUsersPage).mockResolvedValueOnce({ data: {
+      entries: [{ dn: 'uid=a,dc=x', attributes: { cn: ['A'], mail: ['a@x'], employeenumber: ['7'] } }],
+      truncated: false, total: 1,
+    } } as never)
+    const wrapper = await mountWith(ALL)
+    wrapper.findComponent({ name: 'ResultsTable' }).vm
+      .$emit('visible-columns-change', ['dn', 'employeenumber', 'cn', '__groups', 'actions'])
+    await flushPromises()
+
+    await wrapper.findAll('button').find(b => b.text() === 'Export CSV')!.trigger('click')
+    await flushPromises()
+
+    expect(exportCsv).toHaveBeenCalledWith('d1', expect.objectContaining({
+      attributes: 'employeeNumber,cn', includeGroups: true,
+    }))
+  })
+
+  it('exports dn alone (not every attribute) when only dn is visible', async () => {
+    const wrapper = await mountWith(ALL)
+    wrapper.findComponent({ name: 'ResultsTable' }).vm.$emit('visible-columns-change', ['dn', 'actions'])
+    await flushPromises()
+
+    await wrapper.findAll('button').find(b => b.text() === 'Export CSV')!.trigger('click')
+    await flushPromises()
+
+    expect(exportCsv).toHaveBeenCalledWith('d1', expect.objectContaining({ attributes: 'dn' }))
+    expect(vi.mocked(exportCsv).mock.calls[0][1]).not.toHaveProperty('includeGroups', true)
   })
 
   // Regression: the backend lower-cases all LDAP attribute keys, so each
@@ -344,6 +444,28 @@ describe('UserListView edit save sends only changed attributes', () => {
       { operation: 'REPLACE', attribute: 'mail', values: ['new@x.com'] },
     ])
   })
+
+  // regression: clearing the last value of a field produced an empty REPLACE
+  // that was filtered out, so the save silently did nothing.
+  it('sends a value-less DELETE when the last value of a field is removed', async () => {
+    vi.mocked(usersApi.getUser).mockResolvedValue({
+      data: { attributes: { uid: ['jdoe'], mail: ['a@x.com', 'b@x.com'], employeeNumber: ['e1'] } },
+    } as Awaited<ReturnType<typeof usersApi.getUser>>)
+    const wrapper = await openEditModal()
+    wrapper.findComponent({ name: 'UserForm' }).vm.$emit('update', {
+      dn: 'uid=jdoe,ou=people,dc=x',
+      attributes: { uid: 'jdoe', mail: '  \n', employeeNumber: 'e1' },
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('button').find(b => b.text() === 'Save')!.trigger('click')
+    await flushPromises()
+    expect(usersApi.updateUser).toHaveBeenCalledTimes(1)
+    const payload = vi.mocked(usersApi.updateUser).mock.calls[0][2] as
+      { modifications: Array<{ operation: string, attribute: string, values: string[] }> }
+    expect(payload.modifications).toEqual([
+      { operation: 'DELETE', attribute: 'mail', values: [] },
+    ])
+  })
 })
 
 // regression: the edit form resolved a user's profile by objectClass superset
@@ -419,6 +541,47 @@ describe('UserListView edit resolves the profile that owns the entry', () => {
     expect((wrapper.find('#ul-profile').element as HTMLSelectElement).value).toBe('p2')
     expect(vi.mocked(usersApi.searchUsersPage).mock.calls.at(-1)?.[1])
       .toMatchObject({ baseDn: 'ou=contractors,dc=x' })
+  })
+
+  describe('New User', () => {
+    const CONTRACTORS = { ...PROFILE, id: 'p2', name: 'Contractors', targetUserDn: 'ou=contractors,dc=x' }
+
+    async function mountWithTwoProfiles(sidebarPick: string | null) {
+      state.features = ALL
+      vi.mocked(listProfiles).mockResolvedValue({ data: [PROFILE, CONTRACTORS] } as never)
+      vi.mocked(getProfile).mockImplementation(async (_d, id) =>
+        ({ data: id === 'p2' ? CONTRACTORS : PROFILE }) as Awaited<ReturnType<typeof getProfile>>)
+      const { useProfilePickerStore } = await import('@/stores/profilePicker')
+      if (sidebarPick) useProfilePickerStore().setSelectedId(sidebarPick)
+      const wrapper = mount(UserListView, { global: { stubs: editStubs } })
+      await flushPromises()
+      return wrapper
+    }
+
+    it('creates through the selected profile without asking', async () => {
+      const wrapper = await mountWithTwoProfiles('p2')
+      await wrapper.findAll('button').find(b => b.text() === '+ New User')!.trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('Select a provisioning profile')
+      expect(getProfile).toHaveBeenCalledWith('d1', 'p2')
+      expect(wrapper.findComponent({ name: 'UserForm' }).props('userTemplateConfig')).toMatchObject({ id: 'p2' })
+    })
+
+    it('asks under "All", and the profile picked for the new user doesn\'t narrow the list', async () => {
+      const wrapper = await mountWithTwoProfiles(null)
+      expect((wrapper.find('#ul-profile').element as HTMLSelectElement).value).toBe('')
+      await wrapper.findAll('button').find(b => b.text() === '+ New User')!.trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('Select a provisioning profile')
+
+      await wrapper.findAll('button').find(b => b.text().startsWith('Contractors'))!.trigger('click')
+      await flushPromises()
+      expect(wrapper.findComponent({ name: 'UserForm' }).props('userTemplateConfig')).toMatchObject({ id: 'p2' })
+      // The page itself still lists "All": its header names no profile (the
+      // create dialog's own header isn't rendered by the AppModal stub).
+      const { default: ProfilePill } = await import('@/components/ProfilePill.vue')
+      expect(wrapper.findAllComponents(ProfilePill)).toHaveLength(0)
+    })
   })
 
   it('still resolves when the entry returns no objectClass at all', async () => {

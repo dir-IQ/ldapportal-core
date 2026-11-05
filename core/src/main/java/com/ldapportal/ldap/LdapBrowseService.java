@@ -55,7 +55,8 @@ public class LdapBrowseService {
      * children (subject to {@link #MAX_CHILDREN}).
      *
      * @param dc   directory connection
-     * @param dn   the base DN to browse (null falls back to directory base DN)
+     * @param dn   the base DN to browse (null: the directory's primary root,
+     *             with its other roots listed in {@link BrowseResult#otherRoots()})
      * @return browse result containing the entry's attributes and child list
      */
     public BrowseResult browse(DirectoryConnection dc, String dn) {
@@ -81,7 +82,10 @@ public class LdapBrowseService {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("This feature is not supported for Entra ID directories");
         }
-        String baseDn = (dn != null && !dn.isBlank()) ? dn : dc.getBaseDn();
+        boolean directoryRoot = dn == null || dn.isBlank();
+        String baseDn = directoryRoot ? dc.getBaseDn() : dn;
+        // getBaseDns() lists the primary root first.
+        List<String> otherRoots = directoryRoot ? dc.getBaseDns().stream().skip(1).toList() : List.of();
         Filter childFilter = buildChildFilter(filter);
         int effectiveLimit = (limit <= 0) ? MAX_CHILDREN : Math.min(limit, MAX_CHILDREN);
 
@@ -106,7 +110,7 @@ public class LdapBrowseService {
             }
 
             return new BrowseResult(baseDn, attributes, listing.children(),
-                    listing.truncated(), childCount, approximate);
+                    listing.truncated(), childCount, approximate, otherRoots);
         });
     }
 
@@ -608,12 +612,15 @@ public class LdapBrowseService {
      * Searches the DIT with configurable scope, filter, and attribute selection.
      *
      * @param dc                  directory connection
-     * @param baseDn              search base DN
+     * @param baseDn              search base DN (blank: every root of the
+     *                            directory in turn, merged up to sizeLimit)
      * @param scope               search scope (BASE, ONE, SUB)
      * @param filter              LDAP filter string
      * @param attributes          attributes to return (empty = all)
      * @param sizeLimit           maximum entries to return
-     * @param timeLimitSeconds    server-side query timeout; 0 = no limit
+     * @param timeLimitSeconds    server-side query timeout; 0 = no limit. It
+     *                            applies to each root's search, so a search
+     *                            across N roots can take up to N times it.
      * @param includeOperational  if true, request operational attributes
      *                            (createTimestamp, modifyTimestamp, etc.)
      *                            in addition to whatever's in `attributes`
@@ -624,7 +631,28 @@ public class LdapBrowseService {
                                            List<String> attributes, int sizeLimit,
                                            int timeLimitSeconds,
                                            boolean includeOperational) {
-        String searchBase = (baseDn != null && !baseDn.isBlank()) ? baseDn : dc.getBaseDn();
+        if (baseDn != null && !baseDn.isBlank()) {
+            return searchEntriesUnder(dc, baseDn, scope, filter, attributes, sizeLimit,
+                    timeLimitSeconds, includeOperational);
+        }
+        // No base: every root of the directory, in order, up to sizeLimit.
+        List<SearchEntry> merged = new ArrayList<>();
+        for (String root : dc.getBaseDns()) {
+            int remaining = sizeLimit - merged.size();
+            if (remaining <= 0) {
+                break;
+            }
+            merged.addAll(searchEntriesUnder(dc, root, scope, filter, attributes, remaining,
+                    timeLimitSeconds, includeOperational));
+        }
+        return merged;
+    }
+
+    private List<SearchEntry> searchEntriesUnder(DirectoryConnection dc, String searchBase,
+                                                 SearchScope scope, String filter,
+                                                 List<String> attributes, int sizeLimit,
+                                                 int timeLimitSeconds,
+                                                 boolean includeOperational) {
         String effectiveFilter = (filter == null || filter.isBlank()) ? "(objectClass=*)" : filter;
         // Build the effective attribute array. When includeOperational is set,
         // append "+" — RFC 4511's marker for "all operational attributes". If
@@ -753,11 +781,26 @@ public class LdapBrowseService {
      * Counts the entries matching a search without fetching any attributes
      * ({@code 1.1}), paging through at most {@link #MAX_SEARCH_RESULTS}. A
      * server-enforced size or time limit ends the count early with what was
-     * counted so far marked as a lower bound.
+     * counted so far marked as a lower bound. With no base, each root is
+     * counted in turn (each under its own time limit) and the counts summed.
      */
     private MatchCount countMatches(DirectoryConnection dc, String baseDn, SearchScope scope,
                                     String filter, int timeLimitSeconds) {
-        String searchBase = (baseDn != null && !baseDn.isBlank()) ? baseDn : dc.getBaseDn();
+        if (baseDn != null && !baseDn.isBlank()) {
+            return countMatchesUnder(dc, baseDn, scope, filter, timeLimitSeconds);
+        }
+        int count = 0;
+        boolean lowerBound = false;
+        for (String root : dc.getBaseDns()) {
+            MatchCount c = countMatchesUnder(dc, root, scope, filter, timeLimitSeconds);
+            count += c.count();
+            lowerBound |= c.lowerBound();
+        }
+        return new MatchCount(count, lowerBound);
+    }
+
+    private MatchCount countMatchesUnder(DirectoryConnection dc, String searchBase, SearchScope scope,
+                                         String filter, int timeLimitSeconds) {
         String effectiveFilter = (filter == null || filter.isBlank()) ? "(objectClass=*)" : filter;
 
         return connectionFactory.withConnection(dc, conn -> {
@@ -808,6 +851,11 @@ public class LdapBrowseService {
      *                               the listing was cut short
      * @param childCountApproximate  the count is an estimate (Active
      *                               Directory's msDS-Approx-Immed-Subordinates)
+     * @param otherRoots             on a browse of the directory root (no DN
+     *                               given): the directory's further top-level
+     *                               roots, so a tree can show each of them;
+     *                               empty otherwise and for a single-root
+     *                               directory
      */
     public record BrowseResult(
             String dn,
@@ -815,8 +863,14 @@ public class LdapBrowseService {
             List<ChildEntry> children,
             boolean truncated,
             Integer childCount,
-            boolean childCountApproximate
+            boolean childCountApproximate,
+            List<String> otherRoots
     ) {
+        public BrowseResult(String dn, Map<String, List<String>> attributes, List<ChildEntry> children,
+                            boolean truncated, Integer childCount, boolean childCountApproximate) {
+            this(dn, attributes, children, truncated, childCount, childCountApproximate, List.of());
+        }
+
         public BrowseResult(String dn, Map<String, List<String>> attributes, List<ChildEntry> children) {
             this(dn, attributes, children, false, children == null ? null : children.size(), false);
         }

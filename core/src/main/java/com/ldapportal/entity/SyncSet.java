@@ -2,6 +2,7 @@
 package com.ldapportal.entity;
 
 import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncLoggingLevel;
 import com.ldapportal.entity.enums.SyncScope;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -15,6 +16,7 @@ import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
@@ -53,8 +55,8 @@ public class SyncSet {
     @Column(name = "name", nullable = false)
     private String name;
 
-    /** Base DN bounding source enumeration (a performance hint, not the selector). */
-    @Column(name = "object_scope_base_dn")
+    /** Base DN bounding source enumeration (a performance hint, not the selector). Required. */
+    @Column(name = "object_scope_base_dn", nullable = false)
     private String objectScopeBaseDn;
 
     @Enumerated(EnumType.STRING)
@@ -111,8 +113,57 @@ public class SyncSet {
     @Column(name = "reconcile_cadence_seconds")
     private Long reconcileCadenceSeconds;
 
-    @Column(name = "reconcile_last_run_at")
+    /** Read-only to JPA: only {@code SyncSetRepository.stampReconcileRun} writes it. */
+    @Column(name = "reconcile_last_run_at", insertable = false, updatable = false)
     private OffsetDateTime reconcileLastRunAt;
+
+    /**
+     * Reconcile-request counters. The changelog poller increments
+     * {@code requestSeq} ({@code SyncSetRepository.requestReconcile}). A finishing
+     * reconcile records the {@code requestSeq} it loaded at its start as
+     * {@code attemptedSeq}, and also as {@code handledSeq} when its source
+     * enumeration completed ({@code SyncSetRepository.markReconcileRun}), so a
+     * request raised while it ran stays pending. {@code SyncReconcileScheduler}
+     * treats {@code requestSeq > attemptedSeq} as due now and
+     * {@code requestSeq > handledSeq} as due for a spaced retry. Read-only to JPA
+     * (insertable/updatable = false): only those targeted updates write them, so
+     * an entity save from a reconcile that loaded the set earlier can never
+     * overwrite a newer request.
+     */
+    @ColumnDefault("0")
+    @Column(name = "reconcile_request_seq", nullable = false, insertable = false, updatable = false)
+    private long reconcileRequestSeq;
+
+    @ColumnDefault("0")
+    @Column(name = "reconcile_attempted_seq", nullable = false, insertable = false, updatable = false)
+    private long reconcileAttemptedSeq;
+
+    @ColumnDefault("0")
+    @Column(name = "reconcile_handled_seq", nullable = false, insertable = false, updatable = false)
+    private long reconcileHandledSeq;
+
+    /**
+     * Incremented ({@code SyncSetRepository.bumpSourceChange}) before each
+     * source change is enqueued for the set. A reconcile reads it before its
+     * source scan and trusts the entries it scanned only while it hasn't moved.
+     * Read-only to JPA, like the request counters.
+     */
+    @ColumnDefault("0")
+    @Column(name = "source_change_seq", nullable = false, insertable = false, updatable = false)
+    private long sourceChangeSeq;
+
+    /**
+     * Single-flight lease for this set's reconcile across app instances: the
+     * running reconcile's token and its last heartbeat ({@code null} when none
+     * runs). Read-only to JPA, like the request counters: only the targeted
+     * claim / heartbeat / release updates in {@code SyncSetRepository} write it,
+     * so an admin edit saving the set can't clear a running reconcile's lease.
+     */
+    @Column(name = "reconcile_lease_token", insertable = false, updatable = false)
+    private UUID reconcileLeaseToken;
+
+    @Column(name = "reconcile_lease_heartbeat_at", insertable = false, updatable = false)
+    private OffsetDateTime reconcileLeaseHeartbeatAt;
 
     /**
      * Optional attribute rename / value-template rules. Null/empty => identity
@@ -135,6 +186,15 @@ public class SyncSet {
     @Column(name = "enabled", nullable = false)
     private boolean enabled = true;
 
+    /**
+     * How much of each run the history keeps: counts only, or also every
+     * changed or flagged entry's DN (downloadable as CSV). Summary by default:
+     * a detailed large run stores one row per entry.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "logging_level", nullable = false, length = 16)
+    private SyncLoggingLevel loggingLevel = SyncLoggingLevel.SUMMARY;
+
     // ── Last content-verification snapshot (drift, cached for the dashboard) ─────
     // SyncContentVerifier re-reads both directories, so its result is too costly
     // to compute on every dashboard load; the scheduled reconcile and a manual
@@ -151,6 +211,21 @@ public class SyncSet {
 
     @Column(name = "verify_mismatch_count")
     private Integer verifyMismatchCount;
+
+    /**
+     * When the latest content verify didn't read both directories completely,
+     * so its counts weren't stored; null once a later verify completes.
+     */
+    @Column(name = "verify_incomplete_at")
+    private OffsetDateTime verifyIncompleteAt;
+
+    /** Members with held reference values at the last complete verify (null until counted). */
+    @Column(name = "verify_held_count")
+    private Integer verifyHeldCount;
+
+    /** Of {@link #verifyHeldCount}, members whose held value names an entry missing on the source. */
+    @Column(name = "verify_dangling_count")
+    private Integer verifyDanglingCount;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

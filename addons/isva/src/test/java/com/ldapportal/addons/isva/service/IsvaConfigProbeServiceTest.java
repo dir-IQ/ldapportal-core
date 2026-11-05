@@ -137,6 +137,8 @@ class IsvaConfigProbeServiceTest {
     void linkedMode_unreachableBase_reportsNotReachable() {
         VendorIntegrationIsvaConfig cfg = config(IsvaTopologyMode.LINKED);
         cfg.setManagementDitBaseDn("secAuthority=Missing,o=acme,c=us");
+        // secUser entries sit directly under this DIT in the fixture.
+        cfg.setUserContainerDn("secAuthority=Missing,o=acme,c=us");
 
         ProbeResult result = probeService.probe(dir, cfg);
 
@@ -428,6 +430,8 @@ class IsvaConfigProbeServiceTest {
             cfg.setDirectoryConnectionId(d.getId());
             if (cfg.getTopologyMode() == IsvaTopologyMode.LINKED) {
                 cfg.setManagementDitBaseDn(BASE);
+                // secUser entries sit directly under this DIT in the fixture.
+                cfg.setUserContainerDn(BASE);
             }
             return new IsvaConfigProbeService(factory, new IsvaSecUserPlans()).probe(d, cfg);
         } finally {
@@ -456,6 +460,8 @@ class IsvaConfigProbeServiceTest {
         cfg.setTopologyMode(mode);
         if (mode == IsvaTopologyMode.LINKED) {
             cfg.setManagementDitBaseDn(MGMT_BASE);
+            // secUser entries sit directly under this DIT in the fixture.
+            cfg.setUserContainerDn(MGMT_BASE);
         }
         return cfg;
     }

@@ -135,5 +135,11 @@ jobs:
           context: frontend
           file: frontend/Dockerfile
           push: true
+          # Bake the image tag and commit into the bundle for the sidebar
+          # build stamp (the frontend/ context has no .git), as the backend
+          # job does with IMAGE_VERSION.
+          build-args: |
+            IMAGE_VERSION=${{ steps.meta.outputs.version }}
+            BUILD_SHA=${{ github.sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

@@ -37,6 +37,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
@@ -281,7 +282,7 @@ class IsvaProvisioningInterceptorTest {
         VendorIntegrationIsvaConfig cfg = inlineConfig();
         cfg.setRequireSecGroup(true);
         when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
-        when(groupShapeCheck.hasObjectClass(dir, "cn=eng,dc=x", "secGroup"))
+        when(groupShapeCheck.isImportedIntoIvia(eq(dir), any(), eq("cn=eng,dc=x")))
                 .thenReturn(Optional.of(false));
 
         GroupMemberPlan plan = interceptor.planGroupMembership(dir,
@@ -300,7 +301,7 @@ class IsvaProvisioningInterceptorTest {
         VendorIntegrationIsvaConfig cfg = inlineConfig();
         cfg.setRequireSecGroup(true);
         when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
-        when(groupShapeCheck.hasObjectClass(dir, "cn=eng,dc=x", "secGroup"))
+        when(groupShapeCheck.isImportedIntoIvia(eq(dir), any(), eq("cn=eng,dc=x")))
                 .thenReturn(Optional.of(true));
 
         GroupMemberPlan plan = interceptor.planGroupMembership(dir,
@@ -318,7 +319,7 @@ class IsvaProvisioningInterceptorTest {
         VendorIntegrationIsvaConfig cfg = inlineConfig();
         cfg.setRequireSecGroup(true);
         when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
-        when(groupShapeCheck.hasObjectClass(dir, "cn=eng,dc=x", "secGroup"))
+        when(groupShapeCheck.isImportedIntoIvia(eq(dir), any(), eq("cn=eng,dc=x")))
                 .thenReturn(Optional.empty());
 
         GroupMemberPlan plan = interceptor.planGroupMembership(dir,
@@ -337,7 +338,7 @@ class IsvaProvisioningInterceptorTest {
         cfg.setGroupMemberTarget(
                 com.ldapportal.addons.isva.entity.IsvaGroupMemberTarget.SECUSER_DN);
         when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
-        when(groupShapeCheck.hasObjectClass(dir, "cn=eng,dc=x", "secGroup"))
+        when(groupShapeCheck.isImportedIntoIvia(eq(dir), any(), eq("cn=eng,dc=x")))
                 .thenReturn(Optional.of(false));
 
         GroupMemberPlan plan = interceptor.planGroupMembership(dir,
@@ -755,6 +756,43 @@ class IsvaProvisioningInterceptorTest {
 
     // ── helpers ────────────────────────────────────────────────────
 
+    // ── group delete ────────────────────────────────────────────────
+
+    @Test
+    void groupDelete_noConfigRow_isBaselineSingleDel() {
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.empty());
+
+        DeletePlan plan = interceptor.planGroupDelete(dir, "cn=eng,dc=x", ProvisioningContext.empty());
+
+        assertThat(plan.steps()).containsExactly(DeleteStep.of("cn=eng,dc=x"));
+        org.mockito.Mockito.verifyNoInteractions(groupShapeCheck);
+    }
+
+    @Test
+    void groupDelete_registeredGroup_alsoDeletesTheRegistrationBestEffort() {
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(linkedConfig()));
+        when(groupShapeCheck.findRegistrationDn(eq(dir), any(), eq("cn=eng,dc=x")))
+                .thenReturn(Optional.of("cn=eng,cn=Groups,secAuthority=Default"));
+
+        DeletePlan plan = interceptor.planGroupDelete(dir, "cn=eng,dc=x", ProvisioningContext.empty());
+
+        // Group first (ABORT), so a failed group DEL leaves the registration alone.
+        assertThat(plan.steps()).containsExactly(
+                DeleteStep.of("cn=eng,dc=x"),
+                new DeleteStep("cn=eng,cn=Groups,secAuthority=Default", StepFailurePolicy.CONTINUE));
+    }
+
+    @Test
+    void groupDelete_unregisteredGroup_isBaselineSingleDel() {
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(inlineConfig()));
+        when(groupShapeCheck.findRegistrationDn(eq(dir), any(), eq("cn=eng,dc=x")))
+                .thenReturn(Optional.empty());
+
+        DeletePlan plan = interceptor.planGroupDelete(dir, "cn=eng,dc=x", ProvisioningContext.empty());
+
+        assertThat(plan.steps()).containsExactly(DeleteStep.of("cn=eng,dc=x"));
+    }
+
     private VendorIntegrationIsvaConfig inlineConfig() {
         VendorIntegrationIsvaConfig cfg = new VendorIntegrationIsvaConfig();
         cfg.setDirectoryConnectionId(dir.getId());
@@ -767,6 +805,8 @@ class IsvaProvisioningInterceptorTest {
         VendorIntegrationIsvaConfig cfg = inlineConfig();
         cfg.setTopologyMode(IsvaTopologyMode.LINKED);
         cfg.setManagementDitBaseDn("secAuthority=Default,o=acme,c=us");
+        // secUser entries sit directly under this DIT in the fixture.
+        cfg.setUserContainerDn("secAuthority=Default,o=acme,c=us");
         return cfg;
     }
 

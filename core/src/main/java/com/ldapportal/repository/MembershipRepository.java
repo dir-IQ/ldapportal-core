@@ -25,6 +25,12 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
 
     List<Membership> findAllBySyncSetId(UUID syncSetId);
 
+    /** Rows the set manages, in any state. */
+    long countBySyncSetId(UUID syncSetId);
+
+    /** Rows of one set in one state (e.g. REVIEW: held for an operator). */
+    long countBySyncSetIdAndState(UUID syncSetId, MembershipState state);
+
     /** Identity currently mapped to a (normalized) source DN within one set. */
     Optional<Membership> findFirstBySyncSetIdAndSourceDn(UUID syncSetId, String sourceDn);
 
@@ -34,6 +40,12 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
      * picks the same-link row when there is one and otherwise the cross-link consensus.
      */
     List<Membership> findAllBySourceDn(String sourceDn);
+
+    /** As {@link #findAllBySourceDn}, for many (normalized) source DNs in one query. */
+    List<Membership> findAllBySourceDnIn(java.util.Collection<String> sourceDns);
+
+    /** Rows (of any set) for these identities: who manages an anchored target entry. */
+    List<Membership> findAllByIdentityIn(java.util.Collection<String> identities);
 
     /**
      * Every row (any set, any state) whose target DN matches, case-insensitively.
@@ -68,6 +80,19 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
     int stampScanEpoch(@Param("syncSetId") UUID syncSetId, @Param("identity") String identity,
                        @Param("epoch") long epoch);
 
+    /**
+     * Forget what the set last wrote for its applied rows: clears their content
+     * hash, so the engine's hash gate no longer short-circuits them and the next
+     * recompute reads each target entry and re-applies it (ADD when missing,
+     * MODIFY when it differs, no write when it already matches). Used after the
+     * target was restored from a backup. Returns the number of rows reset.
+     */
+    @Transactional
+    @Modifying
+    @Query("update Membership m set m.contentHash = :none where m.syncSetId = :syncSetId "
+            + "and m.state = com.ldapportal.entity.enums.MembershipState.APPLIED")
+    int forgetAppliedContent(@Param("syncSetId") UUID syncSetId, @Param("none") byte[] none);
+
     /** Rows not stamped by the current reconcile epoch (never scanned, or seen in a prior generation). */
     @Query("select m from Membership m where m.syncSetId = :syncSetId "
             + "and (m.lastScanEpoch is null or m.lastScanEpoch < :epoch)")
@@ -77,6 +102,18 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
     @Query("select m.syncSetId as syncSetId, m.state as state, count(m) as cnt "
             + "from Membership m group by m.syncSetId, m.state")
     List<MembershipStateCount> countGroupedByState();
+
+    /**
+     * Per set, how many {@code REVIEW} rows are held deletes (an entry that left
+     * scope whose target delete waits for an operator), told apart by the reason
+     * prefix the engine writes. Each row is {@code [syncSetId, count]}.
+     *
+     * @param prefix the held-delete reason prefix followed by {@code %}
+     */
+    @Query("select m.syncSetId, count(m) from Membership m "
+            + "where m.state = com.ldapportal.entity.enums.MembershipState.REVIEW "
+            + "and m.failReason like :prefix group by m.syncSetId")
+    List<Object[]> countHeldDeletesBySet(@Param("prefix") String prefix);
 
     /**
      * Paged inventory for one set, optionally filtered by state and by a

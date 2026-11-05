@@ -23,7 +23,7 @@ public record ComplianceDashboardDto(
 
         // ── Approval aging buckets ────────────────────────────────────────────
         ApprovalAgingDto approvalAging,
-        /** True when any profile has {@code requireApproval = true}.
+        /** True when an approval workflow is in use anywhere.
          *  See UnifiedDashboardDto. */
         boolean approvalsConfigured,
 
