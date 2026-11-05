@@ -434,6 +434,20 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void orphanDelete_passesTheConfirmation_andIsForbiddenToAdmins() throws Exception {
+        given(service.deleteOrphans(eq(SET), eq(List.of(4)), eq("DELETE"), any()))
+                .willReturn(new com.ldapportal.dto.sync.SyncOrphanDeleteResult(1, 0, 0, List.of()));
+
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/orphans/delete").with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[4],\"confirm\":\"DELETE\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deleted").value(1));
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/orphans/delete/preview").with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[4]}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void reconcileRun_superadmin_returnsDetail() throws Exception {
         UUID runId = UUID.randomUUID();
         SyncReconcileRunResponse run = new SyncReconcileRunResponse(

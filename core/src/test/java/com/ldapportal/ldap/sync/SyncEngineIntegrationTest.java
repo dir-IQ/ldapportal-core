@@ -682,6 +682,93 @@ class SyncEngineIntegrationTest {
         assertThat(membership("alice").getFailReason()).contains("ambiguous");
     }
 
+    // ── Orphan delete (Drift tab) ───────────────────────────────────────────
+
+    private void addTargetPerson(String uid, String anchor) throws Exception {
+        List<Attribute> attrs = new java.util.ArrayList<>(List.of(
+                new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                new Attribute("uid", uid), new Attribute("cn", uid), new Attribute("sn", uid),
+                // Within the set's applicability filter, as the verify reads the target with it.
+                new Attribute("employeeType", "staff")));
+        if (anchor != null) attrs.add(new Attribute("description", anchor));
+        target.add(new Entry("uid=" + uid + "," + DST_USERS, attrs));
+    }
+
+    @Test
+    void orphanDelete_deletesOnlyAnchoredEntriesNothingAccountsFor() throws Exception {
+        peopleSet.setSourceAnchorAttribute("description");
+        setRepo.save(peopleSet);
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        addTargetPerson("ghost", "11111111-2222-3333-4444-555555555555"); // anchored, no source
+        addTargetPerson("handmade", null);                                 // no anchor
+        String alice = "uid=alice," + DST_USERS;
+
+        // Checks without applying: only the ghost would go.
+        assertThat(engine.orphanDelete(peopleSet.getId(), "uid=ghost," + DST_USERS, false).outcome())
+                .isEqualTo(com.ldapportal.dto.sync.SyncPreviewAction.DELETE);
+        assertThat(target.getEntry("uid=ghost," + DST_USERS)).isNotNull();
+        var handmade = engine.orphanDelete(peopleSet.getId(), "uid=handmade," + DST_USERS, true);
+        assertThat(handmade.outcome()).isEqualTo(com.ldapportal.dto.sync.SyncPreviewAction.UNCHANGED);
+        assertThat(handmade.message()).contains("doesn't carry this set's source anchor");
+        var managed = engine.orphanDelete(peopleSet.getId(), alice, true);
+        assertThat(managed.message()).isEqualTo("This set now manages it.");
+        assertThat(target.getEntry(alice)).isNotNull();
+
+        // Not tracked any more, but its source is still in the set: left for a reconcile.
+        String uuid = sourceEntryUuid("alice");
+        membershipRepo.deleteById(new com.ldapportal.entity.MembershipId(peopleSet.getId(), membership("alice").getIdentity()));
+        var backInSet = engine.orphanDelete(peopleSet.getId(), alice, true);
+        assertThat(backInSet.message()).contains("is in the set again");
+        assertThat(target.getEntry(alice)).isNotNull();
+        assertThat(uuid).isNotBlank();
+
+        assertThat(engine.orphanDelete(peopleSet.getId(), "uid=ghost," + DST_USERS, true).outcome())
+                .isEqualTo(com.ldapportal.dto.sync.SyncPreviewAction.DELETE);
+        assertThat(target.getEntry("uid=ghost," + DST_USERS)).isNull();
+        assertThat(engine.orphanDelete(peopleSet.getId(), "uid=ghost," + DST_USERS, true).message())
+                .isEqualTo(RecomputeEngine.ORPHAN_GONE);
+    }
+
+    @Test
+    void orphanDelete_withoutAnAnchor_neverDeletes() throws Exception {
+        addTargetPerson("ghost", "whatever");
+
+        var r = engine.orphanDelete(peopleSet.getId(), "uid=ghost," + DST_USERS, true);
+
+        assertThat(r.outcome()).isEqualTo(com.ldapportal.dto.sync.SyncPreviewAction.UNCHANGED);
+        assertThat(r.message()).contains("writes no source anchor");
+        assertThat(target.getEntry("uid=ghost," + DST_USERS)).isNotNull();
+    }
+
+    @Test
+    void orphanDelete_fromTheDriftTab_previewsThenDeletes_andClearsTheItem() throws Exception {
+        peopleSet.setSourceAnchorAttribute("description");
+        setRepo.save(peopleSet);
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        addTargetPerson("ghost", "11111111-2222-3333-4444-555555555555");
+        syncConfigService.verifyContents(peopleSet.getId());
+        var drift = syncConfigService.drift(peopleSet.getId(), com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN,
+                null, 0, 50);
+        assertThat(drift.entries()).singleElement().satisfies(e -> assertThat(e.targetDn()).containsIgnoringCase("ghost"));
+        List<Integer> seqs = List.of(drift.entries().get(0).seq());
+
+        assertThat(syncConfigService.previewOrphanDelete(peopleSet.getId(), seqs).items())
+                .singleElement().satisfies(i -> assertThat(i.action().name()).isEqualTo("DELETE"));
+        // Without the typed confirmation nothing happens.
+        assertThatThrownBy(() -> syncConfigService.deleteOrphans(peopleSet.getId(), seqs, "delete", null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(target.getEntry("uid=ghost," + DST_USERS)).isNotNull();
+
+        var result = syncConfigService.deleteOrphans(peopleSet.getId(), seqs, "DELETE", null);
+
+        assertThat(result.deleted()).isEqualTo(1);
+        assertThat(target.getEntry("uid=ghost," + DST_USERS)).isNull();
+        assertThat(syncConfigService.drift(peopleSet.getId(), null, null, 0, 50).matched()).isZero();
+        assertThat(setRepo.findById(peopleSet.getId()).orElseThrow().getVerifyOrphanCount()).isZero();
+    }
+
     @Test
     void deletePolicyReview_quarantinesScopeExit_retainsTarget() throws Exception {
         peopleSet.setDeletePolicy(com.ldapportal.entity.enums.SyncDeletePolicy.REVIEW);

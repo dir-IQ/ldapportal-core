@@ -353,6 +353,29 @@ public class SyncSetController {
         return service.repairDrift(id, req.seqs(), principal);
     }
 
+    /**
+     * What deleting these orphaned drift items would do, each re-checked live:
+     * delete an entry provably this set's, or leave it alone and say why.
+     */
+    @PostMapping("/{id}/drift/orphans/delete/preview")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncOrphanDeletePreview previewOrphanDelete(
+            @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncOrphanDeleteRequest req) {
+        return service.previewOrphanDelete(id, req.seqs());
+    }
+
+    /**
+     * Delete these orphaned drift items from the target, each re-checked first;
+     * {@code confirm} must be {@code DELETE}. Audited with the operator.
+     */
+    @PostMapping("/{id}/drift/orphans/delete")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncOrphanDeleteResult deleteOrphans(
+            @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncOrphanDeleteRequest req,
+            @AuthenticationPrincipal AuthPrincipal principal) {
+        return service.deleteOrphans(id, req.seqs(), req.confirm(), principal);
+    }
+
     @PostMapping("/{id}/recompute")
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public ResponseEntity<Void> recompute(@PathVariable UUID id, @Valid @RequestBody RecomputeKeyRequest req) {

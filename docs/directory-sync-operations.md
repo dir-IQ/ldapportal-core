@@ -667,7 +667,7 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   entry can be **created** and a **content drift** **re-applied** from its
   source: per row (**Create…** / **Re-apply…**) or for the rows you tick
   (**Repair (n)…**, one page at a time, up to 200). An orphaned entry has no
-  source member, so it isn't offered here.
+  source member to repair it from; it can be deleted instead (below).
   - **Preview first.** Each chosen entry is re-checked live against both
     directories (the stored check may be hours old), and the dialog says what
     a repair would do: *to create*, *to re-apply* (naming the attributes that
@@ -685,6 +685,26 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
     and the set's drift counts; the next check confirms the rest. Endpoints:
     `POST …/sets/{id}/drift/repair/preview` and `…/drift/repair`, body
     `{"seqs": [...]}` (the items' positions in the stored check).
+- **Deleting orphans** (Drift tab; needs *Manage directory sync*). An
+  orphaned entry can be **deleted** from the target, per row (**Delete…**) or
+  for the ticked orphans (**Delete (n)…**), but only when the set writes a
+  **source anchor**: without one, an entry the set can't account for isn't
+  provably its own, so delete isn't offered.
+  - **Preview first.** Each chosen entry is re-checked live, and is only
+    deleted if it's still on the target, carries the set's anchor, isn't
+    placed there by any sync set's index, isn't tracked by this set under its
+    anchor identity, and has no source entry with that identity back in the
+    set. Anything else is **left alone** with the reason (e.g. *This set now
+    manages it*, *Its source entry is in the set again; reconcile to sync it*).
+  - **Typed confirmation.** Type `DELETE` to enable **Delete n**; the server
+    refuses a delete without it too.
+  - **One entry, not a subtree.** An entry with children fails its delete and
+    is reported; nothing beneath it is removed.
+  - **Audited** under your name (`entry.delete`, detail
+    `operation: orphan-delete`). Deleted entries, and ones already gone, leave
+    the Drift tab and the set's counts. Endpoints:
+    `POST …/sets/{id}/drift/orphans/delete/preview` and `…/drift/orphans/delete`,
+    body `{"seqs": [...], "confirm": "DELETE"}`.
 - **Orphan scope.** When the set
   writes a **source anchor**, only target entries carrying it count as
   orphaned: an entry under the same target base that nothing manages isn't

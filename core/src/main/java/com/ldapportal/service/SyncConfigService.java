@@ -814,17 +814,148 @@ public class SyncConfigService {
         }
         if (!fixed.isEmpty()) {
             driftStore.delete(syncSetId, fixed);
-            var left = driftStore.countsByCategory(syncSetId);
-            setRepo.restateVerifyCounts(syncSetId,
-                    left.getOrDefault(com.ldapportal.entity.enums.SyncDriftCategory.MISSING, 0L).intValue(),
-                    left.getOrDefault(com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, 0L).intValue(),
-                    left.getOrDefault(com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, 0L).intValue());
+            restateFromStore(syncSetId);
         }
         log.info("Sync set {}: drift repair by {}: {} created, {} re-applied, {} already in sync, {} skipped, "
                         + "{} held, {} failed", syncSetId, principal != null ? principal.username() : "system",
                 created, reapplied, inSync, skipped, held, failed);
         return new com.ldapportal.dto.sync.SyncDriftRepairResult(created, reapplied, inSync, skipped, held, failed,
                 items);
+    }
+
+    // ── Orphan delete ────────────────────────────────────────────────────────
+
+    /**
+     * What deleting these orphaned drift items would do, each re-checked live
+     * ({@code RecomputeEngine.orphanDelete} without applying): DELETE an entry
+     * provably this set's, or SKIP it and why. Never writes.
+     */
+    public com.ldapportal.dto.sync.SyncOrphanDeletePreview previewOrphanDelete(UUID syncSetId, List<Integer> seqs) {
+        requireSet(syncSetId);
+        List<com.ldapportal.dto.sync.SyncOrphanDeletePreview.Item> items = new ArrayList<>();
+        for (var row : storedRows(syncSetId, seqs)) {
+            String dn = row.item().targetDn();
+            if (row.item().category() != com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN) {
+                items.add(new com.ldapportal.dto.sync.SyncOrphanDeletePreview.Item(row.seq(),
+                        com.ldapportal.dto.sync.SyncOrphanDeletePreview.Action.SKIP, dn,
+                        "Only orphaned entries are deleted here; repair this one instead."));
+                continue;
+            }
+            var check = orphanCheck(syncSetId, dn, false);
+            items.add(new com.ldapportal.dto.sync.SyncOrphanDeletePreview.Item(row.seq(),
+                    check.outcome() == com.ldapportal.dto.sync.SyncPreviewAction.DELETE
+                            ? com.ldapportal.dto.sync.SyncOrphanDeletePreview.Action.DELETE
+                            : com.ldapportal.dto.sync.SyncOrphanDeletePreview.Action.SKIP,
+                    dn, check.message()));
+        }
+        return new com.ldapportal.dto.sync.SyncOrphanDeletePreview(items);
+    }
+
+    /**
+     * Delete these orphaned drift items from the target, each re-checked live
+     * first and left alone unless it's provably this set's (see
+     * {@code RecomputeEngine.orphanDelete}). Needs {@code confirm} to be
+     * {@value com.ldapportal.dto.sync.SyncOrphanDeleteRequest#CONFIRM_WORD}.
+     * Each delete is audited with the operator ({@code entry.delete},
+     * {@code operation: orphan-delete}). Deleted items, and ones already gone,
+     * leave the stored verify, and the set's counts are restated.
+     */
+    public com.ldapportal.dto.sync.SyncOrphanDeleteResult deleteOrphans(UUID syncSetId, List<Integer> seqs,
+                                                                      String confirm, AuthPrincipal principal) {
+        SyncSet set = requireSet(syncSetId);
+        if (!com.ldapportal.dto.sync.SyncOrphanDeleteRequest.CONFIRM_WORD.equals(confirm)) {
+            throw new IllegalArgumentException("Type " + com.ldapportal.dto.sync.SyncOrphanDeleteRequest.CONFIRM_WORD
+                    + " to confirm deleting entries from the target.");
+        }
+        var rows = storedRows(syncSetId, seqs);
+        SyncAuditLabels labels = SyncAuditLabels.of(set, linkRepo, directoryRepo);
+        List<com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item> items = new ArrayList<>();
+        List<Integer> gone = new ArrayList<>();
+        int deleted = 0, skipped = 0, failed = 0;
+        for (var row : rows) {
+            String dn = row.item().targetDn();
+            if (row.item().category() != com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN) {
+                skipped++;
+                items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(row.seq(),
+                        com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.SKIPPED, dn,
+                        "Only orphaned entries are deleted here; repair this one instead."));
+                continue;
+            }
+            var r = orphanCheck(syncSetId, dn, true);
+            switch (r.outcome()) {
+                case DELETE -> {
+                    deleted++;
+                    gone.add(row.seq());
+                    items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(row.seq(),
+                            com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.DELETED, dn, null));
+                    if (principal != null && r.targetDirectoryId() != null) {
+                        Map<String, Object> detail = new java.util.LinkedHashMap<>();
+                        detail.put("source", "directory-sync");
+                        detail.put("operation", "orphan-delete");
+                        labels.putInto(detail);
+                        detail.put("syncSetId", syncSetId.toString());
+                        auditService.record(principal, r.targetDirectoryId(), AuditAction.ENTRY_DELETE, dn, detail);
+                    }
+                }
+                case ERROR -> {
+                    failed++;
+                    items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(row.seq(),
+                            com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.FAILED, dn, r.message()));
+                }
+                default -> {
+                    skipped++;
+                    items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(row.seq(),
+                            com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.SKIPPED, dn, r.message()));
+                    if (com.ldapportal.ldap.sync.RecomputeEngine.ORPHAN_GONE.equals(r.message())) {
+                        gone.add(row.seq());
+                    }
+                }
+            }
+        }
+        if (!gone.isEmpty()) {
+            driftStore.delete(syncSetId, gone);
+            restateFromStore(syncSetId);
+        }
+        log.info("Sync set {}: orphan delete by {}: {} deleted, {} skipped, {} failed", syncSetId,
+                principal != null ? principal.username() : "system", deleted, skipped, failed);
+        return new com.ldapportal.dto.sync.SyncOrphanDeleteResult(deleted, skipped, failed, items);
+    }
+
+
+    private com.ldapportal.dto.sync.SyncDeleteApproval orphanCheck(UUID syncSetId, String dn, boolean apply) {
+        try {
+            return engine.orphanDelete(syncSetId, dn, apply);
+        } catch (RuntimeException ex) {
+            log.warn("Sync set {}: orphan {} of [{}] failed: {}", syncSetId, apply ? "delete" : "check", dn, ex.toString());
+            String msg = ex.getMessage();
+            return new com.ldapportal.dto.sync.SyncDeleteApproval(com.ldapportal.dto.sync.SyncPreviewAction.ERROR, null, dn,
+                    "Couldn't check the entry: " + (msg == null || msg.isBlank() ? ex.getClass().getSimpleName() : msg));
+        }
+    }
+
+    /** The stored rows for a selection, validated as {@link #planRepair} does. */
+    private List<com.ldapportal.ldap.sync.SyncDriftStore.Row> storedRows(UUID syncSetId, List<Integer> seqs) {
+        List<Integer> wanted = seqs == null ? List.of() : seqs.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        if (wanted.isEmpty()) {
+            throw new IllegalArgumentException("Choose at least one drift item.");
+        }
+        if (wanted.size() > MAX_DRIFT_REPAIR) {
+            throw new IllegalArgumentException("At most " + MAX_DRIFT_REPAIR + " drift items can be handled at once.");
+        }
+        var rows = driftStore.bySeq(syncSetId, wanted);
+        if (rows.isEmpty()) {
+            throw new IllegalArgumentException("Those drift items are no longer stored; verify again and retry.");
+        }
+        return rows;
+    }
+
+    /** Restate the set's drift counts from the items still stored. */
+    private void restateFromStore(UUID syncSetId) {
+        var left = driftStore.countsByCategory(syncSetId);
+        setRepo.restateVerifyCounts(syncSetId,
+                left.getOrDefault(com.ldapportal.entity.enums.SyncDriftCategory.MISSING, 0L).intValue(),
+                left.getOrDefault(com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, 0L).intValue(),
+                left.getOrDefault(com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, 0L).intValue());
     }
 
     private List<PlannedRepair> planRepair(UUID syncSetId, List<Integer> seqs) {

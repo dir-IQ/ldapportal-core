@@ -178,6 +178,89 @@ public class RecomputeEngine {
     }
 
     /**
+     * Check, and with {@code apply} delete, a target entry a content verify
+     * found orphaned: one under the set's target base that no source member
+     * accounts for. Only an entry provably this set's goes: it must still be
+     * on the target, carry the set's source anchor, not be placed there by any
+     * sync set's index, not be tracked by this set under its anchor identity,
+     * and have no source entry with that identity back in the set. Anything
+     * else is left alone with the reason. A delete goes through the same live
+     * write as an approved review delete; a non-leaf entry's delete fails and
+     * is reported rather than deleting its subtree.
+     *
+     * @return {@code DELETE} (deleted, or would be), {@code UNCHANGED} (left
+     *         alone; the message says why) or {@code ERROR} (the delete failed)
+     */
+    /** {@link #orphanDelete}'s reason for an entry already off the target. */
+    public static final String ORPHAN_GONE = "It's no longer on the target.";
+
+    public SyncDeleteApproval orphanDelete(UUID syncSetId, String targetDn, boolean apply) {
+        SyncSet set = syncSetRepo.findById(syncSetId)
+                .orElseThrow(() -> new IllegalArgumentException("Sync set not found"));
+        SyncLink link = syncLinkRepo.findById(set.getLinkId()).orElse(null);
+        if (!set.isEnabled() || link == null || !link.isEnabled()) {
+            return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, null, targetDn,
+                    "Enable the sync set and its link to delete entries.");
+        }
+        DirectoryConnection source = directoryRepo.findById(link.getSourceDirId()).orElse(null);
+        DirectoryConnection target = directoryRepo.findById(link.getTargetDirId()).orElse(null);
+        if (source == null || target == null) {
+            return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, null, targetDn,
+                    "The sync link's source or target directory is missing.");
+        }
+        String anchorAttr = set.getSourceAnchorAttribute();
+        if (anchorAttr == null || anchorAttr.isBlank()) {
+            return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn,
+                    "This set writes no source anchor, so an entry it can't account for isn't provably its own.");
+        }
+        IdentityStrategy strategy = identityStrategies.forType(source.getDirectoryType());
+        if (SyncIdentity.attribute(set, strategy) == null) {
+            // Without an identity attribute the source can't be re-read, and an
+            // unconfirmed absence must never become a delete.
+            return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn,
+                    "The source directory type has no LDAP identity attribute to check the entry against.");
+        }
+        Entry entry = connectionFactory.withConnectionUnreplicated(target, conn -> conn.getEntry(targetDn, "*", anchorAttr));
+        if (entry == null) {
+            return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn, ORPHAN_GONE);
+        }
+        String[] anchors = entry.getAttributeValues(anchorAttr);
+        if (anchors == null || anchors.length == 0) {
+            return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn,
+                    "It doesn't carry this set's source anchor (" + anchorAttr + ").");
+        }
+        List<Membership> owners = membershipRepo.findAllByTargetDnIgnoreCase(targetDn);
+        if (!owners.isEmpty()) {
+            Membership m = owners.get(0);
+            String owner = m.getSyncSetId().equals(syncSetId) ? "This set"
+                    : syncSetRepo.findById(m.getSyncSetId()).map(o -> "Sync set \"" + o.getName() + "\"").orElse("Another sync set");
+            return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn,
+                    owner + " now manages it.");
+        }
+        for (String raw : anchors) {
+            String identity = strategy.normalize(raw);
+            if (membershipRepo.findById(new MembershipId(syncSetId, identity)).isPresent()) {
+                return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn,
+                        "This set tracks its identity (" + identity + "); reconcile instead.");
+            }
+            Entry src = searchSourceByIdentity(source, set, strategy, identity);
+            if (src != null && membershipFunction.evaluate(set, strategy, src, referenceResolvers.forLink(link)).member()) {
+                return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn,
+                        "Its source entry (" + src.getDN() + ") is in the set again; reconcile to sync it.");
+            }
+        }
+        if (!apply) {
+            return new SyncDeleteApproval(SyncPreviewAction.DELETE, target.getId(), targetDn, null);
+        }
+        ApplyOutcome del = live.delete(target, targetDn);
+        if (!LdapResultInterpreter.deleteConverged(del.code())) {
+            return new SyncDeleteApproval(SyncPreviewAction.ERROR, target.getId(), targetDn, describe("delete", del));
+        }
+        log.info("Sync set {}: operator-approved delete of orphaned target {}", syncSetId, targetDn);
+        return new SyncDeleteApproval(SyncPreviewAction.DELETE, target.getId(), targetDn, null);
+    }
+
+    /**
      * Fan closure out, once, for every source entry {@code batch} changed:
      * referrers are found with a few batched searches rather than one search
      * per change, and a referrer the run already recomputed after the change it

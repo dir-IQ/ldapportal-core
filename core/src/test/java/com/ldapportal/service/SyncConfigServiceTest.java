@@ -482,6 +482,70 @@ class SyncConfigServiceTest {
     }
 
     @Test
+    void deleteOrphans_needsTheTypedConfirmation() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        assertThatThrownBy(() -> service.deleteOrphans(setId, List.of(1), "yes", null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Type DELETE");
+        verify(engine, never()).orphanDelete(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void deleteOrphans_deletesThroughTheEngine_auditsIt_andLeavesNonOrphansAlone() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(setId);
+        set.setLinkId(UUID.randomUUID());
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        when(linkRepo.findById(any())).thenReturn(Optional.empty());
+        var O = com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN;
+        when(driftStore.bySeq(eq(setId), any())).thenReturn(List.of(
+                driftRow(0, O, "ghost"), driftRow(1, O, "gone"), driftRow(2, O, "kids"), driftRow(3, O, "kept"),
+                driftRow(4, com.ldapportal.entity.enums.SyncDriftCategory.MISSING, "new")));
+        UUID dir = UUID.randomUUID();
+        when(engine.orphanDelete(setId, "uid=ghost,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+                com.ldapportal.dto.sync.SyncPreviewAction.DELETE, dir, "uid=ghost,dc=dst", null));
+        when(engine.orphanDelete(setId, "uid=gone,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+                com.ldapportal.dto.sync.SyncPreviewAction.UNCHANGED, dir, "uid=gone,dc=dst",
+                com.ldapportal.ldap.sync.RecomputeEngine.ORPHAN_GONE));
+        when(engine.orphanDelete(setId, "uid=kids,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+                com.ldapportal.dto.sync.SyncPreviewAction.ERROR, dir, "uid=kids,dc=dst", "delete failed: NOT_ALLOWED_ON_NONLEAF"));
+        when(engine.orphanDelete(setId, "uid=kept,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+                com.ldapportal.dto.sync.SyncPreviewAction.UNCHANGED, dir, "uid=kept,dc=dst", "This set now manages it."));
+        var principal = new com.ldapportal.auth.AuthPrincipal(com.ldapportal.auth.PrincipalType.SUPERADMIN,
+                UUID.randomUUID(), "ops");
+
+        var r = service.deleteOrphans(setId, List.of(0, 1, 2, 3, 4), "DELETE", principal);
+
+        assertThat(r.deleted()).isEqualTo(1);
+        assertThat(r.failed()).isEqualTo(1);
+        assertThat(r.skipped()).isEqualTo(3);
+        assertThat(r.items().get(4).message()).contains("Only orphaned entries");
+        verify(engine, never()).orphanDelete(eq(setId), eq("uid=new,dc=dst"), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(auditService).record(eq(principal), eq(dir), eq(com.ldapportal.entity.enums.AuditAction.ENTRY_DELETE),
+                eq("uid=ghost,dc=dst"), org.mockito.ArgumentMatchers.argThat(
+                        d -> "orphan-delete".equals(((java.util.Map<?, ?>) d).get("operation"))));
+        verify(auditService, org.mockito.Mockito.times(1)).record(any(), any(), any(), any(), any());
+        // The deleted one and the one already gone leave the stored verify.
+        verify(driftStore).delete(setId, List.of(0, 1));
+    }
+
+    @Test
+    void previewOrphanDelete_checksWithoutApplying() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(driftStore.bySeq(eq(setId), any())).thenReturn(List.of(
+                driftRow(0, com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, "ghost")));
+        when(engine.orphanDelete(setId, "uid=ghost,dc=dst", false)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+                com.ldapportal.dto.sync.SyncPreviewAction.DELETE, null, "uid=ghost,dc=dst", null));
+
+        var items = service.previewOrphanDelete(setId, List.of(0)).items();
+
+        assertThat(items).singleElement().satisfies(i -> assertThat(i.action().name()).isEqualTo("DELETE"));
+        verify(engine, never()).orphanDelete(setId, "uid=ghost,dc=dst", true);
+    }
+
+    @Test
     void verifyContents_unavailableSet_isNotRecordedAsIncomplete() {
         UUID setId = UUID.randomUUID();
         when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
