@@ -23,6 +23,11 @@ const page = vi.hoisted(() => (over: Record<string, unknown> = {}) => ({
 vi.mock('@/api/sync', () => ({
   getDrift: vi.fn(() => Promise.resolve({ data: page() })),
   downloadDriftCsv: vi.fn(() => Promise.resolve({ data: new Blob(['x']) })),
+  previewOrphanDelete: vi.fn(() => Promise.resolve({ data: { items: [
+    { seq: 1, action: 'DELETE', targetDn: 'uid=old,ou=people,dc=hr', reason: null },
+    { seq: 7, action: 'SKIP', targetDn: 'uid=kept,ou=people,dc=hr', reason: 'This set now manages it.' },
+  ] } })),
+  deleteOrphans: vi.fn(() => Promise.resolve({ data: { deleted: 1, skipped: 0, failed: 0, items: [] } })),
   previewDriftRepair: vi.fn(() => Promise.resolve({ data: { items: [
     { seq: 0, action: 'CREATE', targetDn: 'uid=pn,ou=people,dc=hr', sourceDn: 'uid=pn,ou=staff,dc=corp', attributes: [], reason: null },
     { seq: 2, action: 'REAPPLY', targetDn: 'uid=js,ou=people,dc=hr', sourceDn: 'uid=js,ou=staff,dc=corp',
@@ -195,10 +200,12 @@ describe('SyncDriftPanel', () => {
       w = mountPanel({ canManage: true })
       await flushPromises()
       expect(w.find('[data-testid="drift-row-0"] input[type="checkbox"]').exists()).toBe(true)
-      expect(w.find('[data-testid="drift-row-1"] input[type="checkbox"]').exists()).toBe(false) // orphan
       expect(w.find('[data-testid="drift-row-0"]').text()).toContain('Create…')
       expect(w.find('[data-testid="drift-row-2"]').text()).toContain('Re-apply…')
+      // An orphan of an anchored set can be deleted, not repaired.
+      expect(w.find('[data-testid="drift-row-1"] input[type="checkbox"]').exists()).toBe(true)
       expect(w.find('[data-testid="drift-row-1"]').text()).not.toMatch(/Create|Re-apply/)
+      expect(w.find('[data-testid="drift-row-1"]').text()).toContain('Delete…')
     })
 
     it('previews a row\'s repair after a live re-check, then repairs what isn\'t skipped', async () => {
@@ -226,15 +233,19 @@ describe('SyncDriftPanel', () => {
       expect(w.find('[data-testid="repair-preview"]').exists()).toBe(false)
     })
 
-    it('repairs the selection from the bulk bar; select-all takes the page\'s repairable rows', async () => {
+    it('acts on the selection from the bulk bar: Repair takes the repairable rows, Delete the orphans', async () => {
       const w = mountPanel({ canManage: true })
       await flushPromises()
       await w.find('thead input[type="checkbox"]').setValue(true)
-      expect(w.find('[data-testid="drift-bulk"]').text()).toContain('2 selected')
+      expect(w.find('[data-testid="drift-bulk"]').text()).toContain('3 selected')
 
       await btn(w, 'Repair (2)').trigger('click')
       await flushPromises()
       expect(syncApi.previewDriftRepair).toHaveBeenCalledWith('set-1', [0, 2])
+
+      await btn(w, 'Delete (1)').trigger('click')
+      await flushPromises()
+      expect(syncApi.previewOrphanDelete).toHaveBeenCalledWith('set-1', [1])
     })
 
     it('warns with the reason when something was held or failed', async () => {
@@ -262,6 +273,57 @@ describe('SyncDriftPanel', () => {
       await btn(w, 'Create…').trigger('click')
       await flushPromises()
       expect(btn(w, 'Repair 0').attributes('disabled')).toBeDefined()
+    })
+  })
+
+  describe('delete orphans', () => {
+    it('never offers delete when the set writes no source anchor', async () => {
+      const w = mountPanel({ canManage: true, set: { ...set, sourceAnchorAttribute: null } })
+      await flushPromises()
+      expect(w.find('[data-testid="drift-row-1"] input[type="checkbox"]').exists()).toBe(false)
+      expect(w.find('[data-testid="drift-row-1"]').text()).not.toContain('Delete')
+    })
+
+    it('previews, needs DELETE typed, then deletes only what the re-check allows', async () => {
+      const w = mountPanel({ canManage: true })
+      await flushPromises()
+      const success = vi.spyOn(useNotificationStore(), 'success')
+
+      await btn(w, 'Delete…').trigger('click')
+      await flushPromises()
+      expect(syncApi.previewOrphanDelete).toHaveBeenCalledWith('set-1', [1])
+      expect(w.find('[data-testid="delete-group-delete"]').text()).toContain('1 to delete from the target')
+      expect(w.find('[data-testid="delete-group-skip"]').text()).toContain('This set now manages it.')
+      const go = () => btn(w, 'Delete 1')
+      expect(go().attributes('disabled')).toBeDefined()
+      await w.find('#drift-delete-confirm').setValue('delete')
+      expect(go().attributes('disabled')).toBeDefined() // exact word only
+      await w.find('#drift-delete-confirm').setValue('DELETE')
+      expect(go().attributes('disabled')).toBeUndefined()
+
+      await go().trigger('click')
+      await flushPromises()
+
+      expect(syncApi.deleteOrphans).toHaveBeenCalledWith('set-1', [1], 'DELETE')
+      expect(success).toHaveBeenCalledWith('Delete finished: 1 deleted')
+      expect(w.emitted('changed')).toHaveLength(1)
+      expect(w.find('[data-testid="delete-preview"]').exists()).toBe(false)
+    })
+
+    it('warns with the reason when an orphan was left alone at delete time', async () => {
+      vi.mocked(syncApi.deleteOrphans).mockResolvedValueOnce({ data: { deleted: 0, skipped: 0, failed: 1, items: [
+        { seq: 1, outcome: 'FAILED', targetDn: 'uid=old,ou=people,dc=hr', message: 'delete failed: NOT_ALLOWED_ON_NONLEAF' },
+      ] } } as never)
+      const w = mountPanel({ canManage: true })
+      await flushPromises()
+      const warning = vi.spyOn(useNotificationStore(), 'warning')
+      await btn(w, 'Delete…').trigger('click')
+      await flushPromises()
+      await w.find('#drift-delete-confirm').setValue('DELETE')
+      await btn(w, 'Delete 1').trigger('click')
+      await flushPromises()
+
+      expect(warning).toHaveBeenCalledWith('Delete finished: 1 failed. delete failed: NOT_ALLOWED_ON_NONLEAF')
     })
   })
 })

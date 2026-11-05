@@ -535,6 +535,30 @@ export const previewDriftRepair = (setId: string, seqs: number[]) =>
 export const repairDrift = (setId: string, seqs: number[]) =>
   client.post<SyncDriftRepairResult>(`/superadmin/sync/sets/${setId}/drift/repair`, { seqs })
 
+/** What deleting one orphan would do, re-checked live. */
+export interface SyncOrphanDeletePreviewItem {
+  seq: number
+  action: 'DELETE' | 'SKIP'
+  targetDn: string
+  /** For a SKIP: why it's left alone. */
+  reason: string | null
+}
+
+export interface SyncOrphanDeleteResult {
+  deleted: number
+  skipped: number
+  failed: number
+  items: { seq: number; outcome: 'DELETED' | 'SKIPPED' | 'FAILED'; targetDn: string; message: string | null }[]
+}
+
+export const previewOrphanDelete = (setId: string, seqs: number[]) =>
+  client.post<{ items: SyncOrphanDeletePreviewItem[] }>(
+    `/superadmin/sync/sets/${setId}/drift/orphans/delete/preview`, { seqs })
+
+/** `confirm` must be exactly "DELETE" (the dialog's typed confirmation). */
+export const deleteOrphans = (setId: string, seqs: number[], confirm: string) =>
+  client.post<SyncOrphanDeleteResult>(`/superadmin/sync/sets/${setId}/drift/orphans/delete`, { seqs, confirm })
+
 // ── Inventory + operator triggers ───────────────────────────────────────────
 
 /** Spring Data Page envelope (the subset the UI consumes). */

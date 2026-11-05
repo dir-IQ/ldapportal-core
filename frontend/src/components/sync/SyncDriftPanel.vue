@@ -105,14 +105,19 @@
       </div>
 
       <!-- Repair: missing and drifted entries, through the sync engine, after a live re-check and a preview. -->
-      <div v-if="canManage && repairableOnPage.length" class="flex items-center gap-2 flex-wrap" data-testid="drift-bulk">
+      <div v-if="canManage && selectableOnPage.length" class="flex items-center gap-2 flex-wrap" data-testid="drift-bulk">
         <span class="text-xs text-gray-600 tabular-nums mr-1">
-          {{ selected.size ? `${selected.size} selected` : 'Select missing or drifted entries to repair them' }}
+          {{ selected.size ? `${selected.size} selected` : 'Select entries to repair or delete them' }}
         </span>
-        <button type="button" class="btn-secondary btn-compact" :disabled="!selected.size"
-                title="Re-check the selected entries live, then show what a repair would create or re-apply before anything is written"
-                @click="openRepair([...selected])">
-          Repair<template v-if="selected.size"> ({{ selected.size }})</template>…
+        <button type="button" class="btn-secondary btn-compact" :disabled="!selectedRepairable.length"
+                title="Re-check the selected missing and drifted entries live, then show what a repair would create or re-apply before anything is written"
+                @click="openRepair(selectedRepairable)">
+          Repair<template v-if="selectedRepairable.length"> ({{ selectedRepairable.length }})</template>…
+        </button>
+        <button v-if="selectedOrphans.length" type="button" class="btn-danger btn-compact"
+                title="Re-check the selected orphans live, then show which would be deleted from the target before anything is"
+                @click="openDelete(selectedOrphans)">
+          Delete ({{ selectedOrphans.length }})…
         </button>
         <button v-if="selected.size" type="button" class="btn-neutral btn-compact" @click="selected = new Set()">
           Clear selection
@@ -125,7 +130,7 @@
             <tr>
               <th v-if="canManage" scope="col" class="w-8 pl-3">
                 <input type="checkbox" class="rounded border-gray-300" :checked="allSelected"
-                       :disabled="!repairableOnPage.length" aria-label="Select every repairable entry on this page"
+                       :disabled="!selectableOnPage.length" aria-label="Select every entry on this page that can be repaired or deleted"
                        @change="toggleAll(($event.target as HTMLInputElement).checked)" />
               </th>
               <th scope="col" class="w-8"><span class="sr-only">Details</span></th>
@@ -143,7 +148,7 @@
             <template v-for="e in entries" :key="e.seq">
               <tr :data-testid="`drift-row-${e.seq}`">
                 <td v-if="canManage" class="pl-3 align-top py-2">
-                  <input v-if="repairable(e)" type="checkbox" class="rounded border-gray-300"
+                  <input v-if="selectable(e)" type="checkbox" class="rounded border-gray-300"
                          :checked="selected.has(e.seq)" :aria-label="`Select ${e.targetDn}`"
                          @change="toggleSelected(e.seq)" />
                 </td>
@@ -169,6 +174,11 @@
                           :title="e.category === 'MISSING' ? 'Create the entry on the target from its source, after a live re-check and a preview' : 'Bring the target entry back to its source, after a live re-check and a preview'"
                           @click="openRepair([e.seq])">
                     {{ e.category === 'MISSING' ? 'Create' : 'Re-apply' }}…
+                  </button>
+                  <button v-else-if="deletable(e)" type="button" class="btn-danger btn-compact"
+                          title="Delete this orphaned entry from the target, after a live re-check, a preview and a typed confirmation"
+                          @click="openDelete([e.seq])">
+                    Delete…
                   </button>
                 </td>
               </tr>
@@ -268,6 +278,46 @@
       </template>
     </AppModal>
 
+    <AppModal v-model="showDelete" title="Delete orphaned entries" size="lg">
+      <div class="space-y-3 text-sm" data-testid="delete-preview">
+        <p v-if="deletePreviewing" class="text-gray-600">Re-checking the selected entries against both directories…</p>
+        <template v-else-if="deletePreview">
+          <p class="text-gray-600">Each entry was re-checked just now. Only an entry that carries this set’s source anchor,
+            that no sync set manages, and whose source entry isn’t in the set is deleted. A delete can’t be undone, and
+            is recorded in the audit log under your name.</p>
+          <div v-if="toDelete.length" data-testid="delete-group-delete">
+            <p class="font-medium text-rose-700">{{ toDelete.length }} to delete from the target</p>
+            <ul class="mt-1 space-y-1 text-xs font-mono break-all">
+              <li v-for="i in toDelete" :key="i.seq">{{ i.targetDn }}</li>
+            </ul>
+          </div>
+          <div v-if="deleteSkipped.length" data-testid="delete-group-skip">
+            <p class="font-medium text-gray-500">{{ deleteSkipped.length }} left alone</p>
+            <ul class="mt-1 space-y-1 text-xs">
+              <li v-for="i in deleteSkipped" :key="i.seq">
+                <span class="font-mono break-all">{{ i.targetDn }}</span>
+                <span v-if="i.reason" class="text-gray-500"> — {{ i.reason }}</span>
+              </li>
+            </ul>
+          </div>
+          <div v-if="toDelete.length">
+            <label for="drift-delete-confirm" class="block text-sm font-medium text-gray-700 mb-1">
+              Type DELETE to confirm
+            </label>
+            <input id="drift-delete-confirm" v-model="deleteConfirm" class="input w-40 font-mono" autocomplete="off" />
+          </div>
+        </template>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-neutral" :disabled="deleting" @click="showDelete = false">Cancel</button>
+        <button type="button" class="btn-danger"
+                :disabled="deleting || deletePreviewing || !toDelete.length || deleteConfirm !== 'DELETE'"
+                @click="applyDelete">
+          {{ deleting ? 'Deleting…' : `Delete ${toDelete.length}` }}
+        </button>
+      </template>
+    </AppModal>
+
     <p class="text-xs text-gray-500">
       Drift is a live comparison of the source and target, independent of what the reconciliation history says was
       applied. It’s checked after every reconcile and whenever you verify.
@@ -282,9 +332,9 @@ import AppModal from '@/components/AppModal.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { downloadBlob } from '@/composables/useApi'
 import {
-  getDrift, downloadDriftCsv, previewDriftRepair, repairDrift,
+  getDrift, downloadDriftCsv, previewDriftRepair, repairDrift, previewOrphanDelete, deleteOrphans,
   type SyncSet, type SyncVerifyResult, type SyncDriftPage, type SyncDriftEntry, type SyncDriftCategory,
-  type SyncDriftRepairPreviewItem,
+  type SyncDriftRepairPreviewItem, type SyncOrphanDeletePreviewItem,
 } from '@/api/sync'
 
 const props = defineProps<{
@@ -364,9 +414,20 @@ const preview = ref<SyncDriftRepairPreviewItem[] | null>(null)
 function repairable(e: SyncDriftEntry): boolean {
   return e.category !== 'ORPHAN' && !!e.sourceDn
 }
-const repairableOnPage = computed<SyncDriftEntry[]>(() => entries.value.filter(repairable))
+/** An orphan can be deleted only when the set writes a source anchor (so it's provably this set's). */
+function deletable(e: SyncDriftEntry): boolean {
+  return e.category === 'ORPHAN' && !!props.set.sourceAnchorAttribute
+}
+function selectable(e: SyncDriftEntry): boolean {
+  return repairable(e) || deletable(e)
+}
+const selectableOnPage = computed<SyncDriftEntry[]>(() => entries.value.filter(selectable))
+const selectedRepairable = computed<number[]>(() =>
+  entries.value.filter(e => repairable(e) && selected.value.has(e.seq)).map(e => e.seq))
+const selectedOrphans = computed<number[]>(() =>
+  entries.value.filter(e => deletable(e) && selected.value.has(e.seq)).map(e => e.seq))
 const allSelected = computed<boolean>(() =>
-  repairableOnPage.value.length > 0 && repairableOnPage.value.every(e => selected.value.has(e.seq)))
+  selectableOnPage.value.length > 0 && selectableOnPage.value.every(e => selected.value.has(e.seq)))
 const colCount = computed<number>(() => (props.canManage ? 6 : 4))
 
 function toggleSelected(seq: number): void {
@@ -377,7 +438,7 @@ function toggleSelected(seq: number): void {
 }
 
 function toggleAll(on: boolean): void {
-  selected.value = on ? new Set(repairableOnPage.value.map(e => e.seq)) : new Set()
+  selected.value = on ? new Set(selectableOnPage.value.map(e => e.seq)) : new Set()
 }
 
 const toApply = computed<SyncDriftRepairPreviewItem[]>(() =>
@@ -446,6 +507,66 @@ async function applyRepair(): Promise<void> {
     notif.error(errMsg(e))
   } finally {
     repairing.value = false
+  }
+}
+
+// ── Delete orphans ──────────────────────────────────────────────────────────
+// Destructive, so its own button, a live re-check, a preview and a typed
+// confirmation (the server requires it too).
+
+const showDelete = ref(false)
+const deletePreviewing = ref(false)
+const deleting = ref(false)
+const deletePreview = ref<SyncOrphanDeletePreviewItem[] | null>(null)
+const deleteConfirm = ref('')
+const toDelete = computed<SyncOrphanDeletePreviewItem[]>(() =>
+  (deletePreview.value ?? []).filter(i => i.action === 'DELETE'))
+const deleteSkipped = computed<SyncOrphanDeletePreviewItem[]>(() =>
+  (deletePreview.value ?? []).filter(i => i.action === 'SKIP'))
+
+async function openDelete(seqs: number[]): Promise<void> {
+  if (!seqs.length) return
+  deletePreview.value = null
+  deleteConfirm.value = ''
+  showDelete.value = true
+  deletePreviewing.value = true
+  try {
+    const { data: d } = await previewOrphanDelete(props.set.id, seqs)
+    deletePreview.value = d.items
+  } catch (e) {
+    notif.error(errMsg(e))
+    showDelete.value = false
+  } finally {
+    deletePreviewing.value = false
+  }
+}
+
+async function applyDelete(): Promise<void> {
+  const seqs = toDelete.value.map(i => i.seq)
+  if (!seqs.length || deleteConfirm.value !== 'DELETE') return
+  deleting.value = true
+  try {
+    const { data: r } = await deleteOrphans(props.set.id, seqs, deleteConfirm.value)
+    const parts = [
+      r.deleted ? `${r.deleted} deleted` : '',
+      r.skipped ? `${r.skipped} left alone` : '',
+      r.failed ? `${r.failed} failed` : '',
+    ].filter(Boolean)
+    const msg = `Delete finished: ${parts.join(', ') || 'nothing to do'}`
+    if (r.failed || r.skipped) {
+      const why = r.items.find(i => i.outcome !== 'DELETED' && i.message)?.message
+      notif.warning(why ? `${msg}. ${why}` : msg)
+    } else {
+      notif.success(msg)
+    }
+    showDelete.value = false
+    selected.value = new Set()
+    emit('changed')
+    await load()
+  } catch (e) {
+    notif.error(errMsg(e))
+  } finally {
+    deleting.value = false
   }
 }
 
