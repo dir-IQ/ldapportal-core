@@ -37,6 +37,7 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
@@ -402,21 +403,34 @@ class SyncControllerTest extends BaseControllerTest {
 
     @Test
     void driftRepair_previewsThenRepairs_forTheGivenItems() throws Exception {
-        given(service.previewDriftRepair(SET, List.of(3, 7))).willReturn(new com.ldapportal.dto.sync.SyncDriftRepairPreview(
+        given(service.previewDriftRepair(eq(SET), eq(List.of(3, 7)), argThat(at -> at.isEqual(DRIFT_AT)))).willReturn(new com.ldapportal.dto.sync.SyncDriftRepairPreview(
                 List.of(new com.ldapportal.dto.sync.SyncDriftRepairPreview.Item(3,
                         com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.CREATE, "uid=a,dc=dst", "uid=a,dc=src",
                         List.of(), null))));
-        given(service.repairDrift(eq(SET), eq(List.of(3, 7)), any())).willReturn(new com.ldapportal.dto.sync.SyncDriftRepairResult(
+        given(service.repairDrift(eq(SET), eq(List.of(3, 7)), argThat(at -> at.isEqual(DRIFT_AT)), any())).willReturn(new com.ldapportal.dto.sync.SyncDriftRepairResult(
                 1, 0, 0, 1, 0, 0, List.of()));
 
         mockMvc.perform(post(SETS + "/" + SET + "/drift/repair/preview").with(authentication(superadminAuth()))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[3,7]}"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[3,7],\"verifiedAt\":\"2026-11-05T08:00:00Z\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].action").value("CREATE"));
         mockMvc.perform(post(SETS + "/" + SET + "/drift/repair").with(authentication(superadminAuth()))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[3,7]}"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[3,7],\"verifiedAt\":\"2026-11-05T08:00:00Z\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.created").value(1));
+    }
+
+    private static final java.time.OffsetDateTime DRIFT_AT = java.time.OffsetDateTime.parse("2026-11-05T08:00:00Z");
+
+    @Test
+    void driftActions_withoutTheVerifyTheyWereChosenFrom_are400() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/orphans/delete").with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[4],\"confirm\":\"DELETE\"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/repair").with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[4]}"))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(service);
     }
 
     @Test
@@ -429,21 +443,21 @@ class SyncControllerTest extends BaseControllerTest {
     @Test
     void driftRepair_adminWithoutSuperadmin_isForbidden() throws Exception {
         mockMvc.perform(post(SETS + "/" + SET + "/drift/repair").with(authentication(adminAuth()))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[1]}"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[1],\"verifiedAt\":\"2026-11-05T08:00:00Z\"}"))
                 .andExpect(status().isForbidden());
     }
 
     @Test
     void orphanDelete_passesTheConfirmation_andIsForbiddenToAdmins() throws Exception {
-        given(service.deleteOrphans(eq(SET), eq(List.of(4)), eq("DELETE"), any()))
+        given(service.deleteOrphans(eq(SET), eq(List.of(4)), argThat(at -> at.isEqual(DRIFT_AT)), eq("DELETE"), any()))
                 .willReturn(new com.ldapportal.dto.sync.SyncOrphanDeleteResult(1, 0, 0, List.of()));
 
         mockMvc.perform(post(SETS + "/" + SET + "/drift/orphans/delete").with(authentication(superadminAuth()))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[4],\"confirm\":\"DELETE\"}"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[4],\"verifiedAt\":\"2026-11-05T08:00:00Z\",\"confirm\":\"DELETE\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.deleted").value(1));
         mockMvc.perform(post(SETS + "/" + SET + "/drift/orphans/delete/preview").with(authentication(adminAuth()))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[4]}"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[4],\"verifiedAt\":\"2026-11-05T08:00:00Z\"}"))
                 .andExpect(status().isForbidden());
     }
 

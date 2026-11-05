@@ -177,13 +177,21 @@ public class RecomputeEngine {
         }
     }
 
+    /** {@link #orphanDelete}'s reason for an entry already off the target. */
+    public static final String ORPHAN_GONE = "It's no longer on the target.";
+
     /**
      * Check, and with {@code apply} delete, a target entry a content verify
      * found orphaned: one under the set's target base that no source member
      * accounts for. Only an entry provably this set's goes: it must still be
      * on the target, carry the set's source anchor, not be placed there by any
      * sync set's index, not be tracked by this set under its anchor identity,
-     * and have no source entry with that identity back in the set. Anything
+     * and have no source entry with that identity back in the set. The anchor
+     * value must also have the shape of the set's identity (a UUID or GUID),
+     * so a hand-made entry with unrelated data in that attribute isn't taken
+     * for the set's; a set keyed on a custom identity attribute never deletes,
+     * having no such shape. And the source search base must be readable, so a
+     * missing or renamed base can't make every source entry look gone. Anything
      * else is left alone with the reason. A delete goes through the same live
      * write as an approved review delete; a non-leaf entry's delete fails and
      * is reported rather than deleting its subtree.
@@ -191,9 +199,6 @@ public class RecomputeEngine {
      * @return {@code DELETE} (deleted, or would be), {@code UNCHANGED} (left
      *         alone; the message says why) or {@code ERROR} (the delete failed)
      */
-    /** {@link #orphanDelete}'s reason for an entry already off the target. */
-    public static final String ORPHAN_GONE = "It's no longer on the target.";
-
     public SyncDeleteApproval orphanDelete(UUID syncSetId, String targetDn, boolean apply) {
         SyncSet set = syncSetRepo.findById(syncSetId)
                 .orElseThrow(() -> new IllegalArgumentException("Sync set not found"));
@@ -220,6 +225,13 @@ public class RecomputeEngine {
             return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn,
                     "The source directory type has no LDAP identity attribute to check the entry against.");
         }
+        if (set.getIdentityKey() != null && !set.getIdentityKey().isBlank()) {
+            // A custom identity attribute has no known shape, so its anchor
+            // values can't be told apart from other data in that attribute.
+            return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn,
+                    "This set keys on a custom identity attribute (" + set.getIdentityKey()
+                            + "), so its source anchor can't prove the entry is its own.");
+        }
         Entry entry = connectionFactory.withConnectionUnreplicated(target, conn -> conn.getEntry(targetDn, "*", anchorAttr));
         if (entry == null) {
             return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn, ORPHAN_GONE);
@@ -236,6 +248,21 @@ public class RecomputeEngine {
                     : syncSetRepo.findById(m.getSyncSetId()).map(o -> "Sync set \"" + o.getName() + "\"").orElse("Another sync set");
             return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn,
                     owner + " now manages it.");
+        }
+        for (String raw : anchors) {
+            if (!strategy.isWellFormed(strategy.normalize(raw))) {
+                return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn,
+                        "Its " + anchorAttr + " (" + raw + ") isn't a source identity this set writes, so it may"
+                                + " not be the set's entry.");
+            }
+        }
+        // The source search finds nothing when its base is gone, which must
+        // never read as "the source entry is gone".
+        String sourceBase = set.getObjectScopeBaseDn() != null ? set.getObjectScopeBaseDn() : source.getBaseDn();
+        if (connectionFactory.withConnectionUnreplicated(source, conn -> conn.getEntry(sourceBase, "1.1")) == null) {
+            return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn,
+                    "The set's source base (" + sourceBase + ") isn't on the source, so it can't confirm the source"
+                            + " entry is gone.");
         }
         for (String raw : anchors) {
             String identity = strategy.normalize(raw);

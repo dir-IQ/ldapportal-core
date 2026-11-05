@@ -529,11 +529,17 @@ export interface SyncDriftRepairResult {
   items: { seq: number; outcome: SyncDriftRepairOutcome; targetDn: string | null; message: string | null }[]
 }
 
-export const previewDriftRepair = (setId: string, seqs: number[]) =>
-  client.post<{ items: SyncDriftRepairPreviewItem[] }>(`/superadmin/sync/sets/${setId}/drift/repair/preview`, { seqs })
+/**
+ * `verifiedAt` is the stored verify's time from the drift page the items were
+ * chosen on: a newer verify renumbers the items, and the server refuses a stale
+ * selection rather than act on other entries.
+ */
+export const previewDriftRepair = (setId: string, seqs: number[], verifiedAt: string) =>
+  client.post<{ items: SyncDriftRepairPreviewItem[] }>(`/superadmin/sync/sets/${setId}/drift/repair/preview`,
+    { seqs, verifiedAt })
 
-export const repairDrift = (setId: string, seqs: number[]) =>
-  client.post<SyncDriftRepairResult>(`/superadmin/sync/sets/${setId}/drift/repair`, { seqs })
+export const repairDrift = (setId: string, seqs: number[], verifiedAt: string) =>
+  client.post<SyncDriftRepairResult>(`/superadmin/sync/sets/${setId}/drift/repair`, { seqs, verifiedAt })
 
 /** What deleting one orphan would do, re-checked live. */
 export interface SyncOrphanDeletePreviewItem {
@@ -551,13 +557,14 @@ export interface SyncOrphanDeleteResult {
   items: { seq: number; outcome: 'DELETED' | 'SKIPPED' | 'FAILED'; targetDn: string; message: string | null }[]
 }
 
-export const previewOrphanDelete = (setId: string, seqs: number[]) =>
+export const previewOrphanDelete = (setId: string, seqs: number[], verifiedAt: string) =>
   client.post<{ items: SyncOrphanDeletePreviewItem[] }>(
-    `/superadmin/sync/sets/${setId}/drift/orphans/delete/preview`, { seqs })
+    `/superadmin/sync/sets/${setId}/drift/orphans/delete/preview`, { seqs, verifiedAt })
 
-/** `confirm` must be exactly "DELETE" (the dialog's typed confirmation). */
-export const deleteOrphans = (setId: string, seqs: number[], confirm: string) =>
-  client.post<SyncOrphanDeleteResult>(`/superadmin/sync/sets/${setId}/drift/orphans/delete`, { seqs, confirm })
+/** `confirm` must be exactly "DELETE" (the dialog's typed confirmation); `verifiedAt` as for repair. */
+export const deleteOrphans = (setId: string, seqs: number[], verifiedAt: string, confirm: string) =>
+  client.post<SyncOrphanDeleteResult>(`/superadmin/sync/sets/${setId}/drift/orphans/delete`,
+    { seqs, verifiedAt, confirm })
 
 // ── Inventory + operator triggers ───────────────────────────────────────────
 

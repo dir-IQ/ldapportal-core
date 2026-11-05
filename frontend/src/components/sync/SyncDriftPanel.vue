@@ -414,9 +414,13 @@ const preview = ref<SyncDriftRepairPreviewItem[] | null>(null)
 function repairable(e: SyncDriftEntry): boolean {
   return e.category !== 'ORPHAN' && !!e.sourceDn
 }
-/** An orphan can be deleted only when the set writes a source anchor (so it's provably this set's). */
+/**
+ * An orphan can be deleted only when the set writes a source anchor and keys on
+ * its directory's own identity attribute, so the anchor proves it's this set's
+ * (a custom identity attribute's values have no shape to check).
+ */
 function deletable(e: SyncDriftEntry): boolean {
-  return e.category === 'ORPHAN' && !!props.set.sourceAnchorAttribute
+  return e.category === 'ORPHAN' && !!props.set.sourceAnchorAttribute && !props.set.identityKey
 }
 function selectable(e: SyncDriftEntry): boolean {
   return repairable(e) || deletable(e)
@@ -462,17 +466,29 @@ const previewGroups = computed<PreviewGroup[]>(() => {
   ]
 })
 
+/** The stored verify the page's items come from; sent with every repair or delete. */
+function verifiedAt(): string | null {
+  return data.value?.verifiedAt ?? null
+}
+
+/** A failed preview or apply: say why and reload, since a stale selection is the usual cause. */
+function actionFailed(e: unknown): void {
+  notif.error(errMsg(e))
+  void load()
+}
+
 async function openRepair(seqs: number[]): Promise<void> {
-  if (!seqs.length) return
+  const at = verifiedAt()
+  if (!seqs.length || !at) return
   preview.value = null
   showRepair.value = true
   previewing.value = true
   try {
-    const { data: d } = await previewDriftRepair(props.set.id, seqs)
+    const { data: d } = await previewDriftRepair(props.set.id, seqs, at)
     preview.value = d.items
   } catch (e) {
-    notif.error(errMsg(e))
     showRepair.value = false
+    actionFailed(e)
   } finally {
     previewing.value = false
   }
@@ -480,10 +496,11 @@ async function openRepair(seqs: number[]): Promise<void> {
 
 async function applyRepair(): Promise<void> {
   const seqs = toApply.value.map(i => i.seq)
-  if (!seqs.length) return
+  const at = verifiedAt()
+  if (!seqs.length || !at) return
   repairing.value = true
   try {
-    const { data: r } = await repairDrift(props.set.id, seqs)
+    const { data: r } = await repairDrift(props.set.id, seqs, at)
     const parts = [
       r.created ? `${r.created} created` : '',
       r.reapplied ? `${r.reapplied} re-applied` : '',
@@ -504,7 +521,8 @@ async function applyRepair(): Promise<void> {
     emit('changed')
     await load()
   } catch (e) {
-    notif.error(errMsg(e))
+    showRepair.value = false
+    actionFailed(e)
   } finally {
     repairing.value = false
   }
@@ -525,17 +543,18 @@ const deleteSkipped = computed<SyncOrphanDeletePreviewItem[]>(() =>
   (deletePreview.value ?? []).filter(i => i.action === 'SKIP'))
 
 async function openDelete(seqs: number[]): Promise<void> {
-  if (!seqs.length) return
+  const at = verifiedAt()
+  if (!seqs.length || !at) return
   deletePreview.value = null
   deleteConfirm.value = ''
   showDelete.value = true
   deletePreviewing.value = true
   try {
-    const { data: d } = await previewOrphanDelete(props.set.id, seqs)
+    const { data: d } = await previewOrphanDelete(props.set.id, seqs, at)
     deletePreview.value = d.items
   } catch (e) {
-    notif.error(errMsg(e))
     showDelete.value = false
+    actionFailed(e)
   } finally {
     deletePreviewing.value = false
   }
@@ -543,10 +562,11 @@ async function openDelete(seqs: number[]): Promise<void> {
 
 async function applyDelete(): Promise<void> {
   const seqs = toDelete.value.map(i => i.seq)
-  if (!seqs.length || deleteConfirm.value !== 'DELETE') return
+  const at = verifiedAt()
+  if (!seqs.length || !at || deleteConfirm.value !== 'DELETE') return
   deleting.value = true
   try {
-    const { data: r } = await deleteOrphans(props.set.id, seqs, deleteConfirm.value)
+    const { data: r } = await deleteOrphans(props.set.id, seqs, at, deleteConfirm.value)
     const parts = [
       r.deleted ? `${r.deleted} deleted` : '',
       r.skipped ? `${r.skipped} left alone` : '',
@@ -564,7 +584,8 @@ async function applyDelete(): Promise<void> {
     emit('changed')
     await load()
   } catch (e) {
-    notif.error(errMsg(e))
+    showDelete.value = false
+    actionFailed(e)
   } finally {
     deleting.value = false
   }
