@@ -234,7 +234,7 @@ public class RecomputeEngine {
         }
         Entry entry = connectionFactory.withConnectionUnreplicated(target, conn -> conn.getEntry(targetDn, "*", anchorAttr));
         if (entry == null) {
-            return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn, ORPHAN_GONE);
+            return new SyncDeleteApproval(SyncPreviewAction.UNCHANGED, target.getId(), targetDn, ORPHAN_GONE, true);
         }
         String[] anchors = entry.getAttributeValues(anchorAttr);
         if (anchors == null || anchors.length == 0) {

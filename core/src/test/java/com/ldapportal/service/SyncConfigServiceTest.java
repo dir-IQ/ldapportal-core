@@ -81,7 +81,8 @@ class SyncConfigServiceTest {
     void setUp() {
         service = new SyncConfigService(linkRepo, setRepo, membershipRepo, directoryRepo,
                 reconciler, verifier, enqueuer, previewService, reconcileHistory, engine, auditService,
-                reconcileRunRepo, verifyProgress, driftStore);
+                reconcileRunRepo, verifyProgress, driftStore,
+                new com.ldapportal.ldap.sync.SyncVerifySnapshot(setRepo, driftStore));
     }
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
@@ -453,8 +454,13 @@ class SyncConfigServiceTest {
         assertThat(r.created()).isEqualTo(1);
         assertThat(r.reapplied()).isEqualTo(1);
         assertThat(r.skipped()).isEqualTo(3);
-        // Past the hash gate first, for just the entries being repaired.
-        verify(membershipRepo).forgetAppliedContentOf(eq(setId), eq(List.of("new", "drift")), any());
+        // Past the hash gate, each just before its own recompute, and only for the entries being repaired.
+        var order = org.mockito.Mockito.inOrder(membershipRepo, engine);
+        order.verify(membershipRepo).forgetAppliedContentOf(eq(setId), eq(List.of("new")), any());
+        order.verify(engine).process(setId, "uid=new,dc=src", false);
+        order.verify(membershipRepo).forgetAppliedContentOf(eq(setId), eq(List.of("drift")), any());
+        order.verify(engine).process(setId, "uid=drift,dc=src", false);
+        verify(membershipRepo, org.mockito.Mockito.times(2)).forgetAppliedContentOf(any(), any(), any());
         verify(engine, never()).process(eq(setId), eq("uid=gone,dc=src"), org.mockito.ArgumentMatchers.anyBoolean());
         // Each write audited with the operator; attribute names only.
         @SuppressWarnings("unchecked") org.mockito.ArgumentCaptor<java.util.Map<String, Object>> detail = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
@@ -465,7 +471,8 @@ class SyncConfigServiceTest {
         assertThat(detail.getValue()).containsEntry("operation", "drift-repair").containsEntry("attributes", List.of("mail"));
         // Created, re-applied, and found already fixed leave the stored verify; counts restated.
         verify(driftStore).delete(eq(setId), org.mockito.ArgumentMatchers.argThat(rowsAt(0, 1, 3)));
-        verify(setRepo).restateVerifyCounts(setId, 1, 1, 0);
+        // Only while the verify the items came from is still the stored one.
+        verify(setRepo).restateVerifyCounts(setId, AT, 1, 1, 0);
     }
 
     @Test
@@ -483,6 +490,23 @@ class SyncConfigServiceTest {
         assertThat(r.items()).extracting(i -> i.outcome().name()).contains("HELD", "FAILED");
         verify(auditService, never()).record(any(), any(), any(), any(), any());
         verify(driftStore).delete(eq(setId), org.mockito.ArgumentMatchers.argThat(rowsAt(3))); // only the one found already in sync
+    }
+
+    @Test
+    void repairDrift_cutShort_leavesTheHashOfEntriesItNeverReached() {
+        UUID setId = driftFixture();
+        when(linkRepo.findById(any())).thenReturn(Optional.empty());
+        // The first recompute fails hard (e.g. the target went away mid-repair).
+        when(engine.process(setId, "uid=new,dc=src", false)).thenThrow(new IllegalStateException("target down"));
+        when(engine.process(setId, "uid=drift,dc=src", false)).thenThrow(new IllegalStateException("target down"));
+
+        service.repairDrift(setId, List.of(0, 1), AT, null);
+
+        // Each identity is reset only as its own recompute is attempted.
+        verify(membershipRepo).forgetAppliedContentOf(eq(setId), eq(List.of("new")), any());
+        verify(membershipRepo).forgetAppliedContentOf(eq(setId), eq(List.of("drift")), any());
+        verify(membershipRepo, never()).forgetAppliedContentOf(eq(setId),
+                org.mockito.ArgumentMatchers.argThat(c -> c.size() > 1), any());
     }
 
     @Test
@@ -523,7 +547,7 @@ class SyncConfigServiceTest {
                 com.ldapportal.dto.sync.SyncPreviewAction.DELETE, dir, "uid=ghost,dc=dst", null));
         when(engine.orphanDelete(setId, "uid=gone,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
                 com.ldapportal.dto.sync.SyncPreviewAction.UNCHANGED, dir, "uid=gone,dc=dst",
-                com.ldapportal.ldap.sync.RecomputeEngine.ORPHAN_GONE));
+                "Any wording: the flag, not the message, marks it gone.", true));
         when(engine.orphanDelete(setId, "uid=kids,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
                 com.ldapportal.dto.sync.SyncPreviewAction.ERROR, dir, "uid=kids,dc=dst", "delete failed: NOT_ALLOWED_ON_NONLEAF"));
         when(engine.orphanDelete(setId, "uid=kept,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
