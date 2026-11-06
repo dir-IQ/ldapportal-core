@@ -410,5 +410,85 @@ class ScheduledReportJobServiceTest {
         assertThat(saved.getReportParams()).doesNotContainKey("scopeBaseDn");
         org.mockito.Mockito.verifyNoInteractions(permissionService);
     }
-}
 
+    // ── run claim: one delivery per run across instances ──
+
+    @Test
+    void claimRun_neverRunJob_claimsTheNullRow_andAdvancesTheJob() {
+        ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        when(jobRepo.claimFirstRun(j.getId(), now)).thenReturn(1);
+
+        assertThat(service.claimRun(j)).isTrue();
+
+        assertThat(j.getLastRunAt()).isEqualTo(now);
+        verify(jobRepo, never()).claimRun(any(), any(), any());
+    }
+
+    @Test
+    void claimRun_movesLastRunAtFromTheValueTheJobWasReadWith() {
+        ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
+        OffsetDateTime seen = OffsetDateTime.parse("2026-06-19T08:00:00Z");
+        j.setLastRunAt(seen);
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        when(jobRepo.claimRun(j.getId(), seen, now)).thenReturn(1);
+
+        assertThat(service.claimRun(j)).isTrue();
+
+        assertThat(j.getLastRunAt()).isEqualTo(now);
+    }
+
+    @Test
+    void claimRun_lost_returnsFalse_andLeavesTheJobAsRead() {
+        ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
+        OffsetDateTime seen = OffsetDateTime.parse("2026-06-19T08:00:00Z");
+        j.setLastRunAt(seen);
+        when(jobRepo.claimRun(any(), any(), any())).thenReturn(0);
+
+        assertThat(service.claimRun(j)).isFalse();
+
+        assertThat(j.getLastRunAt()).isEqualTo(seen);
+    }
+
+    @Test
+    void runJob_neverThrows_evenWhenTheOutcomeCannotBeSaved() {
+        ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
+        when(dirRepo.findById(dirId)).thenThrow(new RuntimeException("db down"));
+        when(jobRepo.findById(j.getId())).thenThrow(new RuntimeException("db down"));
+
+        service.runJob(j, ReportRunTrigger.SCHEDULED); // must not throw
+    }
+
+    // ── recipients: one copy per address ──
+
+    @Test
+    void runJob_sendsOneCopyPerAddress_evenWhenListedTwiceOrInAnotherCase() {
+        ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
+        j.setDeliveryRecipients("a@b.com, c@d.com,A@B.com , a@b.com");
+        DirectoryConnection dc = mock(DirectoryConnection.class);
+        when(dc.getDisplayName()).thenReturn("Corp LDAP");
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        when(contentProvider.appliesTo(dc, "DISABLED_ACCOUNTS")).thenReturn(true);
+        when(contentProvider.run(any(), any(), any(), any())).thenReturn(new ReportData(List.of("c"), List.of()));
+        when(renderer.supports(ReportOutputFormat.CSV)).thenReturn(true);
+        when(renderer.render(any(), any())).thenReturn(new RenderedReport(new byte[]{1}, "text/csv", "r.csv"));
+        when(emailService.sendWithAttachment(any(), any(), any(), any(), any(), any()))
+                .thenReturn(EmailService.SendResult.SENT);
+        when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
+
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
+
+        verify(emailService).sendWithAttachment(eq("a@b.com"), any(), any(), any(), any(), any());
+        verify(emailService).sendWithAttachment(eq("c@d.com"), any(), any(), any(), any(), any());
+        verify(emailService, org.mockito.Mockito.times(2))
+                .sendWithAttachment(any(), any(), any(), any(), any(), any());
+        assertThat(j.getLastRunMessage()).contains("2/2 recipient(s)");
+    }
+
+    @Test
+    void splitRecipients_keepsTheFirstSpelling_inOrder_andDropsBlanks() {
+        assertThat(ScheduledReportJobService.splitRecipients(" B@x.com ,, a@y.com, b@X.COM ,"))
+                .containsExactly("B@x.com", "a@y.com");
+        assertThat(ScheduledReportJobService.splitRecipients(null)).isEmpty();
+    }
+}
