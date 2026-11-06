@@ -99,7 +99,10 @@ tokens); the directory/admin/ISVA plays use the API token.
   - Directory: `userBaseDns` / `groupBaseDns` are replaced to exactly the lists
     you send (omit ⇒ empty).
   - Admin: `profileRoles` and `featurePermissions` are replaced — any role or
-    override **not** in the request is removed.
+    override **not** in the request is removed. (Exception, bootstrap file
+    only: an admin entry with **no** `profileRoles` key leaves the admin's
+    profile roles and profile-scoped overrides untouched — see the config
+    export notes below.)
 - **Validation failures** return **400** (`IllegalArgumentException` →
   RFC 7807 ProblemDetail); a duplicate key from a concurrent create returns
   **409**; a licensing/edition gate returns **402**.
@@ -208,6 +211,12 @@ the referenced source must already exist). Entra-only: `tenantId`,
 ```
 `profileRoles` and `featurePermissions` are **full-replace**. A per-profile
 feature override requires a matching `profileRole` on the same profile.
+
+In a `BOOTSTRAP_CONFIG_FILE`, an admin entry that **omits** the `profileRoles`
+key leaves that admin's profile roles — and the profile-scoped overrides that
+belong to them — as they are; `featurePermissions` then replaces only the
+admin-wide overrides. Write `profileRoles: []` to clear them explicitly. (The
+REST `PUT …/by-username/{username}` is unchanged: omitted means empty.)
 
 > **Limitation:** `profileRoles[].profileId` is a provisioning-profile **UUID**,
 > not a stable slug. Until profiles get an IaC key of their own, resolve the
@@ -372,9 +381,11 @@ the sections through the by-key upserts in §1.
   the `auditDataSources` section above it, so the link resolves on restore.
 - Admin **profile-scoped** roles/overrides are *not* yet exported — they key on
   a provisioning-profile UUID that a fresh DB regenerates; portable once
-  profiles gain a stable slug. Admins export with `profileRoles: []`.
-- A directory's `auditDataSourceId` is dropped (audit sources aren't exported
-  yet), and **superadmins** are excluded (the bootstrap superadmin comes from
+  profiles gain a stable slug. Admins therefore export **without** a
+  `profileRoles` key, so restoring the dump (including re-applying it at every
+  startup) leaves existing profile roles and their profile-scoped overrides
+  untouched. An explicit list — even `[]` — would replace them.
+- **Superadmins** are excluded (the bootstrap superadmin comes from
   `BOOTSTRAP_SUPERADMIN_*`).
 - The dump alone is not a complete DR bundle — pair it with the `ENCRYPTION_KEY`,
   `JWT_SECRET`, the license file, and re-minted API tokens. The design doc's
