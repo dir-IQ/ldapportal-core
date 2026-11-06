@@ -6,6 +6,9 @@ import com.ldapportal.entity.ScheduledReportJob;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -31,4 +34,14 @@ public interface ScheduledReportJobRepository extends JpaRepository<ScheduledRep
     long countByEnabledTrue();
 
     long countByEnabledTrueAndLastRunStatus(ReportJobRunStatus status);
+
+    /**
+     * Disables every job {@code accountId} created. Called before an admin
+     * account is deleted: the {@code created_by_admin_id} FK is
+     * {@code ON DELETE SET NULL}, and a job with no creator runs unbounded, so
+     * leaving it enabled would widen it past the OUs it was created under.
+     */
+    @Modifying
+    @Query("update ScheduledReportJob j set j.enabled = false where j.createdByAdminId = :accountId")
+    int disableAllCreatedBy(@Param("accountId") UUID accountId);
 }

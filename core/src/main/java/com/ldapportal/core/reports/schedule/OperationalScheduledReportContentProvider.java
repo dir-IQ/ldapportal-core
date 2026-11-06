@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.core.reports.schedule;
 
+import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.core.reports.OperationalReportProvider;
 import com.ldapportal.core.reports.OperationalReportService;
 import com.ldapportal.core.reports.OperationalReportType;
 import com.ldapportal.core.reports.ReportData;
+import com.ldapportal.core.reports.ReportFileNames;
 import com.ldapportal.entity.DirectoryConnection;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -62,7 +64,23 @@ public class OperationalScheduledReportContentProvider implements ScheduledRepor
     @Override
     public ReportData run(DirectoryConnection dir, String reportType,
                           Map<String, Object> params, String scopeBaseDn) {
-        return operationalReportService.run(dir, reportType, withScope(params, scopeBaseDn), dir.getId());
+        return run(dir, reportType, params, scopeBaseDn, null);
+    }
+
+    /**
+     * With a {@code runAs} principal the report goes through the service's
+     * interactive entry point, so a job an admin created is clamped to their
+     * authorized OUs (search bases, groups column, audit-row DN filter) exactly
+     * as when they run it on demand. Without one it is the system entry point:
+     * unbounded apart from the stored {@code scopeBaseDn}.
+     */
+    @Override
+    public ReportData run(DirectoryConnection dir, String reportType,
+                          Map<String, Object> params, String scopeBaseDn, AuthPrincipal runAs) {
+        Map<String, Object> scoped = withScope(params, scopeBaseDn);
+        return runAs == null
+                ? operationalReportService.run(dir, reportType, scoped, dir.getId())
+                : operationalReportService.run(dir, reportType, scoped, dir.getId(), runAs);
     }
 
     /**
@@ -93,14 +111,6 @@ public class OperationalScheduledReportContentProvider implements ScheduledRepor
 
     /** "USERS_IN_GROUP" / "ivia.orphaned_accounts" → "Users In Group" / "Ivia Orphaned Accounts". */
     static String friendlyLabel(String id) {
-        String[] words = id.replaceAll("[._]", " ").trim().split("\\s+");
-        StringBuilder sb = new StringBuilder();
-        for (String w : words) {
-            if (w.isEmpty()) continue;
-            if (sb.length() > 0) sb.append(' ');
-            sb.append(Character.toUpperCase(w.charAt(0)))
-              .append(w.substring(1).toLowerCase());
-        }
-        return sb.length() == 0 ? id : sb.toString();
+        return ReportFileNames.label(id);
     }
 }
