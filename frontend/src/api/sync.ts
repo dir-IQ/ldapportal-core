@@ -444,6 +444,12 @@ export interface SyncVerifyResult {
   orphansAnchored?: boolean
   /** Members whose reference values the sync holds back (not drift); null when not counted. */
   heldReferences?: SyncHeldReferences | null
+  /**
+   * Anchored target entries no source member accounts for that this set still
+   * tracks (a delete held for review, or one the next reconcile makes): leaving
+   * the set, so not counted as orphans.
+   */
+  leavingSet?: number
 }
 
 export interface SyncHeldReferences {

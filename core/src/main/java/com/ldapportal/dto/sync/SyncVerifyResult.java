@@ -39,6 +39,10 @@ import java.util.List;
  *                          content drift's differing attributes. Stored for the
  *                          Drift tab ({@code SyncDriftStore}) rather than sent
  *                          with this result, which can be large.
+ * @param leavingSet        anchored target entries no source member accounts for
+ *                          that this set's own index still places there: entries
+ *                          leaving the set (a delete held for review, or one the
+ *                          next reconcile will make), so not counted as orphans
  */
 public record SyncVerifyResult(
         int sourceMembers,
@@ -55,10 +59,22 @@ public record SyncVerifyResult(
         String note,
         boolean orphansAnchored,
         HeldReferences heldReferences,
-        @com.fasterxml.jackson.annotation.JsonIgnore List<SyncDriftItem> items) {
+        @com.fasterxml.jackson.annotation.JsonIgnore List<SyncDriftItem> items,
+        int leavingSet) {
 
     public SyncVerifyResult {
         items = items == null ? List.of() : items;
+    }
+
+    /** As the canonical constructor, with no entries counted as leaving the set. */
+    public SyncVerifyResult(int sourceMembers, int targetEntries, int inSync, int missingOnTarget,
+                            int orphanOnTarget, int contentMismatches, List<String> sampleMissing,
+                            List<String> sampleOrphans, List<String> sampleMismatches,
+                            boolean sourceComplete, boolean targetComplete, String note, boolean orphansAnchored,
+                            HeldReferences heldReferences, List<SyncDriftItem> items) {
+        this(sourceMembers, targetEntries, inSync, missingOnTarget, orphanOnTarget, contentMismatches,
+                sampleMissing, sampleOrphans, sampleMismatches, sourceComplete, targetComplete, note,
+                orphansAnchored, heldReferences, items, 0);
     }
 
     /** As the canonical constructor, without drift items. */
@@ -101,7 +117,7 @@ public record SyncVerifyResult(
     public SyncVerifyResult withHeldReferences(HeldReferences held) {
         return new SyncVerifyResult(sourceMembers, targetEntries, inSync, missingOnTarget, orphanOnTarget,
                 contentMismatches, sampleMissing, sampleOrphans, sampleMismatches, sourceComplete, targetComplete,
-                note, orphansAnchored, held, items);
+                note, orphansAnchored, held, items, leavingSet);
     }
 
     /** A result whose orphans weren't limited to anchored entries. */

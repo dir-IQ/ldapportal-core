@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.dto.sync.SyncDriftItem;
 import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Entry;
@@ -179,7 +180,7 @@ class SyncContentVerifierTest {
 
         SyncVerifyResult anchored = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true,
                 null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor",
-                SyncContentVerifier.NOT_ELSEWHERE);
+                SyncContentVerifier.Owners.NONE);
         SyncVerifyResult unanchored = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true);
 
         // Only the entry the set stamped is its orphan; the other isn't its to account for.
@@ -203,10 +204,36 @@ class SyncContentVerifierTest {
                 value.equals("id-2") && dn.equalsIgnoreCase("uid=theirs,ou=people,dc=t");
 
         SyncVerifyResult r = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true,
-                null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor", otherSet);
+                null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor",
+                new SyncContentVerifier.Owners(otherSet, SyncContentVerifier.NOT_ELSEWHERE));
 
         assertThat(r.orphanOnTarget()).isEqualTo(1);
         assertThat(r.sampleOrphans()).containsExactly("uid=gone,ou=people,dc=t");
+        assertThat(r.leavingSet()).isZero();
+    }
+
+    @Test
+    void withAnAnchor_entriesThisSetStillTracksAreLeavingNotOrphans() {
+        // "held" left the source scope but its delete is held for review (still in
+        // this set's index); "gone" is in no index at all, a true orphan.
+        Map<String, Entry> actual = new LinkedHashMap<>();
+        actual.put("uid=gone,ou=people,dc=t", new Entry("uid=gone,ou=people,dc=t",
+                new Attribute("cn", "Gone"), new Attribute("srcAnchor", "id-1")));
+        actual.put("uid=held,ou=people,dc=t", new Entry("uid=held,ou=people,dc=t",
+                new Attribute("cn", "Held"), new Attribute("srcAnchor", "id-3")));
+        SyncContentVerifier.ManagedElsewhere thisSet = (value, dn) ->
+                value.equals("id-3") && dn.equalsIgnoreCase("uid=held,ou=people,dc=t");
+
+        SyncVerifyResult r = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true,
+                null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor",
+                new SyncContentVerifier.Owners(SyncContentVerifier.NOT_ELSEWHERE, thisSet));
+
+        assertThat(r.orphanOnTarget()).isEqualTo(1);
+        assertThat(r.sampleOrphans()).containsExactly("uid=gone,ou=people,dc=t");
+        assertThat(r.items()).extracting(SyncDriftItem::targetDn).containsExactly("uid=gone,ou=people,dc=t");
+        assertThat(r.leavingSet()).isEqualTo(1);
+        // Carried through when held references are attached afterwards.
+        assertThat(r.withHeldReferences(null).leavingSet()).isEqualTo(1);
     }
 
     // ── held references ──────────────────────────────────────────────────────────
