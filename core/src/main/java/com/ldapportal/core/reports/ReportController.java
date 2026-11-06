@@ -105,7 +105,8 @@ public class ReportController {
                 .project(req.columns());
         byte[] csv = CsvUtils.write(data.columns(), data.rows());
 
-        String filename = req.reportType().toLowerCase() + ".csv";
+        // Same name a scheduled CSV of this report gets (CsvReportRenderer).
+        String filename = ReportFileNames.forReportId(req.reportType(), "csv");
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.parseMediaType("text/csv"));
         headers.setContentDisposition(ContentDisposition.attachment().filename(filename).build());

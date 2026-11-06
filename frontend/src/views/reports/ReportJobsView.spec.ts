@@ -32,6 +32,10 @@ vi.mock('@/api/reports', () => ({
   runOperationalReportData: vi.fn().mockResolvedValue({ data: {} }),
   runOperationalReportPdf: vi.fn().mockResolvedValue({ data: new Blob() }),
 }))
+vi.mock('@/composables/useApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/composables/useApi')>()),
+  downloadBlob: vi.fn(),
+}))
 vi.mock('@/api/directories', () => ({ listDirectories: vi.fn().mockResolvedValue({ data: [] }) }))
 vi.mock('@/api/browse', () => ({ checkIntegrity: vi.fn().mockResolvedValue({ data: {} }) }))
 vi.mock('@/api/audit', () => ({ getAuditActions: vi.fn().mockResolvedValue({ data: [] }) }))
@@ -567,6 +571,125 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     await wrapper.find('.confirm-ok').trigger('click')
     await flushPromises()
     expect(reports.deleteReportJob).toHaveBeenCalledWith('dir-1', 'job-1')
+  })
+  // ── a scheduled file matches the same report run on demand ──
+
+  it('names an exported CSV like the scheduled delivery of the same report', async () => {
+    const { wrapper } = await runReport('DISABLED_ACCOUNTS', { columns: ['dn'], labels: {}, rows: [] })
+    const { downloadBlob } = await import('@/composables/useApi')
+
+    await (wrapper.vm as unknown as { doExport: (f: string) => Promise<void> }).doExport('CSV')
+
+    expect(downloadBlob).toHaveBeenCalledWith(expect.anything(), 'disabled-accounts.csv')
+  })
+
+  it('persists operational attributes for a scheduled entry report', async () => {
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('DISABLED_ACCOUNTS')
+    await wrapper.find('#rj-job-include-operational').setValue(true)
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+    expect(params.includeOperational).toBe(true)
+  })
+
+  it('offers no operational-attributes option for reports that are not entry listings', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('AUDIT_ENTRIES')
+
+    expect(wrapper.find('#rj-job-include-operational').exists()).toBe(false)
+  })
+
+  it('persists the columns a scheduled file carries, in order', async () => {
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('DISABLED_ACCOUNTS')
+    await wrapper.find('#rj-job-columns').setValue('dn, mail, cn')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+    expect(params.columns).toEqual(['dn', 'mail', 'cn'])
+  })
+
+  it('leaves columns off a job that keeps every column', async () => {
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('DISABLED_ACCOUNTS')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+    expect(params).not.toHaveProperty('columns')
+  })
+
+  it('copies the on-screen columns into a job for the report on screen', async () => {
+    const { wrapper } = await runReport('USERS_IN_BRANCH',
+      { columns: ['dn', 'cn', 'givenname', 'groups'], labels: {}, rows: [] })
+    wrapper.findComponent({ name: 'ResultsTable' }).vm.$emit('visible-columns-change', ['dn', 'givenname', 'groups'])
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('USERS_IN_BRANCH')
+    await wrapper.findAll('button').find(b => b.text() === 'Use on-screen columns')!.trigger('click')
+
+    expect((wrapper.find('#rj-job-columns').element as HTMLInputElement).value).toBe('dn, givenName, groups')
+  })
+
+  it('does not offer the on-screen columns for a job of a different report', async () => {
+    const { wrapper } = await runReport('USERS_IN_BRANCH',
+      { columns: ['dn', 'cn'], labels: {}, rows: [] })
+    wrapper.findComponent({ name: 'ResultsTable' }).vm.$emit('visible-columns-change', ['dn', 'cn'])
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('DISABLED_ACCOUNTS')
+
+    expect(wrapper.findAll('button').some(b => b.text() === 'Use on-screen columns')).toBe(false)
+  })
+
+  it('keeps an edited job\'s columns and operational-attributes choice', async () => {
+    const reports = await import('@/api/reports')
+    ;(reports.listReportJobs as unknown as Mock).mockResolvedValue({
+      data: { content: [
+        { id: 'job-1', name: 'Weekly', reportType: 'DISABLED_ACCOUNTS', cronExpression: '0 8 * * 1',
+          enabled: true, timezone: 'UTC', outputFormat: 'CSV', deliveryMethod: 'EMAIL', recipientEmail: 'a@b.com',
+          reportParams: { columns: ['dn', 'mail'], includeOperational: true } },
+      ] },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await scheduledJobsButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    await wrapper.findAll('button').find(b => b.text() === 'Edit')!.trigger('click')
+    await flushPromises()
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const params = (reports.updateReportJob as unknown as Mock).mock.calls[0][2].reportParams
+    expect(params.columns).toEqual(['dn', 'mail'])
+    expect(params.includeOperational).toBe(true)
   })
 })
 

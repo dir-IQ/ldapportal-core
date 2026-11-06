@@ -57,4 +57,14 @@ public interface ScheduledReportJobRepository extends JpaRepository<ScheduledRep
     @Modifying
     @Query("update ScheduledReportJob j set j.lastRunAt = :now where j.id = :id and j.lastRunAt is null")
     int claimFirstRun(@Param("id") UUID id, @Param("now") OffsetDateTime now);
+
+    /**
+     * Disables every job {@code accountId} created. Called before an admin
+     * account is deleted: the {@code created_by_admin_id} FK is
+     * {@code ON DELETE SET NULL}, and a job with no creator runs unbounded, so
+     * leaving it enabled would widen it past the OUs it was created under.
+     */
+    @Modifying
+    @Query("update ScheduledReportJob j set j.enabled = false where j.createdByAdminId = :accountId")
+    int disableAllCreatedBy(@Param("accountId") UUID accountId);
 }
