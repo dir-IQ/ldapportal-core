@@ -23,6 +23,12 @@
           Just now: source <span class="tabular-nums">{{ live.sourceMembers }}</span> members ·
           target <span class="tabular-nums">{{ live.targetEntries }}</span> entries ·
           <span class="tabular-nums text-emerald-700">{{ live.inSync }}</span> in sync
+          <template v-if="live.leavingSet">
+            · <span data-testid="leaving-set"
+                    title="Target entries that left the source scope but this set still tracks: a delete held for review, or one the next reconcile makes. Not counted as orphans."><span
+              class="tabular-nums">{{ live.leavingSet }}</span> leaving the set (held for delete or awaiting the next
+              reconcile)</span>
+          </template>
           <template v-if="!live.sourceComplete || !live.targetComplete">
             · <span class="text-amber-700">a directory read failed, so this check wasn’t saved</span>
           </template>

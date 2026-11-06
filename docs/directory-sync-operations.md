@@ -726,7 +726,13 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   orphaned: an entry under the same target base that nothing manages isn't
   this set's drift. Nor is one another set placed: when several sets write
   their anchor into the same attribute, an entry whose anchor value another
-  set's index places at that DN is left out too. Without an anchor every entry
+  set's index places at that DN is left out too. Nor is one **this** set's own
+  index still places there: an entry that left the source scope (e.g. the
+  applicability filter now excludes it) whose delete is held for review, or
+  that the next reconcile will delete, is *leaving the set*, not unaccounted
+  for. The Drift tab shows that count next to the totals (*n leaving the set*)
+  rather than as orphans; once the delete is approved, rejected with *Stop
+  tracking*, or made, it's either gone or an orphan. Without an anchor every entry
   under the target base that matches the filter is counted, and the result says
   so. It also counts **held references**: members with a reference value
   (`secDN`, group `member`, …) the sync holds back because the entry it names
@@ -745,7 +751,10 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   **Open set** button each; the dashboard's *entries differ from source*
   message links here (`?drift=1`) with the list open. A verify that couldn't
   read both directories completely doesn't replace the stored counts; the
-  column then says *(may be out of date)*.
+  column then says *(may be out of date)*. Deletes held for review (live, from
+  the index) are added as a separate figure — e.g. *In sync · 3 held for
+  delete* — since verification doesn't count them as orphans; they don't make
+  a set drifting.
 - **Saving in the set editor.** **Save** keeps the editor open, so you can
   edit, save and preview in one place. The preview runs on the **saved** set,
   so Preview impact is unavailable while the form holds unsaved edits. Saving a

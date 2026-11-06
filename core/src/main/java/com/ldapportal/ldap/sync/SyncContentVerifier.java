@@ -179,7 +179,7 @@ public class SyncContentVerifier {
                 targetSchemas.forDirectory(ctx.target), SyncReferenceAttributes.forSet(ctx.set), (n, dn) -> {
                     tracking.processed(n);
                     tracking.current(dn);
-                }, anchorAttr, managedElsewhere(syncSetId, expected, actual, anchorAttr));
+                }, anchorAttr, owners(syncSetId, expected, actual, anchorAttr));
         tracking.processed(expected.size());
         return result.withHeldReferences(heldReferencesOnSource(ctx, members.values()));
     }
@@ -259,7 +259,7 @@ public class SyncContentVerifier {
                         lookup.candidates(d.unresolvedReferences(), targetExists), sourceDn, d.identity()));
                 Map<String, Entry> actual = target == null ? Map.of() : Map.of(key, target);
                 SyncVerifyResult r = compare(expected, actual, excluded, true, true, schema, dnAttrs,
-                        CompareProgress.NONE, null, NOT_ELSEWHERE);
+                        CompareProgress.NONE, null, Owners.NONE);
                 SyncDriftItem item = r.items().isEmpty() ? null : r.items().get(0);
                 RecheckState state = item == null ? RecheckState.IN_SYNC
                         : item.category() == SyncDriftCategory.MISSING ? RecheckState.MISSING : RecheckState.MISMATCH;
@@ -373,7 +373,7 @@ public class SyncContentVerifier {
                                     Set<String> excluded, boolean sourceComplete, boolean targetComplete,
                                     com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs) {
         return compare(expected, actual, excluded, sourceComplete, targetComplete, schema, dnAttrs,
-                CompareProgress.NONE, null, NOT_ELSEWHERE);
+                CompareProgress.NONE, null, Owners.NONE);
     }
 
     /** Says whether another set manages an anchored entry: (anchor value, entry DN) → true when it does. */
@@ -384,6 +384,16 @@ public class SyncContentVerifier {
 
     static final ManagedElsewhere NOT_ELSEWHERE = (v, dn) -> false;
 
+    /**
+     * Who the index says placed an anchored target entry: another set
+     * ({@code elsewhere}), so it's that set's, or this set ({@code here}), so
+     * it's leaving this set (a held delete, or one the next reconcile makes).
+     * Either way it isn't this set's orphan.
+     */
+    record Owners(ManagedElsewhere elsewhere, ManagedElsewhere here) {
+        static final Owners NONE = new Owners(NOT_ELSEWHERE, NOT_ELSEWHERE);
+    }
+
     /** Identities per query when looking up who manages the orphan candidates. */
     static final int IDENTITY_BATCH = 500;
 
@@ -391,12 +401,13 @@ public class SyncContentVerifier {
      * For the anchored target entries this set can't account for: whether
      * another set's index places that anchor value at that very DN, so the entry
      * is that set's, not this one's orphan (several sets may write their anchor
-     * into the same attribute under one target base).
+     * into the same attribute under one target base). One this set's own index
+     * still places there is leaving the set, not an orphan either.
      */
-    private ManagedElsewhere managedElsewhere(UUID syncSetId, Map<String, Expected> expected,
-                                              Map<String, Entry> actual, String anchorAttr) {
+    private Owners owners(UUID syncSetId, Map<String, Expected> expected,
+                          Map<String, Entry> actual, String anchorAttr) {
         if (anchorAttr == null) {
-            return NOT_ELSEWHERE;
+            return Owners.NONE;
         }
         java.util.Set<String> values = new java.util.LinkedHashSet<>();
         for (Map.Entry<String, Entry> en : actual.entrySet()) {
@@ -408,27 +419,30 @@ public class SyncContentVerifier {
             }
         }
         if (values.isEmpty()) {
-            return NOT_ELSEWHERE;
+            return Owners.NONE;
         }
-        // identity -> normalized target DNs other sets place it at
+        // identity -> normalized target DNs other sets (elsewhere) or this set (here) place it at
         Map<String, Set<String>> elsewhere = new HashMap<>();
+        Map<String, Set<String>> here = new HashMap<>();
         List<String> all = new ArrayList<>(values);
         for (int from = 0; from < all.size(); from += IDENTITY_BATCH) {
             for (com.ldapportal.entity.Membership m
                     : membershipRepo.findAllByIdentityIn(all.subList(from, Math.min(all.size(), from + IDENTITY_BATCH)))) {
-                if (!syncSetId.equals(m.getSyncSetId()) && m.getTargetDn() != null) {
-                    elsewhere.computeIfAbsent(m.getIdentity(), k -> new java.util.HashSet<>()).add(normDn(m.getTargetDn()));
+                if (m.getTargetDn() != null) {
+                    (syncSetId.equals(m.getSyncSetId()) ? here : elsewhere)
+                            .computeIfAbsent(m.getIdentity(), k -> new java.util.HashSet<>()).add(normDn(m.getTargetDn()));
                 }
             }
         }
-        return (value, dn) -> elsewhere.getOrDefault(value, Set.of()).contains(normDn(dn));
+        return new Owners((value, dn) -> elsewhere.getOrDefault(value, Set.of()).contains(normDn(dn)),
+                (value, dn) -> here.getOrDefault(value, Set.of()).contains(normDn(dn)));
     }
 
     static SyncVerifyResult compare(Map<String, Expected> expected, Map<String, Entry> actual,
                                     Set<String> excluded, boolean sourceComplete, boolean targetComplete,
                                     com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs,
                                     CompareProgress progress, String anchorAttr,
-                                    ManagedElsewhere managedElsewhere) {
+                                    Owners owners) {
         int inSync = 0;
         int compared = 0;
         List<String> missing = new ArrayList<>();
@@ -466,13 +480,25 @@ public class SyncContentVerifier {
         // an unanchored entry under the target base is someone else's.
         List<String> orphans = new ArrayList<>();
         List<SyncDriftItem> orphanItems = new ArrayList<>();
+        int leaving = 0;
         for (Map.Entry<String, Entry> en : actual.entrySet()) {
-            if (!expected.containsKey(en.getKey())
-                    && (anchorAttr == null || isOwnOrphan(en.getValue(), anchorAttr, managedElsewhere))) {
-                orphans.add(en.getValue().getDN());
-                orphanItems.add(new SyncDriftItem(SyncDriftCategory.ORPHAN, en.getValue().getDN(), null, null,
-                        List.of()));
+            if (expected.containsKey(en.getKey())) {
+                continue;
             }
+            if (anchorAttr != null) {
+                if (!isOwnOrphan(en.getValue(), anchorAttr, owners.elsewhere())) {
+                    continue;
+                }
+                // Still in this set's own index there: leaving the set (a delete
+                // held for review, or the next reconcile's), not unaccounted for.
+                if (placedBy(en.getValue(), anchorAttr, owners.here())) {
+                    leaving++;
+                    continue;
+                }
+            }
+            orphans.add(en.getValue().getDN());
+            orphanItems.add(new SyncDriftItem(SyncDriftCategory.ORPHAN, en.getValue().getDN(), null, null,
+                    List.of()));
         }
 
         List<SyncDriftItem> items = new ArrayList<>(missingItems.size() + orphanItems.size() + mismatchItems.size());
@@ -483,7 +509,7 @@ public class SyncContentVerifier {
                 expected.size(), actual.size(), inSync,
                 missing.size(), orphans.size(), mismatches.size(),
                 sample(missing), sample(orphans), sample(mismatches),
-                sourceComplete, targetComplete, null, anchorAttr != null, null, items);
+                sourceComplete, targetComplete, null, anchorAttr != null, null, items, leaving);
     }
 
     /**
@@ -540,6 +566,20 @@ public class SyncContentVerifier {
     }
 
     /** Anchored, and not placed at its DN by another set under any of its anchor values. */
+    /** Whether {@code index} places the entry at its DN under any of its anchor values. */
+    private static boolean placedBy(Entry e, String anchorAttr, ManagedElsewhere index) {
+        String[] values = e.getAttributeValues(anchorAttr);
+        if (values == null) {
+            return false;
+        }
+        for (String v : values) {
+            if (index.test(v, e.getDN())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isOwnOrphan(Entry e, String anchorAttr, ManagedElsewhere managedElsewhere) {
         String[] values = e.getAttributeValues(anchorAttr);
         if (values == null || values.length == 0) {
