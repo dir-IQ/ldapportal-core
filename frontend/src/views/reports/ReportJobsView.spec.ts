@@ -33,7 +33,6 @@ vi.mock('@/api/reports', () => ({
   runOperationalReportPdf: vi.fn().mockResolvedValue({ data: new Blob() }),
 }))
 vi.mock('@/api/directories', () => ({ listDirectories: vi.fn().mockResolvedValue({ data: [] }) }))
-vi.mock('@/api/browse', () => ({ checkIntegrity: vi.fn().mockResolvedValue({ data: {} }) }))
 vi.mock('@/api/audit', () => ({ getAuditActions: vi.fn().mockResolvedValue({ data: [] }) }))
 vi.mock('@/api/schema', () => ({
   listAttributeTypes: vi.fn().mockResolvedValue({ data: [
@@ -322,6 +321,15 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
       .toEqual(['ou=people,dc=example,dc=com', 'ou=staff,dc=example,dc=com'])
   })
 
+  it('offers no Integrity Check report: the Referential Integrity Check page has it', async () => {
+    hoisted.isSuperadmin = true
+    const wrapper = mountView()
+    await flushPromises()
+    const types = wrapper.find('#rj-report-type').findAll('option').map(o => o.attributes('value'))
+    expect(types).not.toContain('INTEGRITY_CHECK')
+    expect(types).toContain('MISSING_DATA')
+  })
+
   it('lets a superadmin browse the whole tree for the branch picker', async () => {
     hoisted.isSuperadmin = true
     const wrapper = mountView()
@@ -599,5 +607,5 @@ describe('ReportJobsView — result cells', () => {
     // No fixed cap: the span truncates against the column's set width.
     for (const c of cells) expect(c.classes()).not.toContain('max-w-xs')
   })
-})
 
+})

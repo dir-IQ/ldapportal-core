@@ -11,9 +11,10 @@ vi.mock('@/stores/auth', () => ({
 }))
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
 vi.mock('@/composables/useConfirm', () => ({ useConfirm: () => confirmMock }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+const downloadBlob = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useApi', () => ({ downloadBlob }))
 vi.mock('@/api/directories', () => ({
-  listDirectories: vi.fn(() => Promise.resolve({ data: [{ id: 'dir-1', displayName: 'Corp', directoryType: 'OPENLDAP' }] })),
+  listDirectories: vi.fn(() => Promise.resolve({ data: [{ id: 'dir-1', slug: 'corp', displayName: 'Corp', directoryType: 'OPENLDAP' }] })),
 }))
 const GHOST = 'uid=ghost,dc=example,dc=com'
 const GONE = 'uid=gone,dc=example,dc=com'
@@ -43,6 +44,8 @@ vi.mock('@/api/browse', () => ({
 vi.mock('@/components/DnPicker.vue', () => ({ default: { template: '<input />' } }))
 
 import IntegrityCheckView from './IntegrityCheckView.vue'
+
+const LINK_STUB = { props: ['to'], template: '<a class="dn-link" :data-to="JSON.stringify(to)"><slot /></a>' }
 import * as browseApi from '@/api/browse'
 
 function button(label: string): HTMLButtonElement | undefined {
@@ -50,7 +53,7 @@ function button(label: string): HTMLButtonElement | undefined {
 }
 
 async function runCheck() {
-  const wrapper = mount(IntegrityCheckView, { attachTo: document.body })
+  const wrapper = mount(IntegrityCheckView, { attachTo: document.body, global: { stubs: { RouterLink: LINK_STUB } } })
   await flushPromises()
   button('Run Check')!.click()
   await flushPromises()
@@ -138,7 +141,7 @@ describe('IntegrityCheckView', () => {
         attribute: 'secDN', value: 'uid=ghost,ou=people,dc=example,dc=com',
       }] },
     } as never)
-    const wrapper = mount(IntegrityCheckView, { attachTo: document.body })
+    const wrapper = mount(IntegrityCheckView, { attachTo: document.body, global: { stubs: { RouterLink: LINK_STUB } } })
     await flushPromises()
 
     const label = Array.from(document.querySelectorAll('label'))
@@ -158,11 +161,92 @@ describe('IntegrityCheckView', () => {
   })
 
   it('offers only the built-in checks where the directory has no reference check', async () => {
-    const wrapper = mount(IntegrityCheckView, { attachTo: document.body })
+    const wrapper = mount(IntegrityCheckView, { attachTo: document.body, global: { stubs: { RouterLink: LINK_STUB } } })
     await flushPromises()
 
     expect(browseApi.listIntegrityChecks).toHaveBeenCalledWith('dir-1')
     expect(document.body.textContent).not.toContain('Broken references (')
+    wrapper.unmount()
+  })
+
+  it('filters the issues by DN or description, and removes only what it shows', async () => {
+    const wrapper = await runCheck()
+    const filter = document.querySelector('#icv-filter') as HTMLInputElement
+    filter.value = 'GHOST'
+    filter.dispatchEvent(new Event('input'))
+    await flushPromises()
+
+    expect(document.querySelector('[data-testid="issue-count"]')!.textContent).toContain('3 issues found, 1 shown')
+    expect(document.body.textContent).not.toContain(GONE)
+    expect(document.body.textContent).not.toContain('cn=empty,dc=example,dc=com')
+
+    const selectAll = document.querySelector('input[aria-label="Select all broken references"]') as HTMLInputElement
+    selectAll.checked = true
+    selectAll.dispatchEvent(new Event('change'))
+    await flushPromises()
+    button('Remove broken references')!.click()
+    await flushPromises()
+    expect(browseApi.removeBrokenReferences).toHaveBeenCalledWith('dir-1', [
+      { groupDn: STAFF, attribute: 'member', value: GHOST },
+    ])
+    wrapper.unmount()
+  })
+
+  it('says when the filter matches nothing', async () => {
+    const wrapper = await runCheck()
+    const filter = document.querySelector('#icv-filter') as HTMLInputElement
+    filter.value = 'nothing-like-this'
+    filter.dispatchEvent(new Event('input'))
+    await flushPromises()
+    expect(document.body.textContent).toContain('No issues match “nothing-like-this”')
+    expect(button('Export CSV')!.disabled).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('exports the issues it shows as CSV, references included', async () => {
+    const wrapper = await runCheck()
+    button('Export CSV')!.click()
+    expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), 'integrity-check-corp.csv')
+    const csv = await (downloadBlob.mock.calls[0][0] as Blob).text()
+    expect(csv.split('\r\n')).toEqual([
+      'type,dn,description,attribute,value',
+      `"Broken Member References","${STAFF}","references non-existent DN: ${GHOST}","member","${GHOST}"`,
+      `"Broken Member References","${STAFF}","references non-existent DN: ${GONE}","member","${GONE}"`,
+      '"Empty Groups","cn=empty,dc=example,dc=com","Group has no members","",""',
+      '',
+    ])
+    wrapper.unmount()
+  })
+
+  it('links each issue\'s DN to the entry in the Directory Browser of the directory checked', async () => {
+    const wrapper = await runCheck()
+    const link = Array.from(document.querySelectorAll('a.dn-link'))
+      .find(a => a.textContent?.trim() === 'cn=empty,dc=example,dc=com')!
+    expect(JSON.parse(link.getAttribute('data-to')!)).toEqual({ path: '/superadmin/directory-browser',
+      query: { dir: 'dir-1', dn: 'cn=empty,dc=example,dc=com' } })
+    wrapper.unmount()
+  })
+
+  it('keeps the filter through the check that follows a removal, and clears it on a fresh run', async () => {
+    const wrapper = await runCheck()
+    const filter = () => document.querySelector('#icv-filter') as HTMLInputElement
+    filter().value = 'ghost'
+    filter().dispatchEvent(new Event('input'))
+    await flushPromises()
+    const selectAll = document.querySelector('input[aria-label="Select all broken references"]') as HTMLInputElement
+    selectAll.checked = true
+    selectAll.dispatchEvent(new Event('change'))
+    await flushPromises()
+    button('Remove broken references')!.click()
+    await flushPromises()
+
+    expect(browseApi.checkIntegrity).toHaveBeenCalledTimes(2)
+    expect(filter().value).toBe('ghost')
+    expect(document.querySelector('[data-testid="issue-count"]')!.textContent).toContain('1 shown')
+
+    button('Run Check')!.click()
+    await flushPromises()
+    expect(filter().value).toBe('')
     wrapper.unmount()
   })
 })
