@@ -73,11 +73,71 @@ class ScheduledReportJobSchedulerTest {
         ScheduledReportJob due = job("0 0 8 * * *", null, null); // never run → due
         ScheduledReportJob notDue = job("0 0 8 * * *", null, OffsetDateTime.parse("2026-06-20T08:00:00Z"));
         when(jobRepo.findAllByEnabledTrue()).thenReturn(List.of(due, notDue));
+        when(jobService.claimRun(due)).thenReturn(true);
 
         schedulerAt("2026-06-20T09:00:00Z").pollReportJobs();
 
         verify(jobService).runJob(due, ReportRunTrigger.SCHEDULED);
         verify(jobService, org.mockito.Mockito.never())
                 .runJob(org.mockito.ArgumentMatchers.eq(notDue), org.mockito.ArgumentMatchers.any());
+    }
+
+    // ── one delivery per run, however many pollers ──
+
+    @Test
+    void run_claimsTheJobBeforeRunningIt() {
+        ScheduledReportJob j = job("0 0 8 * * *", null, null);
+        when(jobService.claimRun(j)).thenReturn(true);
+
+        schedulerAt("2026-06-20T09:00:00Z").run(j, ReportRunTrigger.SCHEDULED);
+
+        var order = org.mockito.Mockito.inOrder(jobService);
+        order.verify(jobService).claimRun(j);
+        order.verify(jobService).runJob(j, ReportRunTrigger.SCHEDULED);
+    }
+
+    @Test
+    void poll_skipsADueJob_whoseClaimAnotherInstanceWon() {
+        ScheduledReportJob due = job("0 0 8 * * *", null, null);
+        when(jobRepo.findAllByEnabledTrue()).thenReturn(List.of(due));
+        when(jobService.claimRun(due)).thenReturn(false);
+
+        schedulerAt("2026-06-20T09:00:00Z").pollReportJobs();
+
+        verify(jobService, org.mockito.Mockito.never())
+                .runJob(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void runNow_isSkippedToo_whenItsClaimIsLost() {
+        ScheduledReportJob j = job("0 0 8 * * *", null, OffsetDateTime.parse("2026-06-20T08:00:00Z"));
+        when(jobService.claimRun(j)).thenReturn(false);
+
+        schedulerAt("2026-06-20T09:00:00Z").runNowAsync(j);
+
+        verify(jobService, org.mockito.Mockito.never())
+                .runJob(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void run_releasesTheInstanceGuard_soALaterRunCanClaimAgain() {
+        ScheduledReportJob j = job("0 0 8 * * *", null, null);
+        when(jobService.claimRun(j)).thenReturn(false, true);
+        ScheduledReportJobScheduler scheduler = schedulerAt("2026-06-20T09:00:00Z");
+
+        scheduler.run(j, ReportRunTrigger.SCHEDULED);
+        scheduler.run(j, ReportRunTrigger.MANUAL);
+
+        verify(jobService).runJob(j, ReportRunTrigger.MANUAL);
+    }
+
+    @Test
+    void aClaimedJob_isNotDueAgainBeforeItsNextFire_evenIfItsOutcomeWasNeverSaved() {
+        // The claim moved last_run_at to 08:00:30. If saving the outcome then
+        // fails, last_run_at stays there, and the next poll must not re-send.
+        ScheduledReportJob j = job("0 0 8 * * *", null, OffsetDateTime.parse("2026-06-20T08:00:30Z"));
+
+        assertThat(schedulerAt("2026-06-20T08:01:30Z").isDue(j)).isFalse();
+        assertThat(schedulerAt("2026-06-21T08:00:00Z").isDue(j)).isTrue();
     }
 }
