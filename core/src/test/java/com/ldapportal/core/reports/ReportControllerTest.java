@@ -24,6 +24,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -73,6 +74,18 @@ class ReportControllerTest extends BaseControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(
                         "\"dn\",\"cn\",\"mail\",\"uid\"\r\n\"uid=a\",\"A\",\"a@x\",\"a\"\r\n"));
+    }
+
+    @Test
+    void csvExport_isNamedLikeTheScheduledCsvOfTheSameReport() throws Exception {
+        stubReport();
+
+        // CsvReportRenderer names a scheduled "Users In Branch" CSV users-in-branch.csv.
+        mockMvc.perform(post(BASE + "/run").with(authentication(adminAuth())).with(csrf())
+                        .contentType("application/json")
+                        .content("{\"reportType\":\"USERS_IN_BRANCH\",\"reportParams\":{\"branchDn\":\"ou=p\"}}"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition", "attachment; filename=\"users-in-branch.csv\""));
     }
 
     @Test

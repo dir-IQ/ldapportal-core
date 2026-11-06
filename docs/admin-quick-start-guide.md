@@ -317,6 +317,11 @@ Base DN:  dc=corp,dc=local
   user action are hidden and the playbook API refuses requests, while existing
   playbook definitions and execution history are kept for when it is re-enabled.
 - **Scheduled Reports** — Set up recurring reports with email or S3 delivery in the Reports section.
+  A job delivers what its creator would get running the same report on demand: an admin's job
+  runs with that admin's current OU access, so it stops (recorded as failed) once they lose the
+  job's OU or their account is deactivated, and deleting the admin disables their jobs. A job can
+  carry the on-screen columns (**Use on-screen columns**) and operational attributes, and its file
+  is named like the on-demand export (e.g. `disabled-accounts.csv`).
 - **Bulk Operations** — Import/export users via CSV in the Bulk Import/Export section.
   **Group import** creates groups and adds or removes their members from one CSV:
   `cn`, optional attributes, optional `members` (separated by `|`; each a uid or a full

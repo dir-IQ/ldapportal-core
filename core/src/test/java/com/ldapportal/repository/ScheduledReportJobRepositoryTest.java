@@ -131,4 +131,56 @@ class ScheduledReportJobRepositoryTest {
         assertThat(repository.findAllByDirectoryId(dirA, PageRequest.of(0, 10)).getTotalElements()).isEqualTo(2);
         assertThat(repository.findAllByDirectoryId(dirB, PageRequest.of(0, 10)).getTotalElements()).isEqualTo(1);
     }
+
+    // ── run claim: the compare-and-set every instance's poll goes through ──
+
+    private static OffsetDateTime at(String instant) {
+        return OffsetDateTime.parse(instant);
+    }
+
+    @Test
+    void claimFirstRun_isWonOnce() {
+        UUID id = repository.saveAndFlush(job(UUID.randomUUID(), "never run", true)).getId();
+        em.clear();
+
+        // Two instances both read last_run_at = null and race for the first run.
+        assertThat(repository.claimFirstRun(id, at("2026-06-20T08:00:01Z"))).isEqualTo(1);
+        assertThat(repository.claimFirstRun(id, at("2026-06-20T08:00:02Z"))).isZero();
+        em.clear();
+
+        assertThat(repository.findById(id).orElseThrow().getLastRunAt().toInstant())
+                .isEqualTo(at("2026-06-20T08:00:01Z").toInstant());
+    }
+
+    @Test
+    void claimRun_isWonOnlyByTheCallerHoldingTheCurrentValue() {
+        ScheduledReportJob j = job(UUID.randomUUID(), "ran before", true);
+        j.setLastRunAt(at("2026-06-19T08:00:00Z"));
+        UUID id = repository.saveAndFlush(j).getId();
+        em.clear();
+        OffsetDateTime seen = repository.findById(id).orElseThrow().getLastRunAt();
+        em.clear();
+
+        // Both instances read the same `seen`; the first claim moves the row,
+        // so the second (and any poll holding an older snapshot) loses.
+        assertThat(repository.claimRun(id, seen, at("2026-06-20T08:00:01Z"))).isEqualTo(1);
+        assertThat(repository.claimRun(id, seen, at("2026-06-20T08:00:02Z"))).isZero();
+        em.clear();
+
+        OffsetDateTime current = repository.findById(id).orElseThrow().getLastRunAt();
+        assertThat(current.toInstant()).isEqualTo(at("2026-06-20T08:00:01Z").toInstant());
+        em.clear();
+        // A later run that read the moved value can claim the next run.
+        assertThat(repository.claimRun(id, current, at("2026-06-21T08:00:01Z"))).isEqualTo(1);
+    }
+
+    @Test
+    void claimFirstRun_isLost_onceTheJobHasRun() {
+        ScheduledReportJob j = job(UUID.randomUUID(), "ran before", true);
+        j.setLastRunAt(at("2026-06-19T08:00:00Z"));
+        UUID id = repository.saveAndFlush(j).getId();
+        em.clear();
+
+        assertThat(repository.claimFirstRun(id, at("2026-06-20T08:00:01Z"))).isZero();
+    }
 }

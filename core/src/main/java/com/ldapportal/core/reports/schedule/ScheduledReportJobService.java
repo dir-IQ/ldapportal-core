@@ -3,12 +3,16 @@ package com.ldapportal.core.reports.schedule;
 
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PermissionService;
+import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.core.reports.ReportData;
 import com.ldapportal.dto.reports.ReportJobRequest;
+import com.ldapportal.entity.Account;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.ScheduledReportJob;
+import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.exception.ResourceNotFoundException;
+import com.ldapportal.repository.AccountRepository;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.ScheduledReportJobRepository;
 import com.ldapportal.service.EmailService;
@@ -28,7 +32,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -64,6 +70,7 @@ public class ScheduledReportJobService {
     private final S3UploadService s3UploadService;
     private final Clock clock;
     private final PermissionService permissionService;
+    private final AccountRepository accountRepo;
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -256,6 +263,32 @@ public class ScheduledReportJobService {
     // ── Execution ────────────────────────────────────────────────────────────────
 
     /**
+     * Claims {@code job}'s next run in the database before anything is sent.
+     * The claim moves {@code last_run_at} from the value {@code job} was read
+     * with to now, so it only succeeds for one caller across every backend
+     * instance — a second instance polling the same due job, or a poll still
+     * holding a snapshot read before a run-now, loses and skips the run.
+     *
+     * <p>Moving {@code last_run_at} up front also means a run whose outcome
+     * then fails to save is not seen as due again on the next poll; it waits
+     * for the cron's next fire instead of re-sending every minute.</p>
+     *
+     * @return true when this caller won the claim and should run the job
+     */
+    public boolean claimRun(ScheduledReportJob job) {
+        OffsetDateTime seen = job.getLastRunAt();
+        OffsetDateTime at = now();
+        int claimed = seen == null
+                ? jobRepo.claimFirstRun(job.getId(), at)
+                : jobRepo.claimRun(job.getId(), seen, at);
+        if (claimed != 1) {
+            return false;
+        }
+        job.setLastRunAt(at);
+        return true;
+    }
+
+    /**
      * Runs one job end to end: content → render → deliver, then records the
      * outcome. Never throws — any failure (gated capability after a license
      * lapse, missing provider/renderer, delivery error) is recorded as
@@ -303,9 +336,21 @@ public class ScheduledReportJobService {
                 return;
             }
 
+            // Run with the creating admin's live authority, so the job yields
+            // what they'd get running the report on demand — and stops when
+            // that authority is gone rather than outliving it.
+            AuthPrincipal runAs;
+            try {
+                runAs = runAsPrincipal(job);
+            } catch (IllegalStateException e) {
+                recordResult(job.getId(), startedAt, ReportJobRunStatus.FAILED, e.getMessage(), trigger);
+                return;
+            }
+
             Map<String, Object> params = job.getReportParams() != null ? job.getReportParams() : Map.of();
             String scopeBaseDn = params.get("scopeBaseDn") != null ? params.get("scopeBaseDn").toString() : null;
-            ReportData data = provider.run(dc, job.getReportType(), params, scopeBaseDn);
+            ReportData data = provider.run(dc, job.getReportType(), params, scopeBaseDn, runAs)
+                    .project(exportColumns(params));
 
             ReportRenderer renderer = renderers.stream()
                     .filter(r -> r.supports(job.getOutputFormat()))
@@ -321,8 +366,57 @@ public class ScheduledReportJobService {
             recordResult(job.getId(), startedAt, outcome.status(), outcome.message(), trigger);
         } catch (Exception e) {
             log.error("Scheduled report job '{}' ({}) failed: {}", job.getName(), job.getId(), e.getMessage(), e);
-            recordResult(job.getId(), startedAt, ReportJobRunStatus.FAILED, truncate(e.getMessage(), 2000), trigger);
+            try {
+                recordResult(job.getId(), startedAt, ReportJobRunStatus.FAILED, truncate(e.getMessage(), 2000), trigger);
+            } catch (RuntimeException recordFailure) {
+                // Most likely the same failure (e.g. the database is down) that
+                // sank the first record. The run's claim already moved
+                // last_run_at, so the job is not retried before its next fire.
+                log.error("Could not record the outcome of report job '{}' ({}): {}",
+                        job.getName(), job.getId(), recordFailure.getMessage());
+            }
         }
+    }
+
+    /** Report param naming the columns a scheduled file carries, in order (see {@link ReportData#project}). */
+    static final String COLUMNS_PARAM = "columns";
+
+    /**
+     * The principal a job runs as. A job created by an admin runs as that
+     * admin, so the report is clamped to the OUs they hold <em>now</em> —
+     * the same scope an on-demand run would get. A superadmin's job, and a
+     * job with no recorded creator (created before creators were tracked, or
+     * whose creator's account was deleted), runs unbounded apart from its
+     * stored {@code scopeBaseDn}, as before.
+     *
+     * @throws IllegalStateException when the creating admin's account is deactivated
+     */
+    AuthPrincipal runAsPrincipal(ScheduledReportJob job) {
+        UUID creatorId = job.getCreatedByAdminId();
+        if (creatorId == null) {
+            return null;
+        }
+        Account creator = accountRepo.findById(creatorId).orElse(null);
+        if (creator == null || creator.getRole() == AccountRole.SUPERADMIN) {
+            return null;
+        }
+        if (!creator.isActive()) {
+            throw new IllegalStateException("The admin who created this job ("
+                    + creator.getUsername() + ") is deactivated; the job no longer runs");
+        }
+        return new AuthPrincipal(PrincipalType.ADMIN, creator.getId(), creator.getUsername());
+    }
+
+    /** The {@value #COLUMNS_PARAM} param as a list, or null (every column) when absent. */
+    static List<String> exportColumns(Map<String, Object> params) {
+        Object raw = params.get(COLUMNS_PARAM);
+        if (raw instanceof List<?> list) {
+            return list.stream().filter(java.util.Objects::nonNull).map(Object::toString).toList();
+        }
+        if (raw instanceof String s && !s.isBlank()) {
+            return Arrays.stream(s.split("\\s*,\\s*")).filter(c -> !c.isBlank()).toList();
+        }
+        return null;
     }
 
     /** The status + human-readable message a delivery attempt resolves to. */
@@ -389,13 +483,23 @@ public class ScheduledReportJobService {
         return "[LDAPPortal] " + label + " — " + dc.getDisplayName() + " — " + SUBJECT_DATE.format(now());
     }
 
-    private static List<String> splitRecipients(String recipients) {
+    /**
+     * The distinct recipient addresses, in the order given. An address listed
+     * twice — exactly, or differing only in case — is sent one copy.
+     */
+    static List<String> splitRecipients(String recipients) {
         if (recipients == null || recipients.isBlank()) {
             return List.of();
         }
-        return Arrays.stream(recipients.split("\\s*,\\s*"))
-                .filter(s -> !s.isBlank())
-                .toList();
+        LinkedHashSet<String> seen = new LinkedHashSet<>();
+        List<String> out = new ArrayList<>();
+        for (String raw : recipients.split(",")) {
+            String address = raw.trim();
+            if (!address.isEmpty() && seen.add(address.toLowerCase(Locale.ROOT))) {
+                out.add(address);
+            }
+        }
+        return out;
     }
 
     @Transactional
