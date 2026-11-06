@@ -26,7 +26,7 @@
     "e2e:server": "node scripts/run-e2e-server.mjs"
   },
   "dependencies": {
-    "axios": "^1.20.0",
+    "axios": "^1.21.0",
     "pinia": "^3.0.4",
     "sortablejs": "^1.15.7",
     "vue": "^3.5.44",
@@ -34,28 +34,28 @@
     "vuedraggable": "^4.1.0"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.13.0",
+    "@axe-core/playwright": "^4.14.0",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/vite": "^4.3.3",
-    "@typescript-eslint/parser": "^8.71.1",
+    "@typescript-eslint/parser": "^8.72.1",
     "@vitejs/plugin-vue": "^6.0.10",
     "@vitest/coverage-v8": "^4.1.11",
     "@vue/test-utils": "^2.5.1",
-    "eslint": "^10.12.0",
-    "eslint-plugin-vue": "^10.11.1",
-    "eslint-plugin-vuejs-accessibility": "^2.6.0",
-    "globals": "^17.13.0",
+    "eslint": "^10.14.0",
+    "eslint-plugin-vue": "^10.12.0",
+    "eslint-plugin-vuejs-accessibility": "^2.6.3",
+    "globals": "^17.14.0",
     "happy-dom": "^20.14.5",
     "openapi-typescript": "^7.13.0",
     "tailwindcss": "^4.2.1",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.71.1",
+    "typescript-eslint": "^8.72.1",
     "vite": "^7.3.7",
     "vite-plugin-vue-devtools": "^8.2.1",
     "vitest": "^4.1.5",
     "vue-eslint-parser": "^10.4.1",
-    "vue-tsc": "^3.3.12"
+    "vue-tsc": "^3.3.14"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
