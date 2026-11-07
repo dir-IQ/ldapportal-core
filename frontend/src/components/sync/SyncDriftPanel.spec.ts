@@ -218,6 +218,17 @@ describe('SyncDriftPanel', () => {
     expect(w.find('table').exists()).toBe(false)
   })
 
+  it('reports entries leaving the set (held deletes) apart from the orphans', async () => {
+    const live = { sourceMembers: 8, targetEntries: 11, inSync: 8, missingOnTarget: 0, orphanOnTarget: 1,
+      contentMismatches: 0, sampleMissing: [], sampleOrphans: [], sampleMismatches: [],
+      sourceComplete: true, targetComplete: true, note: null, leavingSet: 2 }
+    const w = mountPanel({ live })
+    await flushPromises()
+    expect(w.find('[data-testid="leaving-set"]').text()).toContain('2 leaving the set')
+    await w.setProps({ live: { ...live, leavingSet: 0 } })
+    expect(w.find('[data-testid="leaving-set"]').exists()).toBe(false)
+  })
+
   it('Verify now asks the dialog to check; a new refresh key reloads', async () => {
     const w = mountPanel()
     await flushPromises()
