@@ -219,6 +219,30 @@ class LdapOperationServiceTest {
     }
 
     @Test
+    void bulkUpdateAttributes_auditTargetsTheContainerOfTheUpdatedEntries() throws Exception {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String staff = "uid=a,ou=Staff,ou=People,dc=example,dc=com";
+        String contractor = "uid=b,ou=Contractors,ou=People,dc=example,dc=com";
+        String failing = "uid=c,ou=Other,dc=example,dc=com";
+        org.mockito.Mockito.doAnswer(inv -> {
+            if (failing.equals(inv.getArgument(1))) throw new RuntimeException("boom");
+            return null;
+        }).when(userService).updateUser(eq(dc), anyString(), any());
+        BulkAttributeUpdateRequest req = new BulkAttributeUpdateRequest(
+                List.of(staff, contractor, failing),
+                List.of(new AttributeModification(AttributeModification.Operation.REPLACE, "title", List.of("x"))));
+
+        var result = service.bulkUpdateAttributes(dirId, adminPrincipal(), req);
+        assertThat(result.updated()).isEqualTo(2);
+
+        // The failed entry changed nothing, so it doesn't widen the target.
+        verify(auditService).record(any(), eq(dirId),
+                eq(com.ldapportal.entity.enums.AuditAction.BULK_ATTRIBUTE_UPDATE),
+                eq("ou=People,dc=example,dc=com"), any());
+    }
+
+    @Test
     void bulkUpdateAttributes_passwordAttribute_requiresResetPasswordKey() {
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(enabledDir(true)));
         doThrow(new AccessDeniedException("no reset"))
@@ -948,11 +972,13 @@ class LdapOperationServiceTest {
                         .isEqualTo(com.ldapportal.dto.csv.BulkDeleteRowResult.Status.DELETED));
         verify(userService).deleteUser(dc, dn, null);
 
-        // One summary audit record naming the deleted DN.
+        // One summary audit record naming the deleted DN, targeted at the
+        // container it was deleted from.
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> detail = ArgumentCaptor.forClass(Map.class);
         verify(auditService).record(any(), eq(dirId),
-                eq(com.ldapportal.entity.enums.AuditAction.USER_DELETE), isNull(), detail.capture());
+                eq(com.ldapportal.entity.enums.AuditAction.USER_DELETE),
+                eq("ou=people,dc=example,dc=com"), detail.capture());
         assertThat(detail.getValue()).containsEntry("operation", "bulkDelete");
         assertThat(detail.getValue().get("deletedDns")).asInstanceOf(
                 org.assertj.core.api.InstanceOfAssertFactories.list(String.class)).containsExactly(dn);
