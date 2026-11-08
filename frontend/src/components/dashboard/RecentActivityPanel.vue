@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
 import RelativeTime from '@/components/RelativeTime.vue'
-import { actionLabel, actionColor, affectedLabel } from './auditLabels'
+import { actionLabel, actionColor, affectedLabel, affectedTitle } from './auditLabels'
 
 interface AuditEvent {
   id: string
@@ -34,11 +34,12 @@ withDefaults(defineProps<{
         <span class="shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded" :class="actionColor(evt.action)">
           {{ actionLabel(evt.action) }}
         </span>
-        <!-- Affected entity: the target DN for LDAP-entry actions, otherwise a
-             label derived from the audit detail (e.g. account username, approval
-             request type) so workflow rows aren't blank. -->
+        <!-- Affected entity: the target DN for LDAP-entry actions, the first
+             entry plus a count for bulk operations (all of them on hover),
+             otherwise a label derived from the audit detail (e.g. account
+             username, approval request type) so workflow rows aren't blank. -->
         <span class="min-w-0 flex-1 truncate text-gray-700"
-              :title="evt.targetDn || undefined">
+              :title="affectedTitle(evt)">
           {{ affectedLabel(evt) }}
         </span>
         <span class="shrink-0 text-xs text-gray-500">

@@ -114,6 +114,31 @@ export function shortDn(dn) {
   return first || dn
 }
 
+// Detail keys under which a bulk operation records the DNs it touched: bulk
+// delete → deletedDns, bulk user import → createdDns.
+const BULK_DN_KEYS = ['deletedDns', 'createdDns']
+
+// Most DNs listed in a row's tooltip; the rest are summarized as "+N more".
+const TOOLTIP_DN_LIMIT = 20
+
+function bulkDns(detail) {
+  for (const key of BULK_DN_KEYS) {
+    const list = detail[key]
+    if (Array.isArray(list)) {
+      const dns = list.filter(v => typeof v === 'string' && v)
+      if (dns.length) return dns
+    }
+  }
+  return null
+}
+
+// A bulk attribute update records how many entries it updated, but not which.
+function bulkUpdateCount(evt) {
+  if (evt?.action !== 'BULK_ATTRIBUTE_UPDATE') return null
+  const n = evt.detail?.updated
+  return typeof n === 'number' ? n : null
+}
+
 /**
  * Affected-entity label for a Recent Activity row. LDAP-entry actions carry a
  * `targetDn`; workflow / system actions (approvals, account admin, campaigns,
@@ -122,8 +147,17 @@ export function shortDn(dn) {
  * '—' when nothing identifiable is present.
  */
 export function affectedLabel(evt) {
-  if (evt?.targetDn) return shortDn(evt.targetDn)
   const d = (evt && evt.detail) || {}
+  // Bulk operations record one summary event for many entries. Name the first
+  // entry and count the rest, rather than a container DN or a dash.
+  const dns = bulkDns(d)
+  if (dns) return dns.length === 1 ? shortDn(dns[0]) : `${shortDn(dns[0])} +${dns.length - 1} more`
+  const count = bulkUpdateCount(evt)
+  if (count != null) {
+    const n = `${count} ${count === 1 ? 'entry' : 'entries'}`
+    return evt.targetDn ? `${shortDn(evt.targetDn)} (${n})` : n
+  }
+  if (evt?.targetDn) return shortDn(evt.targetDn)
   // Direct, human-meaningful identifiers across action families (account admin
   // → username; governance → campaign / policy name). A concrete name wins.
   const direct = d.username || d.campaignName || d.name || d.policyName
@@ -132,6 +166,20 @@ export function affectedLabel(evt) {
   // humanized so the row isn't blank.
   if (d.requestType) return humanize(String(d.requestType))
   return '—'
+}
+
+/**
+ * Hover text for a Recent Activity row's affected entity: every DN a bulk
+ * operation touched (one per line, capped), else the full target DN.
+ */
+export function affectedTitle(evt) {
+  const dns = bulkDns((evt && evt.detail) || {})
+  if (dns) {
+    const shown = dns.slice(0, TOOLTIP_DN_LIMIT)
+    const rest = dns.length - shown.length
+    return rest > 0 ? [...shown, `+${rest} more`].join('\n') : shown.join('\n')
+  }
+  return evt?.targetDn || undefined
 }
 
 export function cardBorder(severity) {
