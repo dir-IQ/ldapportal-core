@@ -486,6 +486,51 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect(reports.runReportJobNow).toHaveBeenCalledWith('dir-1', 'job-1')
   })
 
+  it('loads every page of jobs, not just the first', async () => {
+    const reports = await import('@/api/reports')
+    const jobOn = (id: string) => ({ id, name: id, reportType: 'RECENTLY_ADDED', cronExpression: '0 8 * * 1', enabled: true })
+    ;(reports.listReportJobs as unknown as Mock).mockImplementation((_dir: string, params: { page: number }) =>
+      Promise.resolve({ data: {
+        content: params.page === 0 ? [jobOn('job-a'), jobOn('job-b')] : [jobOn('job-c')],
+        page: { number: params.page, size: 2, totalElements: 3, totalPages: 2 },
+      } }))
+    const wrapper = mountView()
+    await flushPromises()
+    await scheduledJobsButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    const calls = (reports.listReportJobs as unknown as Mock).mock.calls
+    expect(calls.map(c => c[1].page)).toEqual([0, 1])
+    expect(calls[0][1]).toMatchObject({ sort: 'name,asc' })
+    expect(wrapper.text()).toContain('job-a')
+    expect(wrapper.text()).toContain('job-c')
+  })
+
+  it('shows who created each job, in the list and read-only in the edit form', async () => {
+    const reports = await import('@/api/reports')
+    ;(reports.listReportJobs as unknown as Mock).mockResolvedValue({
+      data: { content: [
+        { id: 'job-1', name: 'Weekly', reportType: 'RECENTLY_ADDED', cronExpression: '0 8 * * 1',
+          enabled: true, timezone: 'UTC', createdByName: 'Alice Admin' },
+      ], page: { number: 0, size: 100, totalElements: 1, totalPages: 1 } },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await scheduledJobsButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('th').map(th => th.text())).toContain('Created By')
+    expect(wrapper.text()).toContain('Alice Admin')
+
+    await wrapper.findAll('button').find(b => b.text() === 'Edit')!.trigger('click')
+    await flushPromises()
+    // FormField is stubbed here, so check the props it receives.
+    const creator = wrapper.findAllComponents({ name: 'FormField' }).find(f => f.props('label') === 'Created By')
+    expect(creator).toBeTruthy()
+    expect(creator!.props('modelValue')).toBe('Alice Admin')
+    expect(creator!.props('disabled')).toBe(true)
+  })
+
   it('expands a run log showing per-run outcome, duration, and trigger', async () => {
     const reports = await import('@/api/reports')
     ;(reports.listReportJobs as unknown as Mock).mockResolvedValue({

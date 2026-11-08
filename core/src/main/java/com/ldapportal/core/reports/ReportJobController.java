@@ -69,7 +69,9 @@ public class ReportJobController {
             @DirectoryId @PathVariable UUID directoryId,
             @AuthenticationPrincipal AuthPrincipal principal,
             Pageable pageable) {
-        return jobService.list(directoryId, pageable).map(ReportJobResponse::from);
+        Page<ScheduledReportJob> page = jobService.list(directoryId, pageable);
+        Map<UUID, String> creators = jobService.creatorNames(page.getContent());
+        return page.map(j -> ReportJobResponse.from(j, creators.get(j.getCreatedByAdminId())));
     }
 
     @GetMapping("/report-jobs/{jobId}")
@@ -78,7 +80,7 @@ public class ReportJobController {
             @DirectoryId @PathVariable UUID directoryId,
             @PathVariable UUID jobId,
             @AuthenticationPrincipal AuthPrincipal principal) {
-        return ReportJobResponse.from(jobService.get(directoryId, jobId));
+        return toResponse(jobService.get(directoryId, jobId));
     }
 
     @PostMapping("/report-jobs")
@@ -88,7 +90,7 @@ public class ReportJobController {
             @AuthenticationPrincipal AuthPrincipal principal,
             @Valid @RequestBody ReportJobRequest req) {
         ScheduledReportJob job = jobService.create(directoryId, req, principal);
-        return ResponseEntity.status(HttpStatus.CREATED).body(ReportJobResponse.from(job));
+        return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(job));
     }
 
     @PutMapping("/report-jobs/{jobId}")
@@ -98,7 +100,7 @@ public class ReportJobController {
             @PathVariable UUID jobId,
             @AuthenticationPrincipal AuthPrincipal principal,
             @Valid @RequestBody ReportJobRequest req) {
-        return ReportJobResponse.from(jobService.update(directoryId, jobId, req, principal));
+        return toResponse(jobService.update(directoryId, jobId, req, principal));
     }
 
     @DeleteMapping("/report-jobs/{jobId}")
@@ -118,7 +120,7 @@ public class ReportJobController {
             @PathVariable UUID jobId,
             @AuthenticationPrincipal AuthPrincipal principal,
             @RequestParam boolean enabled) {
-        return ReportJobResponse.from(jobService.setEnabled(directoryId, jobId, enabled));
+        return toResponse(jobService.setEnabled(directoryId, jobId, enabled));
     }
 
     @PostMapping("/report-jobs/{jobId}/run-now")
@@ -147,5 +149,10 @@ public class ReportJobController {
         List<String> deliveries = entitlementService.exposed(ReportDeliveryMethod.class).stream()
                 .map(Enum::name).toList();
         return new ReportCatalogueResponse(types, formats, deliveries);
+    }
+
+    private ReportJobResponse toResponse(ScheduledReportJob job) {
+        return ReportJobResponse.from(job,
+                jobService.creatorNames(List.of(job)).get(job.getCreatedByAdminId()));
     }
 }

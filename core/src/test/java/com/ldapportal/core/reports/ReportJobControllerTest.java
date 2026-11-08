@@ -17,6 +17,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -94,6 +95,21 @@ class ReportJobControllerTest extends BaseControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].name").value("A"))
                 .andExpect(jsonPath("$.content[1].name").value("B"));
+    }
+
+    @Test
+    void list_includesEachJobsCreatorName() throws Exception {
+        UUID alice = UUID.randomUUID();
+        ScheduledReportJob a = job("A");
+        a.setCreatedByAdminId(alice);
+        ScheduledReportJob orphan = job("B"); // no recorded creator
+        given(jobService.list(eq(DIR), any())).willReturn(new PageImpl<>(List.of(a, orphan)));
+        given(jobService.creatorNames(any())).willReturn(new java.util.HashMap<>(Map.of(alice, "Alice Admin")));
+
+        mockMvc.perform(get(BASE + "?size=20").with(authentication(adminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].createdByName").value("Alice Admin"))
+                .andExpect(jsonPath("$.content[1].createdByName").doesNotExist());
     }
 
     @Test
