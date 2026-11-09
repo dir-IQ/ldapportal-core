@@ -42,6 +42,7 @@ import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.FeatureKey;
 import com.ldapportal.entity.enums.InputType;
 import com.ldapportal.exception.ResourceNotFoundException;
+import com.ldapportal.ldap.DnContainers;
 import com.ldapportal.ldap.LdapBrowseService;
 import com.ldapportal.ldap.LdapBrowseService.BrowseResult;
 import com.ldapportal.ldap.LdapGroupService;
@@ -614,19 +615,24 @@ public class LdapOperationService {
         LdapAttributeValidator.validateSyntax(dc.getDirectoryType(), modifiedValues, Map.of());
 
         int updated = 0;
+        List<String> updatedDns = new ArrayList<>();
         List<BulkAttributeUpdateResult.BulkUpdateError> failures = new ArrayList<>();
 
         for (String dn : req.dns()) {
             try {
                 userService.updateUser(dc, dn, mods);
                 updated++;
+                updatedDns.add(dn);
             } catch (Exception e) {
                 log.warn("Bulk attribute update failed for DN {}: {}", dn, e.getMessage());
                 failures.add(new BulkAttributeUpdateResult.BulkUpdateError(dn, e.getMessage()));
             }
         }
 
-        auditService.record(principal, directoryId, AuditAction.BULK_ATTRIBUTE_UPDATE, null,
+        // Target: the container the updated entries live in (null when they
+        // share none), so the audit row names where the change landed.
+        auditService.record(principal, directoryId, AuditAction.BULK_ATTRIBUTE_UPDATE,
+                DnContainers.commonContainer(updatedDns),
                 Map.of("totalDns", req.dns().size(),
                         "updated", updated,
                         "errors", failures.size(),
@@ -1522,8 +1528,10 @@ public class LdapOperationService {
 
         // Single summary record for the batch (matches bulk import / bulk
         // attribute update). The deleted DNs are folded into the detail so the
-        // audit trail names exactly what was removed.
-        auditService.record(principal, directoryId, AuditAction.USER_DELETE, null,
+        // audit trail names exactly what was removed; the target is the
+        // container they were deleted from (null when they share none).
+        auditService.record(principal, directoryId, AuditAction.USER_DELETE,
+                DnContainers.commonContainer(deletedDns),
                 Map.of("operation", "bulkDelete",
                        "totalRows", rows.size(),
                        "deleted", deleted,
