@@ -546,6 +546,65 @@ class AdminManagementServiceTest {
         verify(profileRoleRepo).deleteByAdminAccountIdAndProfileId(adminId, staleProfileId);
     }
 
+    // A bootstrap/export entry without profileRoles must not strip roles or
+    // the profile-scoped overrides that hang off them; only admin-wide
+    // overrides are reconciled.
+    @Test
+    void upsertByUsername_profileRolesUnmanaged_keepsRolesAndProfileOverrides() {
+        Account existing = adminAccount("alice");
+        when(accountRepo.findByUsername("alice")).thenReturn(Optional.of(existing));
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(existing));
+        when(accountRepo.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        ProvisioningProfile p = profile();
+        AdminFeaturePermission perProfile = new AdminFeaturePermission();
+        perProfile.setAdminAccount(existing);
+        perProfile.setProfile(p);
+        perProfile.setFeatureKey(FeatureKey.USER_DELETE);
+        perProfile.setEnabled(true);
+        AdminFeaturePermission adminWideStale = new AdminFeaturePermission();
+        adminWideStale.setAdminAccount(existing);
+        adminWideStale.setFeatureKey(FeatureKey.USER_MOVE);
+        adminWideStale.setEnabled(true);
+        when(featureRepo.findAllByAdminAccountId(adminId)).thenReturn(List.of(perProfile, adminWideStale));
+        when(profileRoleRepo.existsByAdminAccountIdAndProfileId(adminId, profileId)).thenReturn(true);
+        when(featureRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = upsertReq("alice", null, List.of(new FeaturePermissionRequest(FeatureKey.USER_CREATE, false)));
+        service.upsertByUsername("alice", req, null, null, false);
+
+        // Roles: not even looked at, so nothing can be removed.
+        verify(profileRoleRepo, never()).findAllByAdminAccountId(any());
+        verify(profileRoleRepo, never()).deleteByAdminAccountIdAndProfileId(any(), any());
+        // Overrides: the profile-scoped one survives, the undeclared admin-wide
+        // one goes, the declared admin-wide one is added.
+        verify(featureRepo, never()).delete(perProfile);
+        verify(featureRepo).delete(adminWideStale);
+        org.mockito.ArgumentCaptor<AdminFeaturePermission> saved =
+                org.mockito.ArgumentCaptor.forClass(AdminFeaturePermission.class);
+        verify(featureRepo).save(saved.capture());
+        assertThat(saved.getValue().getFeatureKey()).isEqualTo(FeatureKey.USER_CREATE);
+        assertThat(saved.getValue().getProfile()).isNull();
+    }
+
+    @Test
+    void upsertByUsername_explicitEmptyProfileRoles_stillFullReplaces() {
+        Account existing = adminAccount("alice");
+        when(accountRepo.findByUsername("alice")).thenReturn(Optional.of(existing));
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(existing));
+        when(accountRepo.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+        UUID staleProfileId = UUID.randomUUID();
+        AdminProfileRole stale = new AdminProfileRole();
+        ProvisioningProfile staleProfile = new ProvisioningProfile();
+        staleProfile.setId(staleProfileId);
+        stale.setProfile(staleProfile);
+        when(profileRoleRepo.findAllByAdminAccountId(adminId)).thenReturn(List.of(stale));
+
+        service.upsertByUsername("alice", upsertReq("alice", List.of(), List.of()), null, null, true);
+
+        verify(profileRoleRepo).deleteByAdminAccountIdAndProfileId(adminId, staleProfileId);
+    }
+
     @Test
     void upsertByUsername_existingNonAdmin_throwsConflict() {
         Account superadmin = adminAccount("root");

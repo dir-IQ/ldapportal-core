@@ -138,7 +138,9 @@ class ConfigExportServiceTest {
         assertThat(account.get("username")).isEqualTo("jdoe");
         assertThat(account.get("role")).isEqualTo("ADMIN");
         assertThat(account.get("password")).isEqualTo("${LDAPPORTAL_ADMIN_JDOE_PASSWORD}");
-        assertThat(entry.get("profileRoles")).isEqualTo(List.of());
+        // No profileRoles key at all: restoring the export leaves roles alone
+        // rather than replacing them with an empty set.
+        assertThat(entry).doesNotContainKey("profileRoles");
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> features = (List<Map<String, Object>>) entry.get("featurePermissions");
@@ -151,6 +153,7 @@ class ConfigExportServiceTest {
         assertThat(validator.validate(back)).isEmpty();
         assertThat(back.account().username()).isEqualTo("jdoe");
         assertThat(back.account().role()).isEqualTo(AccountRole.ADMIN);
+        assertThat(back.profileRoles()).isNull();
         assertThat(back.featurePermissionsOrEmpty()).hasSize(1);
         assertThat(back.featurePermissionsOrEmpty().get(0).featureKey()).isEqualTo(FeatureKey.USER_CREATE);
     }

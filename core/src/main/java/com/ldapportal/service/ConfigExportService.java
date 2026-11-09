@@ -44,7 +44,8 @@ import java.util.TreeSet;
  * {@code auditDataSources} (keyed by slug, bind password as a placeholder),
  * {@code directories}, {@code admins} (account + admin-wide feature
  * permissions), and — via {@link ConfigExportContributor} — vendor sections such
- * as {@code isva}. Profile-scoped admin permissions, sync config and the rest
+ * as {@code isva}. Profile-scoped admin permissions (left untouched on restore: admins carry no
+ * {@code profileRoles} key), sync config and the rest
  * are deliberately excluded until the reconciler learns to apply them (see the
  * design doc); exporting a reference the reconciler can't yet resolve would
  * produce a dump that fails to restore. The golden invariant is that everything
@@ -217,11 +218,11 @@ public class ConfigExportService {
 
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("account", account);
-            // Profile roles reference provisioning-profile UUIDs, which this
-            // phase doesn't export; emit an empty list so the reconciler's
-            // full-replace leaves none dangling. Only admin-wide feature
-            // overrides (no profile scope) are portable today.
-            entry.put("profileRoles", List.of());
+            // No profileRoles key: roles reference provisioning-profile UUIDs,
+            // which this export doesn't carry. Leaving the key out tells the
+            // reconciler to keep the admin's existing roles (and their
+            // profile-scoped overrides); writing [] would strip them on every
+            // apply. Only admin-wide feature overrides are portable today.
             entry.put("featurePermissions", adminWideFeatures(admin));
             out.add(entry);
         }

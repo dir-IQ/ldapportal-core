@@ -117,7 +117,12 @@ public class BootstrapConfigReconciler implements ApplicationRunner {
         }
         auditSources.forEach(a -> auditSourceService.upsertBySlug(a.slug(), a));
         directories.forEach(d -> directoryService.upsertBySlug(d.slug(), d));
-        admins.forEach(a -> adminService.upsertByUsername(a.account().username(), a, null));
+        // An entry without a profileRoles key leaves the admin's profile roles
+        // (and profile-scoped overrides) alone: a config export can't express
+        // them yet, so applying it at every startup must not strip roles granted
+        // in the UI. An explicit list, even [], is still full-replace.
+        admins.forEach(a -> adminService.upsertByUsername(
+                a.account().username(), a, null, null, a.profileRoles() != null));
         contributors.forEach(c -> c.contribute(root));
 
         log.info("Bootstrap config reconciled from {}: {}, {} audit source{}, {} director{}, {} admin{}, "
