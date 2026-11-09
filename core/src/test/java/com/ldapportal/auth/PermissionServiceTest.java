@@ -3,6 +3,7 @@ package com.ldapportal.auth;
 
 import com.ldapportal.entity.AdminFeaturePermission;
 import com.ldapportal.entity.AdminProfileRole;
+import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.entity.SuperadminPermissionGrant;
 import com.ldapportal.entity.enums.BaseRole;
 import com.ldapportal.entity.enums.FeatureKey;
@@ -470,6 +471,29 @@ class PermissionServiceTest {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    // ── Group search bases (groups column) ────────────────────────────────────
+
+    @Test
+    void resolveGroupSearchBaseDns_superadmin_searchesTheWholeDirectory() {
+        assertThat(permissionService.resolveGroupSearchBaseDns(superadmin(), dirId))
+                .singleElement().isNull();
+        verifyNoInteractions(profileRoleRepo);
+    }
+
+    @Test
+    void resolveGroupSearchBaseDns_admin_coversTheirUserAndGroupOus() {
+        ProvisioningProfile profile = new ProvisioningProfile();
+        profile.setTargetUserDn("ou=people,dc=example,dc=com");
+        profile.setTargetGroupDn("ou=groups,dc=example,dc=com");
+        AdminProfileRole role = new AdminProfileRole();
+        role.setProfile(profile);
+        when(profileRoleRepo.findAllByAdminAccountIdAndProfileDirectoryIdWithProfile(adminId, dirId))
+                .thenReturn(List.of(role));
+
+        assertThat(permissionService.resolveGroupSearchBaseDns(admin(), dirId))
+                .containsExactlyInAnyOrder("ou=people,dc=example,dc=com", "ou=groups,dc=example,dc=com");
+    }
 
     private AuthPrincipal admin() {
         return new AuthPrincipal(PrincipalType.ADMIN, adminId, "alice");

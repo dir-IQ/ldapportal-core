@@ -68,6 +68,38 @@ class ScheduledReportJobServiceTest {
         when(entitlements.exposes(any())).thenReturn(true);
     }
 
+    @Test
+    void creatorNames_prefersDisplayName_fallsBackToUsername_skipsUnknown() {
+        Account withName = new Account();
+        withName.setId(UUID.randomUUID());
+        withName.setUsername("alice");
+        withName.setDisplayName("Alice Admin");
+        Account noName = new Account();
+        noName.setId(UUID.randomUUID());
+        noName.setUsername("bob");
+        UUID deleted = UUID.randomUUID();
+        when(accountRepo.findAllById(any())).thenReturn(List.of(withName, noName));
+
+        List<ScheduledReportJob> jobs = new ArrayList<>();
+        for (UUID creator : new UUID[] {withName.getId(), noName.getId(), deleted, null}) {
+            ScheduledReportJob j = new ScheduledReportJob();
+            j.setCreatedByAdminId(creator);
+            jobs.add(j);
+        }
+
+        Map<UUID, String> names = service.creatorNames(jobs);
+        assertThat(names).containsExactlyInAnyOrderEntriesOf(Map.of(
+                withName.getId(), "Alice Admin", noName.getId(), "bob"));
+        // Looking up a job with no recorded creator must not throw.
+        assertThat(names.get(null)).isNull();
+    }
+
+    @Test
+    void creatorNames_noCreators_skipsTheLookup() {
+        assertThat(service.creatorNames(List.of(new ScheduledReportJob()))).isEmpty();
+        verify(accountRepo, never()).findAllById(any());
+    }
+
     private ReportJobRequest req(ReportOutputFormat fmt, ReportDeliveryMethod delivery, String recipient) {
         return new ReportJobRequest("Weekly", "DISABLED_ACCOUNTS", Map.of("lookbackDays", 30),
                 "0 8 * * MON", fmt, delivery, recipient, null, "America/New_York", true);

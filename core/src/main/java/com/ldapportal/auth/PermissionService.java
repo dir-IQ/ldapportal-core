@@ -383,6 +383,21 @@ public class PermissionService {
      *       {@link AccessDeniedException}.</li>
      * </ul>
      */
+    /**
+     * Where to look for groups when naming the groups a listed user belongs
+     * to (the groups column of the user export and of user reports). A
+     * listing is often narrowed to a user OU that holds no groups, so this
+     * doesn't follow the listing's base: a superadmin searches the whole
+     * directory (a single {@code null} base), an admin every OU they hold,
+     * user and group OUs alike, the same groups their Groups list shows.
+     */
+    public List<String> resolveGroupSearchBaseDns(AuthPrincipal principal, UUID directoryId) {
+        if (principal.isSuperadmin()) {
+            return Collections.singletonList(null);
+        }
+        return List.copyOf(getAuthorizedOuDns(principal, directoryId));
+    }
+
     public List<String> resolveSearchBaseDns(AuthPrincipal principal,
                                              UUID directoryId,
                                              String requestedBaseDn) {

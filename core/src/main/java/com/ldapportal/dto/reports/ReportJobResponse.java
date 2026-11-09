@@ -35,10 +35,12 @@ public record ReportJobResponse(
         String lastRunMessage,
         List<ReportRunHistoryEntry> runHistory,
         UUID createdByAdminId,
+        /** The creator's display name (else username); null when unknown or deleted. */
+        String createdByName,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt) {
 
-    public static ReportJobResponse from(ScheduledReportJob j) {
+    public static ReportJobResponse from(ScheduledReportJob j, String createdByName) {
         return new ReportJobResponse(
                 j.getId(),
                 j.getDirectoryId(),
@@ -57,6 +59,7 @@ public record ReportJobResponse(
                 j.getLastRunMessage(),
                 j.getRunHistory(),
                 j.getCreatedByAdminId(),
+                createdByName,
                 j.getCreatedAt(),
                 j.getUpdatedAt());
     }
