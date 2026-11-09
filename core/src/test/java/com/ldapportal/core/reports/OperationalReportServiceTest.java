@@ -28,7 +28,6 @@ import org.springframework.security.access.AccessDeniedException;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -324,7 +323,7 @@ class OperationalReportServiceTest {
         DirectoryConnection dc = ldapDir();
         when(permissionService.resolveSearchBaseDns(alice, dirId, BRANCH)).thenReturn(List.of(BRANCH));
         when(permissionService.isDnWithinScope(alice, dirId, BRANCH)).thenReturn(true);
-        when(permissionService.getAuthorizedOuDns(alice, dirId)).thenReturn(Set.of(BRANCH, groupsOu));
+        when(permissionService.resolveGroupSearchBaseDns(alice, dirId)).thenReturn(List.of(BRANCH, groupsOu));
         when(userService.searchUsersRaw(eq(dc), anyString(), eq(BRANCH), anyInt(), eq("*")))
                 .thenReturn(List.of(entry("uid=alice", Map.of("uid", List.of("alice")))));
         when(groupService.searchGroups(eq(dc), anyString(), eq(BRANCH), any(String[].class)))
