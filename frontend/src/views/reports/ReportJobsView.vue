@@ -189,6 +189,7 @@
               <th class="px-3 py-2 text-left font-medium text-gray-500">Schedule</th>
               <th class="px-3 py-2 text-left font-medium text-gray-500">Format</th>
               <th class="px-3 py-2 text-left font-medium text-gray-500">Delivery</th>
+              <th class="px-3 py-2 text-left font-medium text-gray-500">Created By</th>
               <th class="px-3 py-2 text-left font-medium text-gray-500">Last Run</th>
               <th class="px-3 py-2 text-left font-medium text-gray-500">On</th>
               <th class="px-3 py-2"></th>
@@ -205,6 +206,10 @@
                 </td>
                 <td class="px-3 py-2 text-gray-600">{{ job.outputFormat || 'CSV' }}</td>
                 <td class="px-3 py-2 text-gray-600">{{ job.deliveryMethod }}</td>
+                <td class="px-3 py-2 text-gray-600">
+                  <span v-if="job.createdByName">{{ job.createdByName }}</span>
+                  <span v-else class="text-gray-300">—</span>
+                </td>
                 <td class="px-3 py-2 text-gray-500 text-xs">
                   <span v-if="job.lastRunAt">{{ fmtDate(job.lastRunAt) }}</span>
                   <span v-else class="text-gray-300">—</span>
@@ -232,7 +237,7 @@
               </tr>
               <!-- Run log: the bounded run-history timeline for this job, newest first. -->
               <tr v-if="expandedJobId === job.id" class="bg-gray-50">
-                <td colspan="8" class="px-4 py-3">
+                <td colspan="9" class="px-4 py-3">
                   <p class="text-xs font-semibold text-gray-600 mb-2">
                     Run log — last {{ job.runHistory?.length ?? 0 }} run(s), newest first
                   </p>
@@ -259,6 +264,9 @@
             {{ editJob ? 'Edit Job' : '+ Add Scheduled Job' }}
           </summary>
           <form v-if="showJobForm" @submit.prevent="saveJob" class="px-4 pb-4 pt-2 space-y-3">
+            <!-- Who created the job: view-only, shown when editing an existing job. -->
+            <FormField v-if="editJob" label="Created By"
+                       :model-value="editJob.createdByName || 'Unknown'" disabled />
             <div class="grid grid-cols-2 gap-3">
               <FormField label="Name" v-model="jobForm.name" required />
               <div>
@@ -509,6 +517,8 @@ interface Job {
   lastRunStatus?: string
   lastRunMessage?: string
   runHistory?: RunHistoryEntry[]
+  /** The creating admin's display name (else username); null when unknown. */
+  createdByName?: string | null
 }
 
 const route = useRoute()
@@ -1014,13 +1024,29 @@ const jobAuditActionMenuOpen = ref(false)
 const jobAuditActionMenuRef = ref<HTMLElement | null>(null)
 const jobAuditActionSummary = computed<string>(() => summarizeActions(jobForm.value.auditActions))
 
+// Server page size per request; fetchAllJobs keeps requesting until every page
+// is in. The list has no paging UI, so a single capped page would silently hide
+// every job past it.
+const JOB_PAGE_SIZE = 100
+
+/** Every scheduled job in the directory, sorted by name, fetched page by page. */
+async function fetchAllJobs(directoryId: string): Promise<Job[]> {
+  const all: Job[] = []
+  for (let page = 0; ; page++) {
+    const { data } = await listReportJobs(directoryId, { page, size: JOB_PAGE_SIZE, sort: 'name,asc' })
+    const content = (data.content ?? data) as Job[]
+    all.push(...content)
+    const totalPages: number = data.page?.totalPages ?? 1
+    if (!data.content || content.length === 0 || page + 1 >= totalPages) return all
+  }
+}
+
 async function openSchedules(): Promise<void> {
   if (!dirId.value) { notif.error('Please select a directory first.'); return }
   showSchedules.value = true
   loadingJobs.value = true
   try {
-    const { data } = await listReportJobs(dirId.value, { size: 50 })
-    jobs.value = (data.content ?? data) as Job[]
+    jobs.value = await fetchAllJobs(dirId.value)
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
     notif.error(err.response?.data?.detail || err.message || 'Failed to load jobs')
@@ -1124,8 +1150,7 @@ async function saveJob(): Promise<void> {
       notif.success('Job created')
     }
     cancelJobForm()
-    const { data } = await listReportJobs(dirId.value, { size: 50 })
-    jobs.value = (data.content ?? data) as Job[]
+    jobs.value = await fetchAllJobs(dirId.value)
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
     notif.error(err.response?.data?.detail || err.message || 'Save failed')
@@ -1151,8 +1176,7 @@ async function runNow(job: Job): Promise<void> {
   try {
     await runReportJobNow(dirId.value, job.id)
     notif.success(`Triggered '${job.name}'`)
-    const { data } = await listReportJobs(dirId.value, { size: 50 })
-    jobs.value = (data.content ?? data) as Job[]
+    jobs.value = await fetchAllJobs(dirId.value)
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
     notif.error(err.response?.data?.detail || err.message || 'Run failed')
@@ -1169,8 +1193,7 @@ async function doDelete(): Promise<void> {
     await deleteReportJob(dirId.value, deleteTarget.value.id)
     notif.success('Job deleted')
     deleteTarget.value = null
-    const { data } = await listReportJobs(dirId.value, { size: 50 })
-    jobs.value = (data.content ?? data) as Job[]
+    jobs.value = await fetchAllJobs(dirId.value)
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
     notif.error(err.response?.data?.detail || err.message || 'Delete failed')

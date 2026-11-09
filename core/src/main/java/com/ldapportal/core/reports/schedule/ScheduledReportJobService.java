@@ -31,13 +31,18 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * CRUD + execution for scheduled report jobs. The single core scheduler resolves
@@ -77,6 +82,26 @@ public class ScheduledReportJobService {
     @Transactional(readOnly = true)
     public Page<ScheduledReportJob> list(UUID directoryId, Pageable pageable) {
         return jobRepo.findAllByDirectoryId(directoryId, pageable);
+    }
+
+    /**
+     * Display names of the admins who created {@code jobs}, keyed by account id,
+     * in one lookup: the account's display name, else its username. A job whose
+     * creator is unset or no longer exists has no entry.
+     */
+    @Transactional(readOnly = true)
+    public Map<UUID, String> creatorNames(Collection<ScheduledReportJob> jobs) {
+        Set<UUID> ids = jobs.stream().map(ScheduledReportJob::getCreatedByAdminId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        // A HashMap, not Map.of(): callers look up a job's creator id, which may
+        // be null, and Map.of().get(null) throws.
+        Map<UUID, String> names = new HashMap<>();
+        if (ids.isEmpty()) return names;
+        for (Account a : accountRepo.findAllById(ids)) {
+            names.put(a.getId(), a.getDisplayName() != null && !a.getDisplayName().isBlank()
+                    ? a.getDisplayName() : a.getUsername());
+        }
+        return names;
     }
 
     @Transactional(readOnly = true)
