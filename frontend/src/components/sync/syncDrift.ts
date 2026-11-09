@@ -50,7 +50,22 @@ export interface DriftSummary {
   title: string
 }
 
-export function driftSummary(set: Pick<SyncSet, 'verify'>): DriftSummary {
+/**
+ * Deletes held for review right now (the live index, not the snapshot). The
+ * verify doesn't count them as orphans, so they're shown beside the drift
+ * rather than silently disappearing.
+ */
+export function heldDeletes(set: Partial<Pick<SyncSet, 'stateCounts'>>): number {
+  return set.stateCounts?.REVIEW_DELETE ?? 0
+}
+
+export function driftSummary(set: Pick<SyncSet, 'verify'> & Partial<Pick<SyncSet, 'stateCounts'>>): DriftSummary {
+  const held = heldDeletes(set)
+  const heldLabel = held ? ` · ${held.toLocaleString()} held for delete` : ''
+  const heldNote = held
+    ? ` ${held.toLocaleString()} ${held === 1 ? 'entry has' : 'entries have'} left the source scope with the delete `
+      + 'held for review; not counted as orphaned.'
+    : ''
   const c = driftCounts(set)
   const stale = verifyIncompleteSince(set.verify)
   const staleNote = stale && set.verify?.incompleteAt
@@ -58,16 +73,16 @@ export function driftSummary(set: Pick<SyncSet, 'verify'>): DriftSummary {
     : ''
   if (!c) {
     return {
-      label: stale ? 'Not verified (check didn’t finish)' : 'Not verified',
+      label: (stale ? 'Not verified (check didn’t finish)' : 'Not verified') + heldLabel,
       tone: stale ? 'text-amber-700' : 'text-gray-400',
-      title: 'No complete content verify yet. It runs after each reconcile, or use Verify contents.' + staleNote,
+      title: 'No complete content verify yet. It runs after each reconcile, or use Verify contents.' + staleNote + heldNote,
     }
   }
   const when = `Last complete content verify: ${new Date(set.verify!.at!).toLocaleString()}.`
   const total = driftTotal(c)
   return {
-    label: (total ? driftBreakdown(c) : 'In sync') + (stale ? ' (may be out of date)' : ''),
+    label: (total ? driftBreakdown(c) : 'In sync') + (stale ? ' (may be out of date)' : '') + heldLabel,
     tone: total ? 'text-amber-800' : stale ? 'text-amber-700' : 'text-green-700',
-    title: when + staleNote,
+    title: when + staleNote + heldNote,
   }
 }

@@ -41,13 +41,15 @@ class SyncReconcileSchedulerTest {
     @Mock private MembershipReconciler reconciler;
     @Mock private SyncContentVerifier verifier;
     @Mock private SyncReconcileHistory history;
+    @Mock private SyncDriftStore driftStore;
     @Mock private EntitlementService entitlementService;
 
     private SyncReconcileScheduler scheduler;
 
     @BeforeEach
     void setUp() {
-        scheduler = new SyncReconcileScheduler(syncSetRepo, reconciler, verifier, history, entitlementService, 3600L);
+        scheduler = new SyncReconcileScheduler(syncSetRepo, reconciler, verifier, history,
+                new SyncVerifySnapshot(syncSetRepo, driftStore), entitlementService, 3600L);
         when(entitlementService.has(Entitlement.DIRECTORY_SYNC)).thenReturn(true);
     }
 
@@ -63,6 +65,7 @@ class SyncReconcileSchedulerTest {
 
         verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
         verify(syncSetRepo).recordVerifyResult(eq(id), any(), eq(2), eq(1), eq(0));
+        verify(driftStore).replace(eq(id), any());
         // ...and on the run it follows, so the run shows the drift it left behind.
         verify(history).recordDrift(id, 2, 1, 0);
     }
@@ -98,6 +101,7 @@ class SyncReconcileSchedulerTest {
 
         verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
         verify(syncSetRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+        verify(driftStore, never()).replace(any(), any());
         // Noted, so the stored snapshot can be shown as possibly out of date.
         verify(syncSetRepo).recordVerifyIncomplete(eq(id), any());
     }

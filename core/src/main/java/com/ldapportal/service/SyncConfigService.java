@@ -80,6 +80,8 @@ public class SyncConfigService {
     private final AuditService auditService;
     private final com.ldapportal.repository.SyncReconcileRunRepository reconcileRunRepo;
     private final com.ldapportal.ldap.sync.SyncVerifyProgressTracker verifyProgress;
+    private final com.ldapportal.ldap.sync.SyncDriftStore driftStore;
+    private final com.ldapportal.ldap.sync.SyncVerifySnapshot verifySnapshot;
 
     /**
      * Runs the reconciles {@link #startReconcile} starts, off the request thread:
@@ -598,6 +600,425 @@ public class SyncConfigService {
         return reconcileHistory.notInSet(syncSetId, search, page, size);
     }
 
+    /** Largest drift page. */
+    static final int MAX_DRIFT_PAGE = 200;
+
+    /**
+     * One page of the drift items the set's last complete content verify found,
+     * optionally one {@code category} and matching {@code q} (target DN, source
+     * DN or a differing attribute's name or value).
+     */
+    @Transactional(readOnly = true)
+    public com.ldapportal.dto.sync.SyncDriftPage drift(UUID syncSetId,
+                                                     com.ldapportal.entity.enums.SyncDriftCategory category,
+                                                     String q, int page, int size) {
+        SyncSet set = requireSet(syncSetId);
+        int pageSize = Math.max(1, Math.min(MAX_DRIFT_PAGE, size));
+        int pageNo = Math.max(0, page);
+        var counts = driftStore.countsByCategory(syncSetId);
+        long stored = counts.values().stream().mapToLong(Long::longValue).sum();
+        long recordedDrift = nz(set.getVerifyMissingCount()) + nz(set.getVerifyOrphanCount())
+                + nz(set.getVerifyMismatchCount());
+        // Counts from a verify before items were kept, with nothing stored yet.
+        boolean detailsRecorded = set.getLastVerifiedAt() != null && (stored > 0 || recordedDrift == 0);
+        long matched = driftStore.count(syncSetId, category, q);
+        var entries = driftStore.page(syncSetId, category, q, pageNo * pageSize, pageSize).stream()
+                .map(r -> new com.ldapportal.dto.sync.SyncDriftPage.Entry(r.seq(), r.item().category(),
+                        r.item().targetDn(), r.item().sourceDn(), r.item().identity(), r.item().attributes()))
+                .toList();
+        return new com.ldapportal.dto.sync.SyncDriftPage(set.getLastVerifiedAt(), set.getVerifyIncompleteAt(),
+                detailsRecorded, counts, matched, pageNo, pageSize, entries);
+    }
+
+    private static long nz(Integer n) {
+        return n == null ? 0 : n;
+    }
+
+    /**
+     * Every stored drift item as CSV
+     * ({@code category,targetDn,sourceDn,identity,attribute,expected,actual}): a
+     * content drift gives one row per differing attribute, with its values
+     * {@code |}-joined; secret attributes show {@code (hidden)}. A cell starting
+     * with a formula character is neutralised, since values come from the directory.
+     */
+    public void writeDriftCsv(UUID syncSetId, java.io.Writer out) {
+        requireSet(syncSetId);
+        List<String> headers = List.of("category", "targetDn", "sourceDn", "identity", "attribute", "expected", "actual");
+        try {
+            com.ldapportal.util.CsvUtils.writeHeader(out, headers);
+            driftStore.forEach(syncSetId, r -> {
+                var it = r.item();
+                if (it.attributes().isEmpty()) {
+                    writeDriftRow(out, headers, it, null, "", "");
+                } else {
+                    for (var a : it.attributes()) {
+                        writeDriftRow(out, headers, it, a.attribute(),
+                                a.hidden() ? "(hidden)" : com.ldapportal.util.CsvUtils.joinMultiValue(a.expected()),
+                                a.hidden() ? "(hidden)" : com.ldapportal.util.CsvUtils.joinMultiValue(a.actual()));
+                    }
+                }
+            });
+            out.flush();
+        } catch (java.io.IOException ex) {
+            throw new java.io.UncheckedIOException(ex);
+        }
+    }
+
+    private static void writeDriftRow(java.io.Writer out, List<String> headers,
+                                      com.ldapportal.dto.sync.SyncDriftItem it, String attribute,
+                                      String expected, String actual) {
+        Map<String, String> row = new java.util.HashMap<>();
+        row.put("category", it.category().name());
+        row.put("targetDn", safeCell(it.targetDn()));
+        row.put("sourceDn", safeCell(it.sourceDn()));
+        row.put("identity", safeCell(it.identity()));
+        row.put("attribute", safeCell(attribute));
+        row.put("expected", safeCell(expected));
+        row.put("actual", safeCell(actual));
+        try {
+            com.ldapportal.util.CsvUtils.writeRow(out, headers, row);
+        } catch (java.io.IOException ex) {
+            throw new java.io.UncheckedIOException(ex);
+        }
+    }
+
+    /** A cell a spreadsheet won't evaluate: a leading formula character gets a quote. */
+    static String safeCell(String v) {
+        if (v == null || v.isEmpty()) {
+            return "";
+        }
+        char c = v.charAt(0);
+        return c == '=' || c == '+' || c == '-' || c == '@' || c == '\t' || c == '\r' ? "'" + v : v;
+    }
+
+    // ── Drift repair ─────────────────────────────────────────────────────────
+
+    /** Most drift items one repair (or its preview) takes: one page of the Drift tab. */
+    static final int MAX_DRIFT_REPAIR = MAX_DRIFT_PAGE;
+
+    /** One stored drift item and what its live re-check decided. */
+    private record PlannedRepair(com.ldapportal.ldap.sync.SyncDriftStore.Row row,
+                                 com.ldapportal.dto.sync.SyncDriftRepairPreview.Action action,
+                                 com.ldapportal.ldap.sync.SyncContentVerifier.Recheck recheck, String reason) {
+    }
+
+    /**
+     * What repairing these drift items would do, each re-checked live against
+     * both directories now (the stored verify may be hours old): CREATE a
+     * missing entry, REAPPLY a drifted one, or SKIP it and why. Never writes.
+     */
+    public com.ldapportal.dto.sync.SyncDriftRepairPreview previewDriftRepair(UUID syncSetId, List<Integer> seqs,
+                                                                           java.time.OffsetDateTime verifiedAt) {
+        requireCurrentVerify(requireSet(syncSetId), verifiedAt);
+        return new com.ldapportal.dto.sync.SyncDriftRepairPreview(planRepair(syncSetId, seqs).stream()
+                .map(p -> new com.ldapportal.dto.sync.SyncDriftRepairPreview.Item(p.row().seq(), p.action(),
+                        p.recheck() != null && p.recheck().targetDn() != null ? p.recheck().targetDn()
+                                : p.row().item().targetDn(),
+                        p.row().item().sourceDn(),
+                        p.recheck() != null ? p.recheck().attributes() : List.of(), p.reason()))
+                .toList());
+    }
+
+    /**
+     * Repair these drift items: re-check each live, then for each one still
+     * missing or drifted forget what the set last wrote for it and recompute
+     * it now, through the sync engine, so it's created or brought back to the
+     * projected source exactly as a reconcile would (a placement conflict is
+     * held for review, as ever). Each write is audited with the operator as
+     * actor ({@code operation: drift-repair}). Items found fixed are dropped
+     * from the stored verify, and the set's drift counts restated from what's left.
+     */
+    public com.ldapportal.dto.sync.SyncDriftRepairResult repairDrift(UUID syncSetId, List<Integer> seqs,
+                                                                   java.time.OffsetDateTime verifiedAt,
+                                                                   AuthPrincipal principal) {
+        SyncSet set = requireSet(syncSetId);
+        requireCurrentVerify(set, verifiedAt);
+        List<PlannedRepair> plan = planRepair(syncSetId, seqs);
+        var toRun = plan.stream().filter(p -> p.action() != com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.SKIP)
+                .toList();
+        UUID targetDirectoryId = linkRepo.findById(set.getLinkId()).map(SyncLink::getTargetDirId).orElse(null);
+        SyncAuditLabels labels = toRun.isEmpty() ? null : SyncAuditLabels.of(set, linkRepo, directoryRepo);
+
+        List<com.ldapportal.dto.sync.SyncDriftRepairResult.Item> items = new ArrayList<>();
+        List<com.ldapportal.ldap.sync.SyncDriftStore.Row> fixed = new ArrayList<>();
+        int created = 0, reapplied = 0, inSync = 0, skipped = 0, held = 0, failed = 0;
+        for (PlannedRepair p : plan) {
+            int seq = p.row().seq();
+            if (p.action() == com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.SKIP) {
+                skipped++;
+                items.add(new com.ldapportal.dto.sync.SyncDriftRepairResult.Item(seq,
+                        com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome.SKIPPED, p.row().item().targetDn(), p.reason()));
+                if (p.recheck() != null && p.recheck().state()
+                        == com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.IN_SYNC) {
+                    fixed.add(p.row());
+                }
+                continue;
+            }
+            com.ldapportal.ldap.sync.RecomputeOutcome outcome;
+            try {
+                if (p.recheck().identity() != null) {
+                    // Past the hash gate, just before this entry's recompute (so a
+                    // repair cut short leaves the rest as they were): an unchanged
+                    // projection must still re-read the target.
+                    membershipRepo.forgetAppliedContentOf(syncSetId, List.of(p.recheck().identity()), new byte[0]);
+                }
+                outcome = engine.process(syncSetId, p.row().item().sourceDn(), false);
+            } catch (RuntimeException ex) {
+                log.warn("Sync set {}: drift repair of [{}] failed: {}", syncSetId, p.row().item().sourceDn(), ex.toString());
+                failed++;
+                items.add(new com.ldapportal.dto.sync.SyncDriftRepairResult.Item(seq,
+                        com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome.FAILED, p.recheck().targetDn(),
+                        "Couldn't recompute the entry: " + ex.getMessage()));
+                continue;
+            }
+            if (outcome == null) {
+                failed++;
+                items.add(new com.ldapportal.dto.sync.SyncDriftRepairResult.Item(seq,
+                        com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome.FAILED, p.recheck().targetDn(),
+                        "The sync set or its link is disabled, or a directory is unavailable."));
+                continue;
+            }
+            String dn = outcome.targetDn() != null ? outcome.targetDn() : p.recheck().targetDn();
+            com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome o;
+            String message = outcome.reason();
+            switch (outcome.action()) {
+                case ADD -> { o = com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome.CREATED; created++; }
+                case MODIFY, MOVE -> { o = com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome.REAPPLIED; reapplied++; }
+                case NO_CHANGE, UNCHANGED -> {
+                    o = com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome.ALREADY_IN_SYNC;
+                    inSync++;
+                }
+                case REVIEW -> { o = com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome.HELD; held++; }
+                default -> {
+                    o = com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome.FAILED;
+                    failed++;
+                    if (message == null) message = "The sync didn't apply it (" + outcome.action() + ").";
+                }
+            }
+            items.add(new com.ldapportal.dto.sync.SyncDriftRepairResult.Item(seq, o, dn, message));
+            if (o == com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome.CREATED
+                    || o == com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome.REAPPLIED
+                    || o == com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome.ALREADY_IN_SYNC) {
+                fixed.add(p.row());
+            }
+            AuditAction action = com.ldapportal.ldap.sync.SyncWriteAuditor.actionFor(outcome.action());
+            if (action != null && principal != null && targetDirectoryId != null && dn != null) {
+                Map<String, Object> detail = new java.util.LinkedHashMap<>();
+                detail.put("source", "directory-sync");
+                detail.put("operation", "drift-repair");
+                labels.putInto(detail);
+                detail.put("syncSetId", syncSetId.toString());
+                if (p.recheck().identity() != null) detail.put("identity", p.recheck().identity());
+                if (!outcome.attributes().isEmpty()) {
+                    // Names only, never values, as the engine's own write audit.
+                    detail.put("attributes", outcome.attributes());
+                }
+                auditService.record(principal, targetDirectoryId, action, dn, detail);
+            }
+        }
+        if (!fixed.isEmpty()) {
+            driftStore.delete(syncSetId, fixed);
+            restateFromStore(syncSetId, set.getLastVerifiedAt());
+        }
+        log.info("Sync set {}: drift repair by {}: {} created, {} re-applied, {} already in sync, {} skipped, "
+                        + "{} held, {} failed", syncSetId, principal != null ? principal.username() : "system",
+                created, reapplied, inSync, skipped, held, failed);
+        return new com.ldapportal.dto.sync.SyncDriftRepairResult(created, reapplied, inSync, skipped, held, failed,
+                items);
+    }
+
+    // ── Orphan delete ────────────────────────────────────────────────────────
+
+    /**
+     * What deleting these orphaned drift items would do, each re-checked live
+     * ({@code RecomputeEngine.orphanDelete} without applying): DELETE an entry
+     * provably this set's, or SKIP it and why. Never writes.
+     */
+    public com.ldapportal.dto.sync.SyncOrphanDeletePreview previewOrphanDelete(UUID syncSetId, List<Integer> seqs,
+                                                                             java.time.OffsetDateTime verifiedAt) {
+        requireCurrentVerify(requireSet(syncSetId), verifiedAt);
+        List<com.ldapportal.dto.sync.SyncOrphanDeletePreview.Item> items = new ArrayList<>();
+        for (var row : storedRows(syncSetId, seqs)) {
+            String dn = row.item().targetDn();
+            if (row.item().category() != com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN) {
+                items.add(new com.ldapportal.dto.sync.SyncOrphanDeletePreview.Item(row.seq(),
+                        com.ldapportal.dto.sync.SyncOrphanDeletePreview.Action.SKIP, dn,
+                        "Only orphaned entries are deleted here; repair this one instead."));
+                continue;
+            }
+            var check = orphanCheck(syncSetId, dn, false);
+            items.add(new com.ldapportal.dto.sync.SyncOrphanDeletePreview.Item(row.seq(),
+                    check.outcome() == com.ldapportal.dto.sync.SyncPreviewAction.DELETE
+                            ? com.ldapportal.dto.sync.SyncOrphanDeletePreview.Action.DELETE
+                            : com.ldapportal.dto.sync.SyncOrphanDeletePreview.Action.SKIP,
+                    dn, check.message()));
+        }
+        return new com.ldapportal.dto.sync.SyncOrphanDeletePreview(items);
+    }
+
+    /**
+     * Delete these orphaned drift items from the target, each re-checked live
+     * first and left alone unless it's provably this set's (see
+     * {@code RecomputeEngine.orphanDelete}). Needs {@code confirm} to be
+     * {@value com.ldapportal.dto.sync.SyncOrphanDeleteRequest#CONFIRM_WORD}.
+     * Each delete is audited with the operator ({@code entry.delete},
+     * {@code operation: orphan-delete}). Deleted items, and ones already gone,
+     * leave the stored verify, and the set's counts are restated.
+     */
+    public com.ldapportal.dto.sync.SyncOrphanDeleteResult deleteOrphans(UUID syncSetId, List<Integer> seqs,
+                                                                      java.time.OffsetDateTime verifiedAt,
+                                                                      String confirm, AuthPrincipal principal) {
+        SyncSet set = requireSet(syncSetId);
+        if (!com.ldapportal.dto.sync.SyncOrphanDeleteRequest.CONFIRM_WORD.equals(confirm)) {
+            throw new IllegalArgumentException("Type " + com.ldapportal.dto.sync.SyncOrphanDeleteRequest.CONFIRM_WORD
+                    + " to confirm deleting entries from the target.");
+        }
+        requireCurrentVerify(set, verifiedAt);
+        var rows = storedRows(syncSetId, seqs);
+        SyncAuditLabels labels = SyncAuditLabels.of(set, linkRepo, directoryRepo);
+        List<com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item> items = new ArrayList<>();
+        List<com.ldapportal.ldap.sync.SyncDriftStore.Row> gone = new ArrayList<>();
+        int deleted = 0, skipped = 0, failed = 0;
+        for (var row : rows) {
+            String dn = row.item().targetDn();
+            if (row.item().category() != com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN) {
+                skipped++;
+                items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(row.seq(),
+                        com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.SKIPPED, dn,
+                        "Only orphaned entries are deleted here; repair this one instead."));
+                continue;
+            }
+            var r = orphanCheck(syncSetId, dn, true);
+            switch (r.outcome()) {
+                case DELETE -> {
+                    deleted++;
+                    gone.add(row);
+                    items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(row.seq(),
+                            com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.DELETED, dn, null));
+                    if (principal != null && r.targetDirectoryId() != null) {
+                        Map<String, Object> detail = new java.util.LinkedHashMap<>();
+                        detail.put("source", "directory-sync");
+                        detail.put("operation", "orphan-delete");
+                        labels.putInto(detail);
+                        detail.put("syncSetId", syncSetId.toString());
+                        auditService.record(principal, r.targetDirectoryId(), AuditAction.ENTRY_DELETE, dn, detail);
+                    }
+                }
+                case ERROR -> {
+                    failed++;
+                    items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(row.seq(),
+                            com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.FAILED, dn, r.message()));
+                }
+                default -> {
+                    skipped++;
+                    items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(row.seq(),
+                            com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.SKIPPED, dn, r.message()));
+                    if (r.alreadyGone()) {
+                        gone.add(row);
+                    }
+                }
+            }
+        }
+        if (!gone.isEmpty()) {
+            driftStore.delete(syncSetId, gone);
+            restateFromStore(syncSetId, set.getLastVerifiedAt());
+        }
+        log.info("Sync set {}: orphan delete by {}: {} deleted, {} skipped, {} failed", syncSetId,
+                principal != null ? principal.username() : "system", deleted, skipped, failed);
+        return new com.ldapportal.dto.sync.SyncOrphanDeleteResult(deleted, skipped, failed, items);
+    }
+
+
+    private com.ldapportal.dto.sync.SyncDeleteApproval orphanCheck(UUID syncSetId, String dn, boolean apply) {
+        try {
+            return engine.orphanDelete(syncSetId, dn, apply);
+        } catch (RuntimeException ex) {
+            log.warn("Sync set {}: orphan {} of [{}] failed: {}", syncSetId, apply ? "delete" : "check", dn, ex.toString());
+            String msg = ex.getMessage();
+            return new com.ldapportal.dto.sync.SyncDeleteApproval(com.ldapportal.dto.sync.SyncPreviewAction.ERROR, null, dn,
+                    "Couldn't check the entry: " + (msg == null || msg.isBlank() ? ex.getClass().getSimpleName() : msg));
+        }
+    }
+
+    /**
+     * The stored rows for a repair or delete selection: at least one item, at
+     * most {@value #MAX_DRIFT_REPAIR}, and still stored.
+     */
+    private List<com.ldapportal.ldap.sync.SyncDriftStore.Row> storedRows(UUID syncSetId, List<Integer> seqs) {
+        List<Integer> wanted = seqs == null ? List.of() : seqs.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        if (wanted.isEmpty()) {
+            throw new IllegalArgumentException("Choose at least one drift item.");
+        }
+        if (wanted.size() > MAX_DRIFT_REPAIR) {
+            throw new IllegalArgumentException("At most " + MAX_DRIFT_REPAIR + " drift items can be handled at once.");
+        }
+        var rows = driftStore.bySeq(syncSetId, wanted);
+        if (rows.isEmpty()) {
+            throw new IllegalArgumentException("Those drift items are no longer stored; verify again and retry.");
+        }
+        return rows;
+    }
+
+    /**
+     * Refuse a selection made from an older verify than the stored one. Item
+     * positions are renumbered by every complete verify, so without this a
+     * verify landing between loading the Drift tab (or its preview) and acting
+     * would repair or delete entries the operator never chose.
+     */
+    private static void requireCurrentVerify(SyncSet set, java.time.OffsetDateTime verifiedAt) {
+        java.time.OffsetDateTime stored = set.getLastVerifiedAt();
+        if (verifiedAt == null || stored == null || !stored.isEqual(verifiedAt)) {
+            throw new IllegalArgumentException("The drift list changed since you loaded it (a newer content check ran);"
+                    + " reload it and choose again.");
+        }
+    }
+
+    /**
+     * Restate the set's drift counts from the items still stored, unless a
+     * newer verify than the one at {@code verifiedAt} has replaced them meanwhile.
+     */
+    private void restateFromStore(UUID syncSetId, java.time.OffsetDateTime verifiedAt) {
+        var left = driftStore.countsByCategory(syncSetId);
+        setRepo.restateVerifyCounts(syncSetId, verifiedAt,
+                left.getOrDefault(com.ldapportal.entity.enums.SyncDriftCategory.MISSING, 0L).intValue(),
+                left.getOrDefault(com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, 0L).intValue(),
+                left.getOrDefault(com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, 0L).intValue());
+    }
+
+    private List<PlannedRepair> planRepair(UUID syncSetId, List<Integer> seqs) {
+        List<com.ldapportal.ldap.sync.SyncDriftStore.Row> rows = storedRows(syncSetId, seqs);
+        var repairable = rows.stream().filter(r -> r.item().category() != com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN
+                && r.item().sourceDn() != null).toList();
+        var rechecks = verifier.recheck(syncSetId, repairable.stream().map(r -> r.item().sourceDn()).toList());
+        Map<Integer, com.ldapportal.ldap.sync.SyncContentVerifier.Recheck> bySeq = new java.util.HashMap<>();
+        for (int i = 0; i < repairable.size(); i++) {
+            bySeq.put(repairable.get(i).seq(), rechecks.get(i));
+        }
+        List<PlannedRepair> out = new ArrayList<>(rows.size());
+        for (var row : rows) {
+            var skip = com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.SKIP;
+            if (row.item().category() == com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN) {
+                out.add(new PlannedRepair(row, skip, null,
+                        "An orphaned entry has no source member to repair it from."));
+                continue;
+            }
+            var rc = bySeq.get(row.seq());
+            if (rc == null) {
+                out.add(new PlannedRepair(row, skip, null, "No source member was recorded for it."));
+                continue;
+            }
+            switch (rc.state()) {
+                case MISSING -> out.add(new PlannedRepair(row,
+                        com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.CREATE, rc, null));
+                case MISMATCH -> out.add(new PlannedRepair(row,
+                        com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.REAPPLY, rc, null));
+                case IN_SYNC -> out.add(new PlannedRepair(row, skip, rc, "It no longer drifts."));
+                default -> out.add(new PlannedRepair(row, skip, rc, rc.note()));
+            }
+        }
+        return out;
+    }
+
     /** Check a run's entries can be downloaded (see {@link #writeRunEntriesCsv}), before streaming them. */
     public void requireRunEntries(UUID syncSetId, UUID runId) {
         requireSet(syncSetId);
@@ -684,15 +1105,11 @@ public class SyncConfigService {
             throw ex;
         }
         if (result.sourceComplete() && result.targetComplete()) {
-            setRepo.recordVerifyResult(syncSetId, java.time.OffsetDateTime.now(),
-                    result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
+            // Counts, held references and every item (for the Drift tab), together.
+            verifySnapshot.record(syncSetId, result);
             if (afterReconcile) {
                 reconcileHistory.recordDrift(syncSetId,
                         result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
-            }
-            if (result.heldReferences() != null) {
-                setRepo.recordVerifyHeld(syncSetId, result.heldReferences().entries(),
-                        result.heldReferences().dangling());
             }
         } else if (result.note() == null) {
             // It ran but couldn't read a side completely (an unavailable set

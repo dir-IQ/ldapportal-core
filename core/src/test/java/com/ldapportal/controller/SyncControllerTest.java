@@ -37,12 +37,15 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -344,6 +347,118 @@ class SyncControllerTest extends BaseControllerTest {
                 .andExpect(jsonPath("$.total").value(3))
                 .andExpect(jsonPath("$.entries[0].sourceDn").value("uid=bob,ou=people,dc=src"))
                 .andExpect(jsonPath("$.entries[0].label").value("Doesn't match the applicability filter"));
+    }
+
+    @Test
+    void drift_returnsThePage_forTheCategoryAndSearch() throws Exception {
+        var counts = new java.util.EnumMap<com.ldapportal.entity.enums.SyncDriftCategory, Long>(
+                java.util.Map.of(com.ldapportal.entity.enums.SyncDriftCategory.MISSING, 0L,
+                        com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, 0L,
+                        com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, 1L));
+        given(service.drift(SET, com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, "jo", 1, 25))
+                .willReturn(new com.ldapportal.dto.sync.SyncDriftPage(OffsetDateTime.now(), null, true, counts, 1,
+                        1, 25, List.of(new com.ldapportal.dto.sync.SyncDriftPage.Entry(7,
+                        com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, "uid=jo,dc=dst", "uid=jo,dc=src", "jo",
+                        List.of(new com.ldapportal.dto.sync.SyncDriftItem.AttributeDiff("title", List.of("Lead"),
+                                List.of("Eng"), false, false))))));
+
+        mockMvc.perform(get(SETS + "/" + SET + "/drift").param("category", "MISMATCH").param("q", "jo")
+                        .param("page", "1").param("size", "25").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.counts.MISMATCH").value(1))
+                .andExpect(jsonPath("$.entries[0].seq").value(7))
+                .andExpect(jsonPath("$.entries[0].attributes[0].expected[0]").value("Lead"));
+    }
+
+    @Test
+    void drift_unknownCategory_is400() throws Exception {
+        mockMvc.perform(get(SETS + "/" + SET + "/drift").param("category", "BOGUS")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void drift_adminWithoutSuperadmin_isForbidden() throws Exception {
+        mockMvc.perform(get(SETS + "/" + SET + "/drift").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get(SETS + "/" + SET + "/drift.csv").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void driftCsv_isAnAttachment() throws Exception {
+        org.mockito.Mockito.doAnswer(inv -> {
+            java.io.Writer w = inv.getArgument(1);
+            w.write("\"category\"\r\n");
+            w.flush();
+            return null;
+        }).when(service).writeDriftCsv(eq(SET), any());
+
+        mockMvc.perform(get(SETS + "/" + SET + "/drift.csv").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("sync-drift-" + SET + ".csv")))
+                .andExpect(content().string("\"category\"\r\n"));
+    }
+
+    @Test
+    void driftRepair_previewsThenRepairs_forTheGivenItems() throws Exception {
+        given(service.previewDriftRepair(eq(SET), eq(List.of(3, 7)), argThat(at -> at.isEqual(DRIFT_AT)))).willReturn(new com.ldapportal.dto.sync.SyncDriftRepairPreview(
+                List.of(new com.ldapportal.dto.sync.SyncDriftRepairPreview.Item(3,
+                        com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.CREATE, "uid=a,dc=dst", "uid=a,dc=src",
+                        List.of(), null))));
+        given(service.repairDrift(eq(SET), eq(List.of(3, 7)), argThat(at -> at.isEqual(DRIFT_AT)), any())).willReturn(new com.ldapportal.dto.sync.SyncDriftRepairResult(
+                1, 0, 0, 1, 0, 0, List.of()));
+
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/repair/preview").with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[3,7],\"verifiedAt\":\"2026-11-05T08:00:00Z\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].action").value("CREATE"));
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/repair").with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[3,7],\"verifiedAt\":\"2026-11-05T08:00:00Z\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(1));
+    }
+
+    private static final java.time.OffsetDateTime DRIFT_AT = java.time.OffsetDateTime.parse("2026-11-05T08:00:00Z");
+
+    @Test
+    void driftActions_withoutTheVerifyTheyWereChosenFrom_are400() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/orphans/delete").with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[4],\"confirm\":\"DELETE\"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/repair").with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[4]}"))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(service);
+    }
+
+    @Test
+    void driftRepair_withoutItems_is400() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/repair").with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void driftRepair_adminWithoutSuperadmin_isForbidden() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/repair").with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[1],\"verifiedAt\":\"2026-11-05T08:00:00Z\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void orphanDelete_passesTheConfirmation_andIsForbiddenToAdmins() throws Exception {
+        given(service.deleteOrphans(eq(SET), eq(List.of(4)), argThat(at -> at.isEqual(DRIFT_AT)), eq("DELETE"), any()))
+                .willReturn(new com.ldapportal.dto.sync.SyncOrphanDeleteResult(1, 0, 0, List.of()));
+
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/orphans/delete").with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[4],\"verifiedAt\":\"2026-11-05T08:00:00Z\",\"confirm\":\"DELETE\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deleted").value(1));
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/orphans/delete/preview").with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[4],\"verifiedAt\":\"2026-11-05T08:00:00Z\"}"))
+                .andExpect(status().isForbidden());
     }
 
     @Test

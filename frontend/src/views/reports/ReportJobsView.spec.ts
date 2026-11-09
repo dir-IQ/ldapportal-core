@@ -32,9 +32,18 @@ vi.mock('@/api/reports', () => ({
   runOperationalReportData: vi.fn().mockResolvedValue({ data: {} }),
   runOperationalReportPdf: vi.fn().mockResolvedValue({ data: new Blob() }),
 }))
+vi.mock('@/composables/useApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/composables/useApi')>()),
+  downloadBlob: vi.fn(),
+}))
 vi.mock('@/api/directories', () => ({ listDirectories: vi.fn().mockResolvedValue({ data: [] }) }))
 vi.mock('@/api/browse', () => ({ checkIntegrity: vi.fn().mockResolvedValue({ data: {} }) }))
 vi.mock('@/api/audit', () => ({ getAuditActions: vi.fn().mockResolvedValue({ data: [] }) }))
+vi.mock('@/api/schema', () => ({
+  listAttributeTypes: vi.fn().mockResolvedValue({ data: [
+    { name: 'givenName' }, { name: 'employeeNumber' }, { name: 'createTimestamp' },
+  ] }),
+}))
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
@@ -220,30 +229,72 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect(body.reportParams).toHaveProperty('branchDn')
   })
 
-  it('passes every column to the table, labelled, showing the first ten and hiding the rest and groups', async () => {
+  async function runReport(type: string, data: Record<string, unknown>) {
     const reports = await import('@/api/reports')
-    const attrs = ['cn', 'mail', 'sn', 'givenname', 'uid', 'title', 'ou', 'l', 'st', 'employeenumber', 'street']
-    ;(reports.runOperationalReportData as unknown as Mock).mockResolvedValueOnce({
-      data: {
-        columns: ['dn', ...attrs, 'groups'],
-        labels: { dn: 'DN', cn: 'Name', groups: 'Groups' },
-        rows: [],
-      },
-    })
+    ;(reports.runOperationalReportData as unknown as Mock).mockResolvedValueOnce({ data })
     const wrapper = mountView()
     await flushPromises()
+    await wrapper.find('#rj-report-type').setValue(type)
     await wrapper.findAll('button').find(b => b.text() === 'Run Report')!.trigger('click')
     await flushPromises()
+    return { wrapper, reports }
+  }
+  type Col = { key: string, label: string, defaultHidden?: boolean }
+  const tableColumnsOf = (w: Awaited<ReturnType<typeof runReport>>['wrapper']) =>
+    w.findComponent({ name: 'ResultsTable' }).props('columns') as Col[]
 
-    const columns = wrapper.findComponent({ name: 'ResultsTable' }).props('columns') as
-      { key: string, label: string, defaultHidden?: boolean }[]
-    expect(columns.map(c => c.key)).toEqual(['dn', ...attrs, 'groups'])
-    // Backend label first, else the friendly LDAP name matched ignoring case.
-    expect(columns.find(c => c.key === 'cn')!.label).toBe('Name')
-    expect(columns.find(c => c.key === 'givenname')!.label).toBe('First Name')
-    expect(columns.find(c => c.key === 'employeenumber')!.label).toBe('Employee #')
-    expect(columns.filter(c => !c.defaultHidden).map(c => c.key)).toEqual(['dn', ...attrs.slice(0, 9)])
-    expect(columns.find(c => c.key === 'groups')).toMatchObject({ label: 'Groups', defaultHidden: true })
+  it('gives entry reports the Users page columns: real attribute names, the same defaults and order', async () => {
+    const attrs = ['cn', 'mail', 'sn', 'givenname', 'uid', 'title', 'ou', 'l', 'employeenumber', 'userpassword']
+    const { wrapper } = await runReport('USERS_IN_BRANCH',
+      { columns: ['dn', ...attrs, 'groups'], labels: {}, rows: [] })
+
+    const columns = tableColumnsOf(wrapper)
+    // dn → defaults present (their fixed order) → groups → the rest A–Z; secrets dropped.
+    expect(columns.map(c => c.key)).toEqual(
+      ['dn', 'cn', 'sn', 'givenname', 'mail', 'uid', 'title', 'groups', 'employeenumber', 'l', 'ou'])
+    // Headed by the attribute name, schema-cased — no friendly names.
+    expect(columns.find(c => c.key === 'cn')!.label).toBe('cn')
+    expect(columns.find(c => c.key === 'givenname')!.label).toBe('givenName')
+    expect(columns.find(c => c.key === 'employeenumber')!.label).toBe('employeeNumber')
+    expect(columns.find(c => c.key === 'groups')!.label).toBe('groups')
+    expect(columns.filter(c => !c.defaultHidden).map(c => c.key))
+      .toEqual(['dn', 'cn', 'sn', 'givenname', 'mail', 'uid', 'title', 'groups'])
+  })
+
+  it('keeps other reports in the backend order, headed by the backend label or the key', async () => {
+    const { wrapper } = await runReport('MISSING_DATA', {
+      columns: ['dn', 'missingAttributes', 'objectClass', 'mail'],
+      labels: { missingAttributes: 'Missing Attributes' }, rows: [],
+    })
+
+    expect(tableColumnsOf(wrapper).map(c => [c.key, c.label])).toEqual([
+      ['dn', 'dn'], ['missingAttributes', 'Missing Attributes'], ['objectClass', 'objectClass'], ['mail', 'mail'],
+    ])
+  })
+
+  it('exports the visible columns, in order, by their schema-cased names', async () => {
+    const { wrapper, reports } = await runReport('USERS_IN_BRANCH',
+      { columns: ['dn', 'cn', 'givenname', 'groups'], labels: {}, rows: [] })
+    wrapper.findComponent({ name: 'ResultsTable' }).vm.$emit('visible-columns-change', ['dn', 'givenname', 'groups'])
+    await flushPromises()
+
+    // ResultsTable is stubbed (no toolbar), so call what its Export CSV button calls.
+    await (wrapper.vm as unknown as { doExport: (f: string) => Promise<void> }).doExport('CSV')
+
+    expect(reports.runOperationalReport).toHaveBeenCalledWith('dir-1',
+      expect.objectContaining({ columns: ['dn', 'givenName', 'groups'] }), 'CSV')
+  })
+
+  it('asks entry reports for operational attributes when the switch is on', async () => {
+    localStorage.setItem('ldapportal:operational-attributes:report-jobs', 'true')
+    try {
+      const { reports } = await runReport('USERS_IN_BRANCH', { columns: ['dn'], labels: {}, rows: [] })
+      expect(reports.runOperationalReportData).toHaveBeenLastCalledWith('dir-1', expect.objectContaining({
+        reportParams: expect.objectContaining({ includeOperational: true }),
+      }))
+    } finally {
+      localStorage.removeItem('ldapportal:operational-attributes:report-jobs')
+    }
   })
 
   it.each(['USERS_IN_BRANCH', 'MISSING_DATA'])(
@@ -435,6 +486,51 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect(reports.runReportJobNow).toHaveBeenCalledWith('dir-1', 'job-1')
   })
 
+  it('loads every page of jobs, not just the first', async () => {
+    const reports = await import('@/api/reports')
+    const jobOn = (id: string) => ({ id, name: id, reportType: 'RECENTLY_ADDED', cronExpression: '0 8 * * 1', enabled: true })
+    ;(reports.listReportJobs as unknown as Mock).mockImplementation((_dir: string, params: { page: number }) =>
+      Promise.resolve({ data: {
+        content: params.page === 0 ? [jobOn('job-a'), jobOn('job-b')] : [jobOn('job-c')],
+        page: { number: params.page, size: 2, totalElements: 3, totalPages: 2 },
+      } }))
+    const wrapper = mountView()
+    await flushPromises()
+    await scheduledJobsButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    const calls = (reports.listReportJobs as unknown as Mock).mock.calls
+    expect(calls.map(c => c[1].page)).toEqual([0, 1])
+    expect(calls[0][1]).toMatchObject({ sort: 'name,asc' })
+    expect(wrapper.text()).toContain('job-a')
+    expect(wrapper.text()).toContain('job-c')
+  })
+
+  it('shows who created each job, in the list and read-only in the edit form', async () => {
+    const reports = await import('@/api/reports')
+    ;(reports.listReportJobs as unknown as Mock).mockResolvedValue({
+      data: { content: [
+        { id: 'job-1', name: 'Weekly', reportType: 'RECENTLY_ADDED', cronExpression: '0 8 * * 1',
+          enabled: true, timezone: 'UTC', createdByName: 'Alice Admin' },
+      ], page: { number: 0, size: 100, totalElements: 1, totalPages: 1 } },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await scheduledJobsButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('th').map(th => th.text())).toContain('Created By')
+    expect(wrapper.text()).toContain('Alice Admin')
+
+    await wrapper.findAll('button').find(b => b.text() === 'Edit')!.trigger('click')
+    await flushPromises()
+    // FormField is stubbed here, so check the props it receives.
+    const creator = wrapper.findAllComponents({ name: 'FormField' }).find(f => f.props('label') === 'Created By')
+    expect(creator).toBeTruthy()
+    expect(creator!.props('modelValue')).toBe('Alice Admin')
+    expect(creator!.props('disabled')).toBe(true)
+  })
+
   it('expands a run log showing per-run outcome, duration, and trigger', async () => {
     const reports = await import('@/api/reports')
     ;(reports.listReportJobs as unknown as Mock).mockResolvedValue({
@@ -520,6 +616,125 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     await wrapper.find('.confirm-ok').trigger('click')
     await flushPromises()
     expect(reports.deleteReportJob).toHaveBeenCalledWith('dir-1', 'job-1')
+  })
+  // ── a scheduled file matches the same report run on demand ──
+
+  it('names an exported CSV like the scheduled delivery of the same report', async () => {
+    const { wrapper } = await runReport('DISABLED_ACCOUNTS', { columns: ['dn'], labels: {}, rows: [] })
+    const { downloadBlob } = await import('@/composables/useApi')
+
+    await (wrapper.vm as unknown as { doExport: (f: string) => Promise<void> }).doExport('CSV')
+
+    expect(downloadBlob).toHaveBeenCalledWith(expect.anything(), 'disabled-accounts.csv')
+  })
+
+  it('persists operational attributes for a scheduled entry report', async () => {
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('DISABLED_ACCOUNTS')
+    await wrapper.find('#rj-job-include-operational').setValue(true)
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+    expect(params.includeOperational).toBe(true)
+  })
+
+  it('offers no operational-attributes option for reports that are not entry listings', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('AUDIT_ENTRIES')
+
+    expect(wrapper.find('#rj-job-include-operational').exists()).toBe(false)
+  })
+
+  it('persists the columns a scheduled file carries, in order', async () => {
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('DISABLED_ACCOUNTS')
+    await wrapper.find('#rj-job-columns').setValue('dn, mail, cn')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+    expect(params.columns).toEqual(['dn', 'mail', 'cn'])
+  })
+
+  it('leaves columns off a job that keeps every column', async () => {
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('DISABLED_ACCOUNTS')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+    expect(params).not.toHaveProperty('columns')
+  })
+
+  it('copies the on-screen columns into a job for the report on screen', async () => {
+    const { wrapper } = await runReport('USERS_IN_BRANCH',
+      { columns: ['dn', 'cn', 'givenname', 'groups'], labels: {}, rows: [] })
+    wrapper.findComponent({ name: 'ResultsTable' }).vm.$emit('visible-columns-change', ['dn', 'givenname', 'groups'])
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('USERS_IN_BRANCH')
+    await wrapper.findAll('button').find(b => b.text() === 'Use on-screen columns')!.trigger('click')
+
+    expect((wrapper.find('#rj-job-columns').element as HTMLInputElement).value).toBe('dn, givenName, groups')
+  })
+
+  it('does not offer the on-screen columns for a job of a different report', async () => {
+    const { wrapper } = await runReport('USERS_IN_BRANCH',
+      { columns: ['dn', 'cn'], labels: {}, rows: [] })
+    wrapper.findComponent({ name: 'ResultsTable' }).vm.$emit('visible-columns-change', ['dn', 'cn'])
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('DISABLED_ACCOUNTS')
+
+    expect(wrapper.findAll('button').some(b => b.text() === 'Use on-screen columns')).toBe(false)
+  })
+
+  it('keeps an edited job\'s columns and operational-attributes choice', async () => {
+    const reports = await import('@/api/reports')
+    ;(reports.listReportJobs as unknown as Mock).mockResolvedValue({
+      data: { content: [
+        { id: 'job-1', name: 'Weekly', reportType: 'DISABLED_ACCOUNTS', cronExpression: '0 8 * * 1',
+          enabled: true, timezone: 'UTC', outputFormat: 'CSV', deliveryMethod: 'EMAIL', recipientEmail: 'a@b.com',
+          reportParams: { columns: ['dn', 'mail'], includeOperational: true } },
+      ] },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await scheduledJobsButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    await wrapper.findAll('button').find(b => b.text() === 'Edit')!.trigger('click')
+    await flushPromises()
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const params = (reports.updateReportJob as unknown as Mock).mock.calls[0][2].reportParams
+    expect(params.columns).toEqual(['dn', 'mail'])
+    expect(params.includeOperational).toBe(true)
   })
 })
 

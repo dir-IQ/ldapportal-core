@@ -2,10 +2,9 @@
 package com.ldapportal.core.reports.schedule;
 
 import com.ldapportal.core.reports.ReportData;
+import com.ldapportal.core.reports.ReportFileNames;
 import com.ldapportal.util.CsvUtils;
 import org.springframework.stereotype.Component;
-
-import java.util.Locale;
 
 /**
  * Core {@link ReportRenderer} for {@link ReportOutputFormat#CSV}, wrapping
@@ -26,14 +25,6 @@ public class CsvReportRenderer implements ReportRenderer {
     @Override
     public RenderedReport render(ReportData data, RenderContext ctx) {
         byte[] bytes = CsvUtils.write(data.columns(), data.rows());
-        return new RenderedReport(bytes, CONTENT_TYPE, filename(ctx.reportLabel()));
-    }
-
-    /** "Disabled Accounts" → "disabled-accounts.csv". */
-    private static String filename(String label) {
-        String slug = label.trim().toLowerCase(Locale.ROOT)
-                .replaceAll("[^a-z0-9]+", "-")
-                .replaceAll("(^-+)|(-+$)", "");
-        return (slug.isEmpty() ? "report" : slug) + ".csv";
+        return new RenderedReport(bytes, CONTENT_TYPE, ReportFileNames.forLabel(ctx.reportLabel(), "csv"));
     }
 }

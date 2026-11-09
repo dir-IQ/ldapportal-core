@@ -38,6 +38,7 @@ public class SyncReconcileScheduler {
     private final MembershipReconciler reconciler;
     private final SyncContentVerifier verifier;
     private final SyncReconcileHistory history;
+    private final SyncVerifySnapshot snapshot;
     private final EntitlementService entitlementService;
     private final long defaultCadenceSeconds;
     /** Minimum gap between retries of a reconcile request an incomplete run didn't handle. */
@@ -47,6 +48,7 @@ public class SyncReconcileScheduler {
                                   MembershipReconciler reconciler,
                                   SyncContentVerifier verifier,
                                   SyncReconcileHistory history,
+                                  SyncVerifySnapshot snapshot,
                                   EntitlementService entitlementService,
                                   @Value("${ldapportal.sync.reconcile.default-cadence-seconds:3600}")
                                   long defaultCadenceSeconds) {
@@ -54,6 +56,7 @@ public class SyncReconcileScheduler {
         this.reconciler = reconciler;
         this.verifier = verifier;
         this.history = history;
+        this.snapshot = snapshot;
         this.entitlementService = entitlementService;
         this.defaultCadenceSeconds = defaultCadenceSeconds;
     }
@@ -98,12 +101,8 @@ public class SyncReconcileScheduler {
         try {
             var v = verifier.verify(setId);
             if (v.sourceComplete() && v.targetComplete()) {
-                syncSetRepo.recordVerifyResult(setId, OffsetDateTime.now(),
-                        v.missingOnTarget(), v.orphanOnTarget(), v.contentMismatches());
+                snapshot.record(setId, v);
                 history.recordDrift(setId, v.missingOnTarget(), v.orphanOnTarget(), v.contentMismatches());
-                if (v.heldReferences() != null) {
-                    syncSetRepo.recordVerifyHeld(setId, v.heldReferences().entries(), v.heldReferences().dangling());
-                }
             } else {
                 syncSetRepo.recordVerifyIncomplete(setId, OffsetDateTime.now());
             }

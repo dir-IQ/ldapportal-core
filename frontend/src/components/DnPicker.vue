@@ -10,6 +10,7 @@
         class="input flex-1 font-mono"
         :placeholder="resolvedPlaceholder"
         :aria-label="resolvedPlaceholder"
+        :autocomplete="autocomplete"
       />
       <button
         @click="openPicker"
@@ -139,6 +140,12 @@ const props = withDefaults(defineProps<{
    * groups (the prior behaviour). LDAP scope only; ignored for Entra.
    */
   baseDn?: string
+  /**
+   * The text input's `autocomplete` attribute (e.g. "off" in the profile
+   * editor). Unset leaves the browser default. A prop rather than a
+   * fallthrough attribute because attrs land on the root div, not the input.
+   */
+  autocomplete?: string
 }>(), {
   modelValue: '',
   directoryId: '',
@@ -149,6 +156,7 @@ const props = withDefaults(defineProps<{
   authorizedRoots: () => [],
   directoryType: '',
   baseDn: '',
+  autocomplete: undefined,
 })
 
 const emit = defineEmits<{

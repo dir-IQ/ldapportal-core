@@ -34,7 +34,21 @@ const notInSetPage = vi.hoisted(() => (over: Record<string, unknown> = {}) => ({
   ...over,
 }))
 
+const driftPage = vi.hoisted(() => (over: Record<string, unknown> = {}) => ({
+  verifiedAt: '2026-11-05T08:00:00Z', incompleteAt: null, detailsRecorded: true,
+  counts: { MISSING: 1, ORPHAN: 0, MISMATCH: 1 }, matched: 2, page: 0, size: 25,
+  entries: [
+    { seq: 0, category: 'MISSING', targetDn: 'uid=gone,ou=Users,dc=dst', sourceDn: 'uid=gone,ou=people,dc=src',
+      identity: 'gone', attributes: [] },
+    { seq: 1, category: 'MISMATCH', targetDn: 'uid=drift,ou=Users,dc=dst', sourceDn: 'uid=drift,ou=people,dc=src',
+      identity: 'drift', attributes: [{ attribute: 'title', expected: ['Lead'], actual: ['Engineer'], hidden: false, truncated: false }] },
+  ],
+  ...over,
+}))
+
 vi.mock('@/api/sync', () => ({
+  getDrift: vi.fn(() => Promise.resolve({ data: driftPage() })),
+  downloadDriftCsv: vi.fn(() => Promise.resolve({ data: new Blob() })),
   listMemberships: vi.fn(() => Promise.resolve(page([membership]))),
   startReconcile: vi.fn(() => Promise.resolve({ data: { started: true } })),
   recheckTarget: vi.fn(() => Promise.resolve({ data: { entries: 5, reconcileQueued: true } })),
@@ -78,6 +92,12 @@ const byText = (t: string) =>
   Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.includes(t))
 const byExactText = (t: string) =>
   Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === t)
+const tabButton = (label: string) =>
+  Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((b) => b.textContent?.includes(label))!
+async function openDriftTab() {
+  tabButton('Drift').click()
+  await flushPromises()
+}
 
 describe('MembershipInventoryModal', () => {
   beforeEach(() => {
@@ -99,11 +119,13 @@ describe('MembershipInventoryModal', () => {
       return w
     }
     let w = await mountWith()
+    await openDriftTab()
     expect(document.querySelector('.diff-link')).toBeNull()
     w.unmount()
 
     auth.principal = { superadminPermissions: ['superadmin.manage_directory_diff'] } as never
     w = await mountWith()
+    await openDriftTab()
     const link = document.querySelector('.diff-link')!
     expect(link.textContent).toContain('Compare in Directory Diff')
     expect(JSON.parse(link.getAttribute('data-to')!)).toEqual(
@@ -157,25 +179,118 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
-  it('row Recompute calls the API with the identity', async () => {
+  // ── Bulk actions on selected rows ──────────────────────────────────────────
+
+  /** List these membership rows: the fixture with each override, identities 1111, 2222, … unless given. */
+  function withRows(...overs: Record<string, unknown>[]) {
+    vi.mocked(syncApi.listMemberships).mockResolvedValue(page(overs.map((o, i) => ({
+      ...membership, identity: String(i + 1).repeat(4), ...o,
+    }))) as never)
+  }
+  async function selectRow(identity: string) {
+    document.querySelector<HTMLInputElement>(`input[aria-label="Select row ${identity}"]`)!.click()
+    await flushPromises()
+  }
+  async function selectAll() {
+    document.querySelector<HTMLInputElement>('input[aria-label="Select all rows"]')!.click()
+    await flushPromises()
+  }
+
+  it('has no per-row actions; the bulk actions wait for a selection', async () => {
     const wrapper = open()
     await flushPromises()
-    byText('Recompute')!.click()
+    const headers = Array.from(document.querySelectorAll('th')).map((th) => th.textContent?.trim())
+    expect(headers).not.toContain('Actions')
+    expect(document.body.textContent).toContain('Select rows to act on them')
+    expect(byExactText('Recompute')!.disabled).toBe(true)
+    expect(byExactText('Stop tracking')!.disabled).toBe(true)
+
+    await selectRow('1111')
+    expect(document.body.textContent).toContain('1 selected')
+    expect(byExactText('Recompute (1)')!.disabled).toBe(false)
+    expect(byExactText('Stop tracking (1)')!.disabled).toBe(false)
+    byExactText('Clear selection')!.click()
+    await flushPromises()
+    expect(byExactText('Recompute')!.disabled).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('Recompute calls the API with the selected row\'s identity', async () => {
+    const wrapper = open()
+    await flushPromises()
+    await selectRow('1111')
+    byExactText('Recompute (1)')!.click()
     await flushPromises()
     expect(syncApi.recomputeKey).toHaveBeenCalledWith('set-1', '1111')
     wrapper.unmount()
   })
 
-  it('labels a held delete "Delete target" and approves it after a danger confirm', async () => {
-    withRow({ reviewKind: 'PENDING_DELETE', failReason: 'scope-exit held for review (deletePolicy=REVIEW)' })
+  it('recomputes every selected row, then reports what they became', async () => {
+    vi.useFakeTimers()
+    try {
+      withRows({ state: 'FAILED', reviewKind: null }, { state: 'FAILED', reviewKind: null })
+      const wrapper = open()
+      await flushPromises()
+      const success = vi.spyOn(useNotificationStore(), 'success')
+      await selectAll()
+
+      byExactText('Retry (2)')!.click()
+      await flushPromises()
+      expect(syncApi.recomputeKey).toHaveBeenCalledWith('set-1', '1111')
+      expect(syncApi.recomputeKey).toHaveBeenCalledWith('set-1', '2222')
+      expect(success).toHaveBeenCalledWith('Retry queued for 2 rows: watching them for the result…')
+
+      withRows({ state: 'APPLIED', reviewKind: null, failReason: null },
+        { state: 'APPLIED', reviewKind: null, failReason: null })
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(success).toHaveBeenLastCalledWith('Retry done: 2 now Synced')
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('offers Delete target only for selected held deletes and approves them after a danger confirm', async () => {
+    withRows({ state: 'FAILED', reviewKind: null }, { reviewKind: 'PENDING_DELETE' })
     const wrapper = open()
     await flushPromises()
-    expect(byText('Keep entry, stop syncing')).toBeTruthy()
-    expect(byText('Re-check')).toBeTruthy()
-    byText('Delete target')!.click()
+    await selectRow('1111')
+    expect(byText('Delete target')).toBeUndefined()
+
+    await selectRow('2222')
+    byExactText('Delete target (1)')!.click()
     await flushPromises()
-    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ danger: true, confirmLabel: 'Delete entry' }))
-    expect(syncApi.approveDelete).toHaveBeenCalledWith('set-1', '1111')
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({
+      danger: true, confirmLabel: 'Delete entry',
+      message: expect.stringContaining('The other 1 selected row isn\'t a held delete and is left alone.'),
+    }))
+    expect(syncApi.approveDelete).toHaveBeenCalledTimes(1)
+    expect(syncApi.approveDelete).toHaveBeenCalledWith('set-1', '2222')
+    wrapper.unmount()
+  })
+
+  it('deletes several held deletes in one go and sums up the outcomes', async () => {
+    withRows({ reviewKind: 'PENDING_DELETE' }, { reviewKind: 'PENDING_DELETE' }, { reviewKind: 'PENDING_DELETE' })
+    vi.mocked(syncApi.approveDelete)
+      .mockResolvedValueOnce({ data: { outcome: 'DELETE', targetDirectoryId: 'd', targetDn: 'uid=a', message: null } } as never)
+      .mockResolvedValueOnce({ data: { outcome: 'FORGET', targetDirectoryId: 'd', targetDn: 'uid=b', message: null } } as never)
+      .mockResolvedValueOnce({ data: { outcome: 'ERROR', targetDirectoryId: 'd', targetDn: 'uid=c', message: 'busy' } } as never)
+    const wrapper = open()
+    await flushPromises()
+    const notif = useNotificationStore()
+    const success = vi.spyOn(notif, 'success')
+    const error = vi.spyOn(notif, 'error')
+    await selectAll()
+
+    byExactText('Delete target (3)')!.click()
+    await flushPromises()
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Delete 3 target entries?', confirmLabel: 'Delete 3 entries',
+    }))
+    expect(syncApi.approveDelete).toHaveBeenCalledTimes(3)
+    expect(success).toHaveBeenCalledWith(
+      'Deleted 1 target entry; kept 1 that another sync identity owns (only their rows were removed)')
+    expect(error).toHaveBeenCalledWith('1 of 3 deletions failed: busy')
     wrapper.unmount()
   })
 
@@ -184,19 +299,23 @@ describe('MembershipInventoryModal', () => {
     confirmMock.mockResolvedValueOnce(false)
     const wrapper = open()
     await flushPromises()
+    await selectRow('1111')
     byText('Delete target')!.click()
     await flushPromises()
     expect(syncApi.approveDelete).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
-  it('"Keep entry, stop syncing" dismisses the row after confirming', async () => {
+  it('Stop tracking on a held delete says the target entry is kept, then dismisses it', async () => {
     withRow({ reviewKind: 'PENDING_DELETE' })
     const wrapper = open()
     await flushPromises()
-    byText('Keep entry, stop syncing')!.click()
+    await selectRow('1111')
+    byExactText('Stop tracking (1)')!.click()
     await flushPromises()
-    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ confirmLabel: 'Keep and stop syncing' }))
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({
+      confirmLabel: 'Stop tracking', message: expect.stringContaining('The held delete keeps its target entry'),
+    }))
     expect(syncApi.dismissMembership).toHaveBeenCalledWith('set-1', '1111')
     wrapper.unmount()
   })
@@ -208,17 +327,46 @@ describe('MembershipInventoryModal', () => {
       const wrapper = open()
       await flushPromises()
       const success = vi.spyOn(useNotificationStore(), 'success')
+      await selectRow('1111')
 
-      byExactText('Re-check')!.click()
+      byExactText('Re-check (1)')!.click()
       await flushPromises()
       expect(syncApi.recomputeKey).toHaveBeenCalledWith('set-1', '1111')
       // The worker has now applied it: the entry is back in the set.
       withRow({ state: 'APPLIED', reviewKind: null, failReason: null } as unknown as Partial<typeof membership>)
       await vi.advanceTimersByTimeAsync(2000)
 
-      expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', expect.objectContaining({ q: '1111' }))
       expect(success).toHaveBeenLastCalledWith('Re-check done: the row is now Synced')
-      expect(byText('Delete target')).toBeUndefined()
+      expect(document.querySelector('td span')?.textContent).not.toContain('Review')
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('looks up a recomputed row that left the filtered page on its own', async () => {
+    vi.useFakeTimers()
+    try {
+      withRow({ state: 'FAILED', reviewKind: null })
+      const wrapper = mount(MembershipInventoryModal, {
+        attachTo: document.body,
+        props: { show: true, set, sourceName: 'Source', targetName: 'Target', initialState: 'FAILED' as const },
+      })
+      await flushPromises()
+      const success = vi.spyOn(useNotificationStore(), 'success')
+      await selectRow('1111')
+      byExactText('Retry (1)')!.click()
+      await flushPromises()
+
+      // The Failed page is now empty; looked up by identity, the row is Synced.
+      vi.mocked(syncApi.listMemberships).mockImplementation(((_id: string, p: { q?: string }) =>
+        Promise.resolve(p.q === '1111'
+          ? page([{ ...membership, state: 'APPLIED', reviewKind: null, failReason: null }])
+          : page([]))) as never)
+      await vi.advanceTimersByTimeAsync(2000)
+
+      expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', expect.objectContaining({ q: '1111' }))
+      expect(success).toHaveBeenLastCalledWith('Retry done: the row is now Synced')
       wrapper.unmount()
     } finally {
       vi.useRealTimers()
@@ -232,8 +380,9 @@ describe('MembershipInventoryModal', () => {
       const wrapper = open()
       await flushPromises()
       const info = vi.spyOn(useNotificationStore(), 'info')
+      await selectRow('1111')
 
-      byExactText('Re-check')!.click()
+      byExactText('Re-check (1)')!.click()
       await vi.advanceTimersByTimeAsync(20_000)
       await flushPromises()
 
@@ -244,19 +393,20 @@ describe('MembershipInventoryModal', () => {
     }
   })
 
-  it('names the recompute for the row: Retry match, Retry, Re-sync', async () => {
-    for (const [over, label] of [
-      [{ state: 'REVIEW', reviewKind: 'AMBIGUOUS_MATCH' }, 'Retry match'],
-      [{ state: 'FAILED', reviewKind: null }, 'Retry'],
-      [{ state: 'APPLIED', reviewKind: null, failReason: null }, 'Re-sync'],
+  it('names the recompute for the selection: Retry match, Retry, Re-sync, or Recompute when mixed', async () => {
+    for (const [overs, label] of [
+      [[{ state: 'REVIEW', reviewKind: 'AMBIGUOUS_MATCH' }], 'Retry match (1)'],
+      [[{ state: 'FAILED', reviewKind: null }], 'Retry (1)'],
+      [[{ state: 'APPLIED', reviewKind: null, failReason: null }], 'Re-sync (1)'],
+      [[{ state: 'FAILED', reviewKind: null }, { state: 'APPLIED', reviewKind: null }], 'Recompute (2)'],
     ] as const) {
       vi.clearAllMocks()
       document.body.innerHTML = ''
-      withRow(over as Partial<typeof membership>)
+      withRows(...overs)
       const wrapper = open()
       await flushPromises()
-      const btn = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
-        .find((b) => b.textContent?.trim() === label)
+      await selectAll()
+      const btn = byExactText(label)
       expect(btn, label).toBeTruthy()
       btn!.click()
       await flushPromises()
@@ -266,24 +416,40 @@ describe('MembershipInventoryModal', () => {
     }
   })
 
-  it('"Stop tracking" asks first and dismisses only when confirmed', async () => {
-    withRow({ state: 'FAILED', reviewKind: null })
+  it('"Stop tracking" asks first and dismisses every selected row only when confirmed', async () => {
+    withRows({ state: 'FAILED', reviewKind: null }, { state: 'APPLIED', reviewKind: null })
     confirmMock.mockResolvedValueOnce(false)
     const wrapper = open()
     await flushPromises()
-    byText('Stop tracking')!.click()
+    await selectAll()
+    byExactText('Stop tracking (2)')!.click()
     await flushPromises()
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'Stop tracking 2 entries?' }))
     expect(syncApi.dismissMembership).not.toHaveBeenCalled()
-    byText('Stop tracking')!.click()
+    byExactText('Stop tracking (2)')!.click()
     await flushPromises()
     expect(syncApi.dismissMembership).toHaveBeenCalledWith('set-1', '1111')
+    expect(syncApi.dismissMembership).toHaveBeenCalledWith('set-1', '2222')
     wrapper.unmount()
   })
 
-  it('explains how Verify contents, Reconcile now and Re-check target differ', async () => {
+  it('drops selected rows that a new filter or page no longer shows', async () => {
     const wrapper = open()
     await flushPromises()
-    expect(byText('Verify contents')!.title).toMatch(/never writes/)
+    await selectRow('1111')
+    expect(document.body.textContent).toContain('1 selected')
+    withRows({ identity: '9999', state: 'FAILED' })
+    byText('Failed')!.click()
+    await flushPromises()
+    expect(document.body.textContent).toContain('Select rows to act on them')
+    wrapper.unmount()
+  })
+
+  it('explains how Verify now, Reconcile now and Re-check target differ', async () => {
+    const wrapper = open()
+    await flushPromises()
+    await openDriftTab()
+    expect(byText('Verify now')!.title).toMatch(/never writes/)
     expect(byText('Reconcile now')!.title).toMatch(/Skips entries whose source hasn't changed/)
     expect(byText('Re-check target')!.title).toMatch(/re-reads every target entry/)
     wrapper.unmount()
@@ -309,20 +475,44 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
-  it('Verify contents calls the API and renders the mismatch summary', async () => {
+  it('Verify now runs the check, then reloads the Drift tab and tells the page the counts changed', async () => {
     const wrapper = open()
     await flushPromises()
-    byText('Verify contents')!.click()
+    await openDriftTab()
+    expect(syncApi.getDrift).toHaveBeenCalledTimes(1)
+    byText('Verify now')!.click()
     await flushPromises()
     expect(syncApi.verifyContents).toHaveBeenCalledWith('set-1')
+    expect(syncApi.getDrift).toHaveBeenCalledTimes(2)
+    expect(wrapper.emitted('changed')).toBeTruthy()
     const txt = document.body.textContent ?? ''
-    expect(txt).toContain('Content verification')
-    expect(txt).toContain('uid=gone,ou=Users,dc=dst') // sample missing DN
-    expect(txt).toContain('uid=drift,ou=Users,dc=dst') // sample drift DN
+    expect(txt).toContain('Just now: source 5 members')
+    expect(txt).toContain('uid=gone,ou=Users,dc=dst')
+    expect(txt).toContain('uid=drift,ou=Users,dc=dst')
     wrapper.unmount()
   })
 
-  it('Verify contents lists held references, telling dangling ones from unsynced ones', async () => {
+  it('opens on the Reconciliation tab, or on Drift when asked, badged with the last check’s drift', async () => {
+    const drifting = { ...set, verify: { at: '2026-11-05T08:00:00Z', missing: 2, orphan: 1, mismatch: 4,
+      incompleteAt: null, held: null, dangling: null } }
+    let w = mount(MembershipInventoryModal, { attachTo: document.body,
+      props: { show: true, set: drifting, sourceName: 'S', targetName: 'T' } })
+    await flushPromises()
+    expect(tabButton('Reconciliation').getAttribute('aria-selected')).toBe('true')
+    expect(tabButton('Drift').textContent).toContain('7')
+    expect(syncApi.getDrift).not.toHaveBeenCalled() // only loaded when the tab is opened
+    w.unmount()
+    document.body.innerHTML = ''
+
+    w = mount(MembershipInventoryModal, { attachTo: document.body,
+      props: { show: true, set: drifting, sourceName: 'S', targetName: 'T', initialTab: 'drift' } })
+    await flushPromises()
+    expect(tabButton('Drift').getAttribute('aria-selected')).toBe('true')
+    expect(syncApi.getDrift).toHaveBeenCalledWith('set-1', expect.objectContaining({ page: 0, size: 25 }))
+    w.unmount()
+  })
+
+  it('Verify now lists held references, telling dangling ones from unsynced ones', async () => {
     vi.mocked(syncApi.verifyContents).mockResolvedValueOnce({ data: {
       sourceMembers: 2, targetEntries: 2, inSync: 2, missingOnTarget: 0, orphanOnTarget: 0, contentMismatches: 0,
       sampleMissing: [], sampleOrphans: [], sampleMismatches: [], sourceComplete: true, targetComplete: true,
@@ -334,7 +524,8 @@ describe('MembershipInventoryModal', () => {
     } } as never)
     const wrapper = open()
     await flushPromises()
-    byText('Verify contents')!.click()
+    await openDriftTab()
+    byText('Verify now')!.click()
     await flushPromises()
     const held = document.querySelector('[data-testid="held-references"]')!.textContent!.replace(/\s+/g, ' ')
     expect(held).toContain('Held references: 2 entries have a reference the sync holds back')
@@ -529,7 +720,7 @@ describe('MembershipInventoryModal', () => {
     vi.useRealTimers()
   })
 
-  it('Verify contents shows which phase the check is in and how far it has got', async () => {
+  it('Verify now shows which phase the check is in and how far it has got', async () => {
     vi.useFakeTimers()
     const now = new Date().toISOString()
     const pending = deferred<unknown>()
@@ -542,8 +733,10 @@ describe('MembershipInventoryModal', () => {
     } } as never)
     const wrapper = open()
     await flushPromises()
+    tabButton('Drift').click()
+    await vi.advanceTimersByTimeAsync(0)
 
-    byText('Verify contents')!.click()
+    byText('Verify now')!.click()
     await vi.advanceTimersByTimeAsync(1500)
 
     const txt = document.body.textContent ?? ''

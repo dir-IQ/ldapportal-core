@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.dto.sync.SyncDriftItem;
 import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Entry;
@@ -179,7 +180,7 @@ class SyncContentVerifierTest {
 
         SyncVerifyResult anchored = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true,
                 null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor",
-                SyncContentVerifier.NOT_ELSEWHERE);
+                SyncContentVerifier.Owners.NONE);
         SyncVerifyResult unanchored = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true);
 
         // Only the entry the set stamped is its orphan; the other isn't its to account for.
@@ -203,10 +204,36 @@ class SyncContentVerifierTest {
                 value.equals("id-2") && dn.equalsIgnoreCase("uid=theirs,ou=people,dc=t");
 
         SyncVerifyResult r = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true,
-                null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor", otherSet);
+                null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor",
+                new SyncContentVerifier.Owners(otherSet, SyncContentVerifier.NOT_ELSEWHERE));
 
         assertThat(r.orphanOnTarget()).isEqualTo(1);
         assertThat(r.sampleOrphans()).containsExactly("uid=gone,ou=people,dc=t");
+        assertThat(r.leavingSet()).isZero();
+    }
+
+    @Test
+    void withAnAnchor_entriesThisSetStillTracksAreLeavingNotOrphans() {
+        // "held" left the source scope but its delete is held for review (still in
+        // this set's index); "gone" is in no index at all, a true orphan.
+        Map<String, Entry> actual = new LinkedHashMap<>();
+        actual.put("uid=gone,ou=people,dc=t", new Entry("uid=gone,ou=people,dc=t",
+                new Attribute("cn", "Gone"), new Attribute("srcAnchor", "id-1")));
+        actual.put("uid=held,ou=people,dc=t", new Entry("uid=held,ou=people,dc=t",
+                new Attribute("cn", "Held"), new Attribute("srcAnchor", "id-3")));
+        SyncContentVerifier.ManagedElsewhere thisSet = (value, dn) ->
+                value.equals("id-3") && dn.equalsIgnoreCase("uid=held,ou=people,dc=t");
+
+        SyncVerifyResult r = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true,
+                null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor",
+                new SyncContentVerifier.Owners(SyncContentVerifier.NOT_ELSEWHERE, thisSet));
+
+        assertThat(r.orphanOnTarget()).isEqualTo(1);
+        assertThat(r.sampleOrphans()).containsExactly("uid=gone,ou=people,dc=t");
+        assertThat(r.items()).extracting(SyncDriftItem::targetDn).containsExactly("uid=gone,ou=people,dc=t");
+        assertThat(r.leavingSet()).isEqualTo(1);
+        // Carried through when held references are attached afterwards.
+        assertThat(r.withHeldReferences(null).leavingSet()).isEqualTo(1);
     }
 
     // ── held references ──────────────────────────────────────────────────────────
@@ -229,5 +256,63 @@ class SyncContentVerifierTest {
         assertThat(held.samples()).extracting(SyncVerifyResult.HeldSample::reference, SyncVerifyResult.HeldSample::dangling)
                 .containsExactly(org.assertj.core.groups.Tuple.tuple("uid=ghost,ou=people,dc=s", true),
                         org.assertj.core.groups.Tuple.tuple("uid=pending,ou=people,dc=s", false));
+    }
+
+    // ── Drift items ─────────────────────────────────────────────────────────
+
+    @Test
+    void items_listEveryDisagreement_withTheSourceMember_andTheDifferingAttributes() {
+        Map<String, SyncContentVerifier.Expected> expected = new LinkedHashMap<>();
+        expected.put("uid=jo,dc=t", new SyncContentVerifier.Expected("uid=jo,dc=t",
+                List.of(new Attribute("cn", "Jo"), new Attribute("title", "Lead"),
+                        new Attribute("userPassword", "{SSHA}new")),
+                Set.of(), Map.of(), "uid=jo,ou=staff,dc=s", "jo"));
+        expected.put("uid=pn,dc=t", new SyncContentVerifier.Expected("uid=pn,dc=t",
+                List.of(new Attribute("cn", "Pn")), Set.of(), Map.of(), "uid=pn,ou=staff,dc=s", "pn"));
+        Map<String, Entry> actual = new LinkedHashMap<>();
+        actual.put("uid=jo,dc=t", new Entry("uid=jo,dc=t", new Attribute("cn", "Jo"),
+                new Attribute("title", "Eng"), new Attribute("userPassword", "{SSHA}old")));
+        actual.put("uid=old,dc=t", new Entry("uid=old,dc=t", new Attribute("cn", "Old")));
+
+        SyncVerifyResult r = SyncContentVerifier.compare(expected, actual, EXCLUDED, true, true);
+
+        // Missing, then orphans, then content drift.
+        assertThat(r.items()).extracting(i -> i.category().name() + " " + i.targetDn())
+                .containsExactly("MISSING uid=pn,dc=t", "ORPHAN uid=old,dc=t", "MISMATCH uid=jo,dc=t");
+        var missing = r.items().get(0);
+        assertThat(missing.sourceDn()).isEqualTo("uid=pn,ou=staff,dc=s");
+        assertThat(missing.identity()).isEqualTo("pn");
+        assertThat(r.items().get(1).sourceDn()).isNull();
+        var drift = r.items().get(2);
+        assertThat(drift.attributes()).extracting(a -> a.attribute().toLowerCase())
+                .containsExactlyInAnyOrder("title", "userpassword");
+        var title = drift.attributes().stream().filter(a -> a.attribute().equalsIgnoreCase("title")).findFirst().get();
+        assertThat(title.expected()).containsExactly("Lead");
+        assertThat(title.actual()).containsExactly("Eng");
+        // Password material: flagged as differing, values never kept.
+        var pw = drift.attributes().stream().filter(a -> a.attribute().equalsIgnoreCase("userPassword")).findFirst().get();
+        assertThat(pw.hidden()).isTrue();
+        assertThat(pw.expected()).isEmpty();
+        assertThat(pw.actual()).isEmpty();
+    }
+
+    @Test
+    void attributeDiffs_capLongValueLists_andShowBinaryValuesBySize() {
+        String[] many = new String[SyncContentVerifier.VALUE_LIMIT + 5];
+        for (int i = 0; i < many.length; i++) many[i] = "uid=u" + i + ",dc=t";
+        var desired = List.of(new Attribute("member", many), new Attribute("jpegPhoto", new byte[] {(byte) 0xFF, 0x00, 0x01}));
+        Entry target = new Entry("cn=g,dc=t", new Attribute("member", "uid=x,dc=t"));
+        var mods = List.of(
+                new com.unboundid.ldap.sdk.Modification(com.unboundid.ldap.sdk.ModificationType.REPLACE, "member", many),
+                new com.unboundid.ldap.sdk.Modification(com.unboundid.ldap.sdk.ModificationType.ADD, "jpegPhoto",
+                        new byte[] {(byte) 0xFF, 0x00, 0x01}));
+
+        var diffs = SyncContentVerifier.attributeDiffs(mods, desired, target);
+
+        assertThat(diffs.get(0).expected()).hasSize(SyncContentVerifier.VALUE_LIMIT);
+        assertThat(diffs.get(0).truncated()).isTrue();
+        assertThat(diffs.get(0).actual()).containsExactly("uid=x,dc=t");
+        assertThat(diffs.get(1).expected()).containsExactly("(binary, 3 bytes)");
+        assertThat(diffs.get(1).actual()).isEmpty();
     }
 }

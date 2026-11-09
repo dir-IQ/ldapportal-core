@@ -16,9 +16,18 @@ import { nextTick } from 'vue'
 
 vi.mock('@/api/schema', () => ({
   listAttributeTypes: vi.fn(),
+  getObjectClass: vi.fn(),
 }))
-import { listAttributeTypes } from '@/api/schema'
+import { listAttributeTypes, getObjectClass } from '@/api/schema'
 const mockListAttributeTypes = vi.mocked(listAttributeTypes)
+const mockGetObjectClass = vi.mocked(getObjectClass)
+
+// Minimal schema: two classes with disjoint attribute sets, as when a
+// branch's entries carry a structural + an auxiliary class.
+const OC_SCHEMA: Record<string, { required: string[], optional: string[] }> = {
+  inetorgperson: { required: ['cn', 'sn', 'objectClass'], optional: ['mail', 'givenName'] },
+  posixaccount: { required: ['uid', 'uidNumber', 'gidNumber', 'homeDirectory'], optional: ['loginShell'] },
+}
 
 import LdapFilterBuilder from './LdapFilterBuilder.vue'
 
@@ -33,6 +42,13 @@ const mountBuilder = (props: Record<string, unknown> = {}) =>
 
 beforeEach(() => {
   mockListAttributeTypes.mockReset()
+  mockGetObjectClass.mockReset()
+  mockGetObjectClass.mockImplementation(async (_dir: string, name: string) => {
+    const oc = OC_SCHEMA[name.toLowerCase()]
+    if (!oc) throw new Error('404')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return { data: { objectClassName: name, ...oc } } as any
+  })
   // Default: schema returns a couple of attrs. The mock is loosely typed
   // (we cast to satisfy the AxiosResponse<any> return type) — these
   // tests don't care about the response envelope.
@@ -575,5 +591,89 @@ describe('LdapFilterBuilder.vue', () => {
     await w.find('button').trigger('click') // re-expand
     await flushPromises()
     expect(w.text()).toContain('Schema unavailable')
+  })
+})
+
+describe('LdapFilterBuilder.vue — objectClass-derived suggestions', () => {
+  type Exposed = { suggestionSource: string[], isScopedToProfile: boolean, expanded: boolean }
+
+  it('unions MUST + MAY attributes of every objectClass with the profile list', async () => {
+    const w = mountBuilder({
+      relevantAttributes: ['cn', 'mail'],
+      objectClasses: ['top', 'inetOrgPerson', 'posixAccount', 'INETORGPERSON'],
+    })
+    await w.find('button[aria-expanded]').trigger('click')
+    await flushPromises()
+    const vm = w.vm as unknown as Exposed
+    expect(vm.isScopedToProfile).toBe(true)
+    for (const a of ['cn', 'sn', 'mail', 'givenName', 'uid', 'uidNumber', 'gidNumber', 'homeDirectory', 'loginShell']) {
+      expect(vm.suggestionSource).toContain(a)
+    }
+    // 'top' is skipped and duplicate class names are fetched once.
+    expect(mockGetObjectClass).toHaveBeenCalledTimes(2)
+  })
+
+  it('scopes on objectClasses alone when no profile attribute list is given', async () => {
+    const w = mountBuilder({ objectClasses: ['posixAccount'] })
+    await w.find('button[aria-expanded]').trigger('click')
+    await flushPromises()
+    const vm = w.vm as unknown as Exposed
+    expect(vm.isScopedToProfile).toBe(true)
+    expect(vm.suggestionSource).toEqual(['gidNumber', 'homeDirectory', 'loginShell', 'uid', 'uidNumber'])
+  })
+
+  it('ignores classes the schema cannot resolve without dropping the rest', async () => {
+    const w = mountBuilder({ objectClasses: ['vendorExtension', 'posixAccount'] })
+    await w.find('button[aria-expanded]').trigger('click')
+    await flushPromises()
+    expect((w.vm as unknown as Exposed).suggestionSource).toContain('uidNumber')
+  })
+
+  it('picks up classes that appear after the panel is open', async () => {
+    const w = mountBuilder({ relevantAttributes: ['cn'], objectClasses: ['inetOrgPerson'] })
+    await w.find('button[aria-expanded]').trigger('click')
+    await flushPromises()
+    expect((w.vm as unknown as Exposed).suggestionSource).not.toContain('uidNumber')
+    await w.setProps({ objectClasses: ['inetOrgPerson', 'posixAccount'] })
+    await flushPromises()
+    expect((w.vm as unknown as Exposed).suggestionSource).toContain('uidNumber')
+  })
+
+  it('has no show-all toggle and never fetches the full schema when scoped', async () => {
+    const w = mountBuilder({ objectClasses: ['inetOrgPerson'] })
+    await w.find('button[aria-expanded]').trigger('click')
+    await flushPromises()
+    expect(w.text()).not.toContain('Show all attributes')
+    expect(w.text()).toContain("from this profile's object classes")
+    expect(mockListAttributeTypes).not.toHaveBeenCalled()
+  })
+
+  it('renders the whole scoped superset in the dropdown (no 50-item cap)', async () => {
+    const many = Array.from({ length: 120 }, (_, i) => `attr${String(i).padStart(3, '0')}`)
+    mockGetObjectClass.mockResolvedValueOnce(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { data: { required: ['objectClass'], optional: many } } as any)
+    const w = mountBuilder({ objectClasses: ['bigClass'] })
+    await w.find('button[aria-expanded]').trigger('click')
+    await flushPromises()
+    await w.find('button[aria-label="Add rule"]').trigger('click')
+    await nextTick()
+    await w.find('input[role="combobox"]').trigger('focus')
+    await nextTick()
+    expect(w.findAll('[role="option"]')).toHaveLength(121)
+  })
+})
+
+describe('LdapFilterBuilder.vue — unscoped full-schema fallback', () => {
+  it('shows a type-to-narrow hint when the schema exceeds the render cap', async () => {
+    mockListAttributeTypes.mockResolvedValueOnce({
+      data: Array.from({ length: 80 }, (_, i) => ({ name: `a${i}` })),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
+    const w = mountBuilder()
+    await w.find('button[aria-expanded]').trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('80 directory attributes — type to narrow')
+    expect(mockGetObjectClass).not.toHaveBeenCalled()
   })
 })

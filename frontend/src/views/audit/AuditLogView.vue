@@ -158,6 +158,7 @@ interface AuditEvent {
   occurredAt?: string
   actorUsername?: string
   action?: string
+  directoryName?: string
   targetDn?: string
   detail?: Record<string, unknown>
 }
@@ -170,6 +171,7 @@ interface AuditRow {
   occurredAt: string
   actorUsername: string
   action: string
+  directoryName: string
   targetDn: string
   detail: string
   // Index signature so AuditRow[] satisfies ResultsTable's SortableRow[].
@@ -219,6 +221,9 @@ const cols: ColumnDef[] = [
   { key: 'occurredAt',    label: 'When',   defaultWidth: 150 },
   { key: 'actorUsername', label: 'Actor',  defaultWidth: 140 },
   { key: 'action',        label: 'Action', defaultWidth: 160 },
+  // The directory the event happened in — needed when a superadmin views
+  // every directory at once, and on bulk operations, which span many entries.
+  { key: 'directoryName', label: 'Directory', defaultWidth: 150 },
   { key: 'targetDn',      label: 'Target', defaultWidth: 280 },
   { key: 'detail',        label: 'Detail', defaultWidth: 360 },
 ]
@@ -229,6 +234,7 @@ const tableRows = computed<AuditRow[]>(() => events.value.map(e => ({
   occurredAt:     e.occurredAt ?? '',
   actorUsername:  e.actorUsername ?? '',
   action:         e.action ?? '',
+  directoryName:  e.directoryName ?? '',
   targetDn:       e.targetDn ?? '',
   detail:         formatDetail(e.detail),
 })))

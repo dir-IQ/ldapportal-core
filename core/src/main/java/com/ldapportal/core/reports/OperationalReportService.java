@@ -102,10 +102,17 @@ public class OperationalReportService {
      * is clamped to their authorized OUs exactly the way the user and group
      * listings are, so a report can never read past what the admin could
      * browse. {@code bases} holds a single {@code null} when unbounded.
+     *
+     * <p>{@code groupBases} is where the groups column looks for groups. It is
+     * wider than {@code bases} for an admin: a report narrowed to their user OU
+     * must still name the groups in their group OU, so it covers every OU they
+     * hold, the same groups their Groups list shows.</p>
      */
-    record ReportScope(List<String> bases, Predicate<String> dnAllowed, boolean restricted) {
+    record ReportScope(List<String> bases, List<String> groupBases,
+                       Predicate<String> dnAllowed, boolean restricted) {
         static ReportScope unbounded(String requestedBase) {
-            return new ReportScope(Collections.singletonList(requestedBase), dn -> true, false);
+            List<String> bases = Collections.singletonList(requestedBase);
+            return new ReportScope(bases, bases, dn -> true, false);
         }
 
         /** Refuse an explicit DN parameter (branch, group) outside the scope. */
@@ -160,7 +167,8 @@ public class OperationalReportService {
             return ReportScope.unbounded(requestedBase);
         }
         List<String> bases = permissionService.resolveSearchBaseDns(principal, directoryId, requestedBase);
-        return new ReportScope(bases,
+        List<String> groupBases = permissionService.resolveGroupSearchBaseDns(principal, directoryId);
+        return new ReportScope(bases, groupBases,
                 dn -> permissionService.isDnWithinScope(principal, directoryId, dn), true);
     }
 
@@ -180,17 +188,17 @@ public class OperationalReportService {
                     String branchDn = requireString(safeParams, "branchDn");
                     scope.requireInScope(branchDn);
                     yield withGroups(dc, scope, runLdapReport(dc,
-                            "(|(objectClass=inetOrgPerson)(objectClass=person))", branchDn));
+                            "(|(objectClass=inetOrgPerson)(objectClass=person))", branchDn, safeParams));
                 }
                 case USERS_WITH_NO_GROUP    -> withGroups(dc, scope, perBase(scope,
                         base -> runUsersByGroupCountReport(dc, base, safeParams)));
                 case RECENTLY_ADDED         -> withGroups(dc, scope, perBase(scope, base -> runLdapReport(dc,
-                        buildRecentFilter("createTimestamp", safeParams), base)));
+                        buildRecentFilter("createTimestamp", safeParams), base, safeParams)));
                 case RECENTLY_MODIFIED      -> withGroups(dc, scope, perBase(scope, base -> runLdapReport(dc,
-                        buildRecentFilter("modifyTimestamp", safeParams), base)));
+                        buildRecentFilter("modifyTimestamp", safeParams), base, safeParams)));
                 case RECENTLY_DELETED       -> runDeletedReport(directoryId, safeParams, scope);
                 case DISABLED_ACCOUNTS      -> withGroups(dc, scope,
-                        perBase(scope, base -> runDisabledAccountsReport(dc, base)));
+                        perBase(scope, base -> runDisabledAccountsReport(dc, base, safeParams)));
                 case MISSING_PROFILE_GROUPS -> runMissingProfileGroupsReport(dc, directoryId, scope);
                 case AUDIT_ENTRIES          -> runAuditEntriesReport(directoryId, safeParams, scope);
                 case MISSING_DATA           -> runMissingDataReport(dc, safeParams, scope);
@@ -239,22 +247,22 @@ public class OperationalReportService {
 
     /**
      * Adds a last {@value #GROUPS_COLUMN} column naming each listed user's
-     * groups, worked out from the group entries under the caller's search
-     * bases, so only groups they can see are named. Built exactly as the user
+     * groups, worked out from the group entries under the caller's group
+     * search bases ({@link ReportScope#groupBases()}), so only groups they can
+     * see are named. Built exactly as the user
      * CSV export builds its groups column ({@link UserGroupIndex}: same labels,
-     * same {@code |}-joined cell), so the two agree. The UI hides it until
-     * asked for; a CSV export carries it.
+     * same {@code |}-joined cell), so the two agree. The UI shows it by
+     * default; a CSV export carries it.
      */
     private ReportData withGroups(DirectoryConnection dc, ReportScope scope, ReportData data) {
         List<String> columns = UserGroupIndex.withColumn(data.columns());
-        Map<String, String> labels = new LinkedHashMap<>(data.labels());
-        labels.put(GROUPS_COLUMN, "Groups");
+        Map<String, String> labels = data.labels();
         if (data.rows().isEmpty()) {
             return new ReportData(columns, data.rows(), labels);
         }
         UserGroupIndex index;
         try {
-            index = UserGroupIndex.build(groupService, dc, scope.bases());
+            index = UserGroupIndex.build(groupService, dc, scope.groupBases());
         } catch (RuntimeException e) {
             // The report itself still stands; it just goes without the column.
             log.warn("Could not read groups for the report's groups column: {}", e.getMessage());
@@ -320,13 +328,14 @@ public class OperationalReportService {
 
         if (memberDns.isEmpty()) {
             List<String> columns = List.of("dn", "cn", "mail", "uid");
-            return new ReportData(columns, List.of(), labelsFor(columns));
+            return new ReportData(columns, List.of());
         }
 
         List<LdapUser> users = new ArrayList<>();
         for (String memberDn : memberDns) {
             try {
-                users.addAll(userService.searchUsersRaw(dc, "(objectClass=*)", memberDn, 1, "*"));
+                users.addAll(userService.searchUsersRaw(dc, "(objectClass=*)", memberDn, 1,
+                        entryAttributes(params)));
             } catch (Exception e) {
                 log.debug("Skipping member {}: {}", memberDn, e.getMessage());
             }
@@ -368,7 +377,7 @@ public class OperationalReportService {
 
         List<LdapUser> allUsers = userService.searchUsersRaw(dc,
                 "(|(objectClass=inetOrgPerson)(objectClass=person))", scopeBaseDn,
-                MAX_LDAP_RESULTS, "*");
+                MAX_LDAP_RESULTS, entryAttributes(params));
 
         List<LdapUser> matched = allUsers.stream()
                 .filter(u -> matchesGroupCount(
@@ -422,7 +431,8 @@ public class OperationalReportService {
         };
     }
 
-    private ReportData runDisabledAccountsReport(DirectoryConnection dc, String scopeBaseDn) {
+    private ReportData runDisabledAccountsReport(DirectoryConnection dc, String scopeBaseDn,
+                                                 Map<String, Object> params) {
         // Keep the vendor-disable attribute set here in sync with
         // LdapDirectoryProvider.isEnabled — both code paths classify
         // accounts as disabled, and they must agree or operators see a
@@ -435,7 +445,7 @@ public class OperationalReportService {
                 : "(|(pwdAccountLockedTime=*)(nsAccountLock=TRUE)"
                   + "(ds-pwp-account-disabled=TRUE)(loginDisabled=TRUE)"
                   + "(employeeType=Terminated)(loginShell=/sbin/nologin))";
-        return runLdapReport(dc, filter, scopeBaseDn);
+        return runLdapReport(dc, filter, scopeBaseDn, params);
     }
 
     private ReportData runDeletedReport(UUID directoryId, Map<String, Object> params,
@@ -634,8 +644,7 @@ public class OperationalReportService {
         columns.add(MISSING_ATTRIBUTES_COLUMN);
         columns.add("objectClass");
         shown.forEach(a -> { if (!a.equalsIgnoreCase("objectClass")) columns.add(a); });
-        Map<String, String> labels = labelsFor(columns);
-        labels.put(MISSING_ATTRIBUTES_COLUMN, "Missing Attributes");
+        Map<String, String> labels = Map.of(MISSING_ATTRIBUTES_COLUMN, "Missing Attributes");
 
         List<Map<String, String>> rows = new ArrayList<>();
         for (LdapUser entry : entries) {
@@ -717,8 +726,25 @@ public class OperationalReportService {
 
     // ── Shared helpers ────────────────────────────────────────────────────────
 
-    private ReportData runLdapReport(DirectoryConnection dc, String filter, String baseDn) {
-        List<LdapUser> users = userService.searchUsersRaw(dc, filter, baseDn, MAX_LDAP_RESULTS, "*");
+    /** Report param asking entry reports to also return operational attributes. */
+    static final String INCLUDE_OPERATIONAL_PARAM = "includeOperational";
+
+    /**
+     * The attributes an entry report fetches: every user attribute, plus every
+     * operational one ({@code +}, RFC 3673) when {@value #INCLUDE_OPERATIONAL_PARAM}
+     * is set. Active Directory ignores {@code +}; there only explicitly named
+     * operational attributes come back.
+     */
+    static String[] entryAttributes(Map<String, Object> params) {
+        Object raw = params == null ? null : params.get(INCLUDE_OPERATIONAL_PARAM);
+        boolean operational = raw instanceof Boolean b ? b : raw != null && Boolean.parseBoolean(raw.toString());
+        return operational ? new String[]{"*", "+"} : new String[]{"*"};
+    }
+
+    private ReportData runLdapReport(DirectoryConnection dc, String filter, String baseDn,
+                                     Map<String, Object> params) {
+        List<LdapUser> users = userService.searchUsersRaw(dc, filter, baseDn, MAX_LDAP_RESULTS,
+                entryAttributes(params));
         if (users.size() >= MAX_LDAP_RESULTS) {
             log.warn("Report query hit the {} result limit — results may be truncated. "
                     + "Filter: {}, baseDn: {}", MAX_LDAP_RESULTS, filter, baseDn);
@@ -729,7 +755,7 @@ public class OperationalReportService {
     /**
      * One row per entry, one column per attribute any entry carries ({@code dn}
      * first, the rest sorted), keyed by the attribute name so a CSV export
-     * carries the real names; the friendly headings go in the labels. Secret
+     * and the UI both carry the real names (no friendly headings). Secret
      * attributes (password hashes and the like) are left out even when the
      * bind account can read them.
      */
@@ -746,7 +772,7 @@ public class OperationalReportService {
         List<Map<String, String>> rows = users.stream()
                 .map(u -> buildRow(u, columns))
                 .toList();
-        return new ReportData(columns, rows, labelsFor(columns));
+        return new ReportData(columns, rows);
     }
 
     private static Map<String, String> buildRow(LdapUser user, List<String> columns) {
@@ -755,16 +781,6 @@ public class OperationalReportService {
             row.put(col, "dn".equals(col) ? user.getDn() : String.join("|", user.getValues(col)));
         }
         return row;
-    }
-
-    /** Friendly headings for the columns that have one. */
-    private static Map<String, String> labelsFor(List<String> columns) {
-        Map<String, String> labels = new LinkedHashMap<>();
-        for (String c : columns) {
-            String friendly = friendlyLdapColumn(c);
-            if (!friendly.equals(c)) labels.put(c, friendly);
-        }
-        return labels;
     }
 
     /**
@@ -781,53 +797,6 @@ public class OperationalReportService {
         String a = attribute.toLowerCase();
         int semi = a.indexOf(';');
         return SECRET_ATTRIBUTES.contains(semi < 0 ? a : a.substring(0, semi));
-    }
-
-    private static final Map<String, String> LDAP_COLUMN_NAMES = Map.ofEntries(
-            Map.entry("dn", "DN"),
-            Map.entry("cn", "Name"),
-            Map.entry("uid", "User ID"),
-            Map.entry("mail", "Email"),
-            Map.entry("sn", "Last Name"),
-            Map.entry("givenname", "First Name"),
-            Map.entry("displayname", "Display Name"),
-            Map.entry("telephonenumber", "Phone"),
-            Map.entry("title", "Title"),
-            Map.entry("description", "Description"),
-            Map.entry("objectclass", "Object Class"),
-            Map.entry("createtimestamp", "Created"),
-            Map.entry("modifytimestamp", "Modified"),
-            Map.entry("employeenumber", "Employee #"),
-            Map.entry("employeetype", "Employee Type"),
-            Map.entry("departmentnumber", "Dept #"),
-            Map.entry("o", "Organization"),
-            Map.entry("ou", "Org Unit"),
-            Map.entry("l", "Location"),
-            Map.entry("st", "State"),
-            Map.entry("postalcode", "Postal Code"),
-            Map.entry("street", "Street"),
-            Map.entry("memberof", "Member Of"),
-            Map.entry("manager", "Manager"),
-            Map.entry("loginshell", "Login Shell"),
-            Map.entry("homedirectory", "Home Dir"),
-            Map.entry("uidnumber", "UID #"),
-            Map.entry("gidnumber", "GID #"),
-            Map.entry("useraccountcontrol", "UAC"),
-            Map.entry("samaccountname", "SAM Account"),
-            Map.entry("userprincipalname", "UPN"),
-            Map.entry("pwdaccountlockedtime", "Locked Since"),
-            Map.entry("nsaccountlock", "Account Lock"),
-            Map.entry("entryuuid", "Entry UUID"),
-            Map.entry("entrydn", "Entry DN"),
-            Map.entry("structuralobjectclass", "Structural Class"),
-            Map.entry("subschemasubentry", "Subschema"),
-            Map.entry("hassubordinates", "Has Children"),
-            Map.entry("numsubordinates", "# Children")
-    );
-
-    static String friendlyLdapColumn(String raw) {
-        String friendly = LDAP_COLUMN_NAMES.get(raw.toLowerCase());
-        return friendly != null ? friendly : raw;
     }
 
     private boolean isDeleteChange(Map<String, Object> detail) {

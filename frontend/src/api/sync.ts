@@ -444,6 +444,12 @@ export interface SyncVerifyResult {
   orphansAnchored?: boolean
   /** Members whose reference values the sync holds back (not drift); null when not counted. */
   heldReferences?: SyncHeldReferences | null
+  /**
+   * Anchored target entries no source member accounts for that this set still
+   * tracks (a delete held for review, or one the next reconcile makes): leaving
+   * the set, so not counted as orphans.
+   */
+  leavingSet?: number
 }
 
 export interface SyncHeldReferences {
@@ -457,6 +463,114 @@ export interface SyncHeldReferences {
 
 export const verifyContents = (setId: string) =>
   client.get<SyncVerifyResult>(`/superadmin/sync/sets/${setId}/verify`)
+
+// ── Drift: every item of the last complete content verify ───────────────────
+
+export type SyncDriftCategory = 'MISSING' | 'ORPHAN' | 'MISMATCH'
+
+/** One attribute that differs: what the projected source wants against what the target has. */
+export interface SyncDriftAttribute {
+  attribute: string
+  expected: string[]
+  actual: string[]
+  /** Password material: flagged as differing, values never kept. */
+  hidden: boolean
+  /** A side had more values than were kept. */
+  truncated: boolean
+}
+
+export interface SyncDriftEntry {
+  seq: number
+  category: SyncDriftCategory
+  targetDn: string
+  /** The source member it comes from; null for an orphan. */
+  sourceDn: string | null
+  identity: string | null
+  /** Content drift only. */
+  attributes: SyncDriftAttribute[]
+}
+
+export interface SyncDriftPage {
+  /** The last complete verify; null when there hasn't been one. */
+  verifiedAt: string | null
+  /** A later verify that couldn't read both sides; the items are from the earlier one. */
+  incompleteAt: string | null
+  /** False when the set's counts predate stored items (verifying again records them). */
+  detailsRecorded: boolean
+  counts: Record<SyncDriftCategory, number>
+  matched: number
+  page: number
+  size: number
+  entries: SyncDriftEntry[]
+}
+
+export const getDrift = (setId: string,
+  params: { category?: SyncDriftCategory; q?: string; page?: number; size?: number } = {}) =>
+  client.get<SyncDriftPage>(`/superadmin/sync/sets/${setId}/drift`, { params })
+
+export const downloadDriftCsv = (setId: string) =>
+  client.get<Blob>(`/superadmin/sync/sets/${setId}/drift.csv`, { responseType: 'blob' })
+
+/** What repairing one drift item would do, re-checked live. */
+export interface SyncDriftRepairPreviewItem {
+  seq: number
+  action: 'CREATE' | 'REAPPLY' | 'SKIP'
+  targetDn: string
+  sourceDn: string | null
+  /** For a REAPPLY: the attributes that differ now. */
+  attributes: SyncDriftAttribute[]
+  /** For a SKIP: why. */
+  reason: string | null
+}
+
+export type SyncDriftRepairOutcome = 'CREATED' | 'REAPPLIED' | 'ALREADY_IN_SYNC' | 'SKIPPED' | 'HELD' | 'FAILED'
+
+export interface SyncDriftRepairResult {
+  created: number
+  reapplied: number
+  alreadyInSync: number
+  skipped: number
+  held: number
+  failed: number
+  items: { seq: number; outcome: SyncDriftRepairOutcome; targetDn: string | null; message: string | null }[]
+}
+
+/**
+ * `verifiedAt` is the stored verify's time from the drift page the items were
+ * chosen on: a newer verify renumbers the items, and the server refuses a stale
+ * selection rather than act on other entries.
+ */
+export const previewDriftRepair = (setId: string, seqs: number[], verifiedAt: string) =>
+  client.post<{ items: SyncDriftRepairPreviewItem[] }>(`/superadmin/sync/sets/${setId}/drift/repair/preview`,
+    { seqs, verifiedAt })
+
+export const repairDrift = (setId: string, seqs: number[], verifiedAt: string) =>
+  client.post<SyncDriftRepairResult>(`/superadmin/sync/sets/${setId}/drift/repair`, { seqs, verifiedAt })
+
+/** What deleting one orphan would do, re-checked live. */
+export interface SyncOrphanDeletePreviewItem {
+  seq: number
+  action: 'DELETE' | 'SKIP'
+  targetDn: string
+  /** For a SKIP: why it's left alone. */
+  reason: string | null
+}
+
+export interface SyncOrphanDeleteResult {
+  deleted: number
+  skipped: number
+  failed: number
+  items: { seq: number; outcome: 'DELETED' | 'SKIPPED' | 'FAILED'; targetDn: string; message: string | null }[]
+}
+
+export const previewOrphanDelete = (setId: string, seqs: number[], verifiedAt: string) =>
+  client.post<{ items: SyncOrphanDeletePreviewItem[] }>(
+    `/superadmin/sync/sets/${setId}/drift/orphans/delete/preview`, { seqs, verifiedAt })
+
+/** `confirm` must be exactly "DELETE" (the dialog's typed confirmation); `verifiedAt` as for repair. */
+export const deleteOrphans = (setId: string, seqs: number[], verifiedAt: string, confirm: string) =>
+  client.post<SyncOrphanDeleteResult>(`/superadmin/sync/sets/${setId}/drift/orphans/delete`,
+    { seqs, verifiedAt, confirm })
 
 // ── Inventory + operator triggers ───────────────────────────────────────────
 

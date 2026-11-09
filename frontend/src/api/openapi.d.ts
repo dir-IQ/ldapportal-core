@@ -3509,6 +3509,7 @@ export interface components {
             runHistory?: components["schemas"]["ReportRunHistoryEntry"][];
             /** Format: uuid */
             createdByAdminId?: string;
+            createdByName?: string;
             /** Format: date-time */
             createdAt?: string;
             /** Format: date-time */
@@ -4180,6 +4181,7 @@ export interface components {
             reportParams?: {
                 [key: string]: unknown;
             };
+            columns?: string[];
         };
         ReportData: {
             columns?: string[];

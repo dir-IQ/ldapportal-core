@@ -54,6 +54,7 @@ class AdminManagementServiceTest {
     @Mock private com.ldapportal.core.entitlement.UsageLimitService usageLimitService;
     @Mock private AuditService                    auditService;
     @Mock private ApprovalNotificationService     notificationService;
+    @Mock private com.ldapportal.repository.ScheduledReportJobRepository reportJobRepo;
 
     private AdminManagementService service;
 
@@ -65,7 +66,7 @@ class AdminManagementServiceTest {
         service = new AdminManagementService(
                 accountRepo, profileRepo, profileRoleRepo,
                 usageLimitService,
-                featureRepo, passwordEncoder, auditService, notificationService);
+                featureRepo, passwordEncoder, auditService, notificationService, reportJobRepo);
     }
 
     // ── listAdmins ────────────────────────────────────────────────────────────
@@ -271,6 +272,20 @@ class AdminManagementServiceTest {
         assertThatThrownBy(() -> service.deleteAdmin(adminId))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(accountRepo, never()).delete(any());
+    }
+
+    @Test
+    void deleteAdmin_disablesTheirScheduledReportsBeforeDeleting() {
+        Account alice = adminAccount("alice");
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(alice));
+
+        service.deleteAdmin(adminId);
+
+        // The FK nulls the creator on delete and a creator-less job runs
+        // unbounded, so the jobs have to be switched off first.
+        var order = inOrder(reportJobRepo, accountRepo);
+        order.verify(reportJobRepo).disableAllCreatedBy(adminId);
+        order.verify(accountRepo).delete(alice);
     }
 
     @Test

@@ -6,8 +6,13 @@ import com.ldapportal.entity.ScheduledReportJob;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -31,4 +36,35 @@ public interface ScheduledReportJobRepository extends JpaRepository<ScheduledRep
     long countByEnabledTrue();
 
     long countByEnabledTrueAndLastRunStatus(ReportJobRunStatus status);
+
+    /**
+     * Claims a job's run by moving {@code last_run_at} from the value the caller
+     * read ({@code seen}) to {@code now}, in one conditional update. Every
+     * backend instance polls the same rows, so this compare-and-set is what
+     * stops two of them (or a poll and a run-now) delivering the same run: only
+     * the caller whose update hits the row may run it; anyone holding an older
+     * {@code seen} gets 0 and must skip.
+     *
+     * @return 1 when the claim was won, 0 when someone else already moved the row
+     */
+    @Transactional
+    @Modifying
+    @Query("update ScheduledReportJob j set j.lastRunAt = :now where j.id = :id and j.lastRunAt = :seen")
+    int claimRun(@Param("id") UUID id, @Param("seen") OffsetDateTime seen, @Param("now") OffsetDateTime now);
+
+    /** {@link #claimRun} for a job that has never run ({@code last_run_at} still null). */
+    @Transactional
+    @Modifying
+    @Query("update ScheduledReportJob j set j.lastRunAt = :now where j.id = :id and j.lastRunAt is null")
+    int claimFirstRun(@Param("id") UUID id, @Param("now") OffsetDateTime now);
+
+    /**
+     * Disables every job {@code accountId} created. Called before an admin
+     * account is deleted: the {@code created_by_admin_id} FK is
+     * {@code ON DELETE SET NULL}, and a job with no creator runs unbounded, so
+     * leaving it enabled would widen it past the OUs it was created under.
+     */
+    @Modifying
+    @Query("update ScheduledReportJob j set j.enabled = false where j.createdByAdminId = :accountId")
+    int disableAllCreatedBy(@Param("accountId") UUID accountId);
 }

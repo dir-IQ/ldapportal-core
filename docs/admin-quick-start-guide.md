@@ -142,12 +142,24 @@ For operational reports, go to **Reports** in the sidebar:
   lists every entry under the branch that has any of those attributes absent or
   blank, with a "Missing Attributes" column naming the gaps. Optionally narrow
   to users or groups. Can also be scheduled.
-- All available in CSV and PDF format. The table shows the first ten columns;
-  turn the rest on from the **Columns** menu. Reports that list users also
-  offer a **Groups** column (each user's groups, `|`-separated), hidden until
-  you turn it on. A CSV export carries every column, headed by the real LDAP
-  attribute names (`givenname`, not "First Name"); password attributes are
-  never included.
+- All available in CSV and PDF format.
+- Reports that list users (Users in Group / Branch, Users with No Group,
+  Recently Added / Modified, Disabled Accounts) offer the same columns as the
+  **Users** page, in the same order: `dn`, then `cn`, `sn`, `givenName`,
+  `displayName`, `mail`, `uid` and `title` when present (shown), then a
+  `groups` column (each user's groups, `|`-separated, limited to groups under
+  your authorized OUs), then every other attribute A–Z, off until you turn it
+  on from the **Columns** menu. Other reports show their first ten columns.
+- Columns are always headed by the real LDAP attribute name (`givenName`, not
+  "First Name"). Password attributes are never included.
+- Tick **Operational attributes** above the table (here or on the Users page)
+  to also fetch operational attributes such as `createTimestamp` and
+  `entryUUID`; they appear in the **Columns** menu. Active Directory doesn't
+  return operational attributes this way.
+- **Export CSV** carries the columns the table shows, in the order shown, on
+  both the Users page and the reports — hide or reorder a column and the file
+  follows. (`dn` always comes first, and on the Users page `groups` always
+  comes last.)
 
 ---
 
@@ -305,6 +317,11 @@ Base DN:  dc=corp,dc=local
   user action are hidden and the playbook API refuses requests, while existing
   playbook definitions and execution history are kept for when it is re-enabled.
 - **Scheduled Reports** — Set up recurring reports with email or S3 delivery in the Reports section.
+  A job delivers what its creator would get running the same report on demand: an admin's job
+  runs with that admin's current OU access, so it stops (recorded as failed) once they lose the
+  job's OU or their account is deactivated, and deleting the admin disables their jobs. A job can
+  carry the on-screen columns (**Use on-screen columns**) and operational attributes, and its file
+  is named like the on-demand export (e.g. `disabled-accounts.csv`).
 - **Bulk Operations** — Import/export users via CSV in the Bulk Import/Export section.
   **Group import** creates groups and adds or removes their members from one CSV:
   `cn`, optional attributes, optional `members` (separated by `|`; each a uid or a full

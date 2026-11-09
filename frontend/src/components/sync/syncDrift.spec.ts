@@ -32,4 +32,15 @@ describe('syncDrift', () => {
     expect(s.label).toBe('1 orphaned (may be out of date)')
     expect(s.title).toContain("couldn't read both directories completely")
   })
+
+  it('shows deletes held for review beside the drift, not as orphans', () => {
+    const counts = { APPLIED: 10, REVIEW: 4, REVIEW_DELETE: 3 }
+    const s = driftSummary({ verify: snap({}), stateCounts: counts })
+    expect(s.label).toBe('In sync · 3 held for delete')
+    expect(s.tone).toBe('text-green-700')
+    expect(s.title).toContain('held for review; not counted as orphaned')
+    expect(driftSummary({ verify: snap({ missing: 1 }), stateCounts: counts }).label).toBe('1 missing · 3 held for delete')
+    expect(driftSummary({ verify: null, stateCounts: counts }).label).toBe('Not verified · 3 held for delete')
+    expect(driftSummary({ verify: snap({}), stateCounts: { APPLIED: 2 } }).label).toBe('In sync')
+  })
 })

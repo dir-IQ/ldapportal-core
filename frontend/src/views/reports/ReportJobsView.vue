@@ -128,8 +128,14 @@
         :columns="tableColumns"
         :rows="resultRows"
         empty-text="No entries found for this report."
+        @visible-columns-change="visibleColumnKeys = $event"
       >
         <template #toolbar>
+          <label v-if="isEntryReport" class="flex items-center gap-1.5 text-xs text-gray-600"
+                 title="Also fetch operational attributes (createTimestamp, entryUUID, …) and run the report again. They appear in the Columns menu.">
+            <input v-model="includeOperational" type="checkbox" class="rounded border-gray-300" :disabled="running" />
+            Operational attributes
+          </label>
           <button @click="doExport('CSV')" :disabled="exporting" class="btn-secondary text-xs">Export CSV</button>
           <!-- PDF rendering ships with the commercial governance
                module; hide the button on community where the
@@ -183,6 +189,7 @@
               <th class="px-3 py-2 text-left font-medium text-gray-500">Schedule</th>
               <th class="px-3 py-2 text-left font-medium text-gray-500">Format</th>
               <th class="px-3 py-2 text-left font-medium text-gray-500">Delivery</th>
+              <th class="px-3 py-2 text-left font-medium text-gray-500">Created By</th>
               <th class="px-3 py-2 text-left font-medium text-gray-500">Last Run</th>
               <th class="px-3 py-2 text-left font-medium text-gray-500">On</th>
               <th class="px-3 py-2"></th>
@@ -199,6 +206,10 @@
                 </td>
                 <td class="px-3 py-2 text-gray-600">{{ job.outputFormat || 'CSV' }}</td>
                 <td class="px-3 py-2 text-gray-600">{{ job.deliveryMethod }}</td>
+                <td class="px-3 py-2 text-gray-600">
+                  <span v-if="job.createdByName">{{ job.createdByName }}</span>
+                  <span v-else class="text-gray-300">—</span>
+                </td>
                 <td class="px-3 py-2 text-gray-500 text-xs">
                   <span v-if="job.lastRunAt">{{ fmtDate(job.lastRunAt) }}</span>
                   <span v-else class="text-gray-300">—</span>
@@ -226,7 +237,7 @@
               </tr>
               <!-- Run log: the bounded run-history timeline for this job, newest first. -->
               <tr v-if="expandedJobId === job.id" class="bg-gray-50">
-                <td colspan="8" class="px-4 py-3">
+                <td colspan="9" class="px-4 py-3">
                   <p class="text-xs font-semibold text-gray-600 mb-2">
                     Run log — last {{ job.runHistory?.length ?? 0 }} run(s), newest first
                   </p>
@@ -253,6 +264,9 @@
             {{ editJob ? 'Edit Job' : '+ Add Scheduled Job' }}
           </summary>
           <form v-if="showJobForm" @submit.prevent="saveJob" class="px-4 pb-4 pt-2 space-y-3">
+            <!-- Who created the job: view-only, shown when editing an existing job. -->
+            <FormField v-if="editJob" label="Created By"
+                       :model-value="editJob.createdByName || 'Unknown'" disabled />
             <div class="grid grid-cols-2 gap-3">
               <FormField label="Name" v-model="jobForm.name" required />
               <div>
@@ -377,6 +391,23 @@
                 <p class="text-xs text-gray-400 mt-1">Leave empty for all actions.</p>
               </div>
             </template>
+            <!-- Entry reports: fetch operational attributes too, as the
+                 runner's "Operational attributes" switch does. -->
+            <div v-if="jobFormIsEntryReport" class="flex items-center gap-2">
+              <input type="checkbox" id="rj-job-include-operational" v-model="jobForm.includeOperational" class="rounded" />
+              <label for="rj-job-include-operational" class="text-sm text-gray-700">Include operational attributes</label>
+            </div>
+            <!-- The columns the delivered file carries, in order — the same
+                 choice a CSV export of the on-screen table makes. -->
+            <div>
+              <label for="rj-job-columns" class="block text-sm font-medium text-gray-700 mb-1">Columns</label>
+              <input id="rj-job-columns" v-model="jobForm.columns" type="text" class="input w-full" placeholder="All columns" />
+              <div class="flex items-center justify-between mt-1 gap-2">
+                <p class="text-xs text-gray-400">Comma-separated, in order. Leave empty for every column.</p>
+                <button v-if="canUseOnScreenColumns" type="button" class="btn-secondary text-xs"
+                        @click="useOnScreenColumns">Use on-screen columns</button>
+              </div>
+            </div>
             <div class="flex items-center gap-2">
               <input type="checkbox" id="jobEnabled" v-model="jobForm.enabled" class="rounded" />
               <label for="jobEnabled" class="text-sm text-gray-700">Enabled</label>
@@ -405,7 +436,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
@@ -418,11 +449,15 @@ import {
 } from '@/api/reports'
 import { listDirectories } from '@/api/directories'
 import { checkIntegrity } from '@/api/browse'
+import { listAttributeTypes } from '@/api/schema'
+import {
+  buildUserAttributeColumns, attributeDisplayName, useOperationalAttributesToggle,
+} from '@/composables/useUserAttributeColumns'
 import { getAuditActions } from '@/api/audit'
 import { actionLabel } from '@/components/dashboard/auditLabels'
 import { downloadBlob } from '@/composables/useApi'
 import {
-  friendlyColumnName, formatRelativeDate, formatFullDate,
+  formatRelativeDate, formatFullDate,
   looksLikeTimestamp, looksLikeDn,
   integrityTypeBadgeClass, friendlyIntegrityType, sourceBadgeClass,
   DATE_COLUMNS, HIDDEN_COLUMNS,
@@ -482,6 +517,8 @@ interface Job {
   lastRunStatus?: string
   lastRunMessage?: string
   runHistory?: RunHistoryEntry[]
+  /** The creating admin's display name (else username); null when unknown. */
+  createdByName?: string | null
 }
 
 const route = useRoute()
@@ -631,6 +668,16 @@ const needsAuditFilters = computed(() => !!currentRunType.value?.auditFilters)
 const needsAttributes = computed(() => !!currentRunType.value?.attributes)
 
 /** "mail, sn,,manager" → ['mail', 'sn', 'manager'] (trimmed, de-duplicated, order kept). */
+/**
+ * Download name for a report file — the backend's rule
+ * (ReportFileNames.forReportId), so an exported file is named like the
+ * scheduled delivery of the same report: DISABLED_ACCOUNTS → disabled-accounts.csv.
+ */
+function reportFileName(reportType: string, ext: string): string {
+  const slug = reportType.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  return `${slug || 'report'}.${ext}`
+}
+
 function splitAttributes(raw: string): string[] {
   const seen = new Set<string>()
   const out: string[] = []
@@ -680,25 +727,80 @@ onBeforeUnmount(() => document.removeEventListener('click', onAuditActionClickOu
 
 /** Columns shown up front; the rest start hidden but can be turned on from the Columns menu. */
 const VISIBLE_COLUMN_LIMIT = 10
-/** Each listed user's groups, added by the backend; shown only on request. */
+/** Each listed user's groups, added last by the backend; always shown, outside the ten-column limit. */
 const GROUPS_COLUMN = 'groups'
 
 function columnLabel(col: string): string {
-  return resultLabels.value[col] ?? friendlyColumnName(col)
+  return resultLabels.value[col] ?? col
 }
 
-// Every column reaches the table (internal ones like 'id' aside), headed by
-// the backend's label or the friendly LDAP name ("cn" → "Name"). Past the
-// first ten, and the groups column, start hidden in the Columns menu.
+/**
+ * Reports that list user entries with every attribute they carry. Their
+ * columns follow the Users page's rules (useUserAttributeColumns): the same
+ * set, order and defaults, headed by the real attribute name.
+ */
+const ENTRY_REPORT_TYPES = new Set([
+  'USERS_IN_GROUP', 'USERS_IN_BRANCH', 'USERS_WITH_NO_GROUP',
+  'RECENTLY_ADDED', 'RECENTLY_MODIFIED', 'DISABLED_ACCOUNTS',
+])
+/** The report whose results are on screen (the form may have moved on since). */
+const shownReportType = ref('')
+const isEntryReport = computed(() => ENTRY_REPORT_TYPES.has(shownReportType.value))
+
+/** Fetch operational attributes too (`+`) for entry reports; remembered per browser. */
+const includeOperational = useOperationalAttributesToggle('report-jobs')
+watch(includeOperational, () => { if (hasResults.value && isEntryReport.value) doRun() })
+
+/** Lower-cased attribute name → schema spelling, per directory; best effort. */
+const schemaNames = ref<Map<string, string>>(new Map())
+let schemaNamesDir = ''
+async function loadSchemaNames(dir: string): Promise<void> {
+  if (!dir || dir === schemaNamesDir) return
+  schemaNamesDir = dir
+  try {
+    const { data } = await listAttributeTypes(dir)
+    const map = new Map<string, string>()
+    for (const a of (Array.isArray(data) ? data : []) as Array<{ name?: string }>) {
+      if (a.name) map.set(a.name.toLowerCase(), a.name)
+    }
+    if (schemaNamesDir === dir) schemaNames.value = map
+  } catch {
+    if (schemaNamesDir === dir) schemaNames.value = new Map()
+  }
+}
+
+/** Visible column keys in display order, reported by ResultsTable; the CSV export follows them. */
+const visibleColumnKeys = ref<string[]>([])
+
+// Entry reports: the shared user-attribute columns. Every other report keeps
+// its own columns in the backend's order, headed by the backend's label or
+// the key; past the first ten start hidden in the Columns menu.
 const tableColumns = computed<ColumnDef[]>(() => {
+  if (isEntryReport.value) {
+    return buildUserAttributeColumns(resultColumns.value, {
+      groupsKey: GROUPS_COLUMN,
+      schemaNames: schemaNames.value,
+    })
+  }
   let shown = 0
   return resultColumns.value
     .filter(c => !HIDDEN_COLUMNS.has(c))
     .map(c => {
-      const hidden = c === GROUPS_COLUMN || shown++ >= VISIBLE_COLUMN_LIMIT
-      return hidden ? { key: c, label: columnLabel(c), defaultHidden: true } : { key: c, label: columnLabel(c) }
+      const label = c === 'dn' ? 'dn' : (resultLabels.value[c] ?? attributeDisplayName(c, schemaNames.value))
+      const hidden = c !== GROUPS_COLUMN && shown++ >= VISIBLE_COLUMN_LIMIT
+      return hidden ? { key: c, label, defaultHidden: true } : { key: c, label }
     })
 })
+
+/**
+ * The columns a CSV export asks for: the visible ones in display order, each
+ * by its real attribute name (schema-cased, so the file's header matches the
+ * table's). Derived columns go by their key, which the backend knows them by.
+ */
+const exportColumns = computed<string[]>(() =>
+  visibleColumnKeys.value.map(k =>
+    (k === 'dn' || k === GROUPS_COLUMN || resultLabels.value[k] !== undefined)
+      ? k : attributeDisplayName(k, schemaNames.value)))
 
 // Smart column type detection
 function isDateColumn(col: string, val: unknown): boolean {
@@ -715,6 +817,7 @@ function buildReportParams(): Record<string, unknown> {
   const params: Record<string, unknown> = { lookbackDays: runForm.value.lookbackDays || 30 }
   if (currentRunType.value?.param) params[currentRunType.value.param] = runForm.value.paramValue
   if (runForm.value.objectType) params.objectType = runForm.value.objectType
+  if (includeOperational.value && ENTRY_REPORT_TYPES.has(runForm.value.reportType)) params.includeOperational = true
   if (currentRunType.value?.groupCount) {
     params.groupCountOp = runForm.value.groupCountOp
     params.groupCountValue = runForm.value.groupCountValue ?? 0
@@ -745,6 +848,7 @@ async function doRun(): Promise<void> {
     if (isIntegrityCheck.value) {
       await runIntegrityCheck()
     } else {
+      loadSchemaNames(dirId.value)
       const { data } = await runOperationalReportData(dirId.value, {
         reportType: runForm.value.reportType,
         reportParams: buildReportParams(),
@@ -753,6 +857,7 @@ async function doRun(): Promise<void> {
       resultLabels.value = data.labels || {}
       resultRows.value = data.rows || []
     }
+    shownReportType.value = runForm.value.reportType
     hasResults.value = true
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
@@ -778,8 +883,9 @@ async function doExport(format: 'CSV' | 'PDF'): Promise<void> {
   if (!dirId.value) return
   if (isIntegrityCheck.value) {
     // Export integrity results as CSV from current data
-    const header = resultColumns.value.join(',')
-    const rows = resultRows.value.map(r => resultColumns.value.map(c => {
+    const cols = visibleColumnKeys.value.length ? visibleColumnKeys.value : resultColumns.value
+    const header = cols.join(',')
+    const rows = resultRows.value.map(r => cols.map(c => {
       const v = r[c]
       const s = v == null ? '' : String(v)
       return `"${s.replace(/"/g, '""')}"`
@@ -799,14 +905,18 @@ async function doExport(format: 'CSV' | 'PDF'): Promise<void> {
         reportType: runForm.value.reportType,
         reportParams: buildReportParams(),
       })
-      downloadBlob(data, `${runForm.value.reportType.toLowerCase()}.pdf`)
+      downloadBlob(data, reportFileName(runForm.value.reportType, 'pdf'))
       return
     }
     const { data } = await runOperationalReport(dirId.value, {
       reportType: runForm.value.reportType,
       reportParams: buildReportParams(),
+      // The file carries the columns on screen, in their order — unless the
+      // form now names a different report than the one shown.
+      ...(shownReportType.value === runForm.value.reportType && exportColumns.value.length
+        ? { columns: exportColumns.value } : {}),
     }, format)
-    downloadBlob(data, `${runForm.value.reportType.toLowerCase()}.csv`)
+    downloadBlob(data, reportFileName(runForm.value.reportType, 'csv'))
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
     notif.error(err.response?.data?.detail || err.message || 'Export failed')
@@ -842,6 +952,9 @@ interface JobForm {
   auditActions: string[]
   attributes: string
   objectType: string
+  includeOperational: boolean
+  /** Comma-separated columns the delivered file carries; empty = every column. */
+  columns: string
   enabled: boolean
 }
 
@@ -880,6 +993,7 @@ function blankJobForm(): JobForm {
     groupCountOp: '=', groupCountValue: 0,
     lookbackHours: 24, auditActions: [],
     attributes: '', objectType: '',
+    includeOperational: false, columns: '',
     enabled: true,
   }
 }
@@ -895,6 +1009,14 @@ const jobFormNeedsGroupCount = computed(() => !!currentJobFormType.value?.groupC
 const jobFormNeedsAudit      = computed(() => !!currentJobFormType.value?.auditFilters)
 const jobFormNeedsAttributes = computed(() => !!currentJobFormType.value?.attributes)
 const jobFormNeedsObjectType = computed(() => OBJECT_TYPE_REPORTS.has(jobForm.value.reportType))
+const jobFormIsEntryReport   = computed(() => ENTRY_REPORT_TYPES.has(jobForm.value.reportType))
+
+/** The on-screen table shows this job's report, so its visible columns can be copied. */
+const canUseOnScreenColumns = computed(() =>
+  hasResults.value && shownReportType.value === jobForm.value.reportType && exportColumns.value.length > 0)
+function useOnScreenColumns(): void {
+  jobForm.value.columns = exportColumns.value.join(', ')
+}
 
 // Action multi-select for a scheduled Audit Entries job — same picker as the
 // runner above, but with its own open/ref state so the two menus don't fight.
@@ -902,13 +1024,29 @@ const jobAuditActionMenuOpen = ref(false)
 const jobAuditActionMenuRef = ref<HTMLElement | null>(null)
 const jobAuditActionSummary = computed<string>(() => summarizeActions(jobForm.value.auditActions))
 
+// Server page size per request; fetchAllJobs keeps requesting until every page
+// is in. The list has no paging UI, so a single capped page would silently hide
+// every job past it.
+const JOB_PAGE_SIZE = 100
+
+/** Every scheduled job in the directory, sorted by name, fetched page by page. */
+async function fetchAllJobs(directoryId: string): Promise<Job[]> {
+  const all: Job[] = []
+  for (let page = 0; ; page++) {
+    const { data } = await listReportJobs(directoryId, { page, size: JOB_PAGE_SIZE, sort: 'name,asc' })
+    const content = (data.content ?? data) as Job[]
+    all.push(...content)
+    const totalPages: number = data.page?.totalPages ?? 1
+    if (!data.content || content.length === 0 || page + 1 >= totalPages) return all
+  }
+}
+
 async function openSchedules(): Promise<void> {
   if (!dirId.value) { notif.error('Please select a directory first.'); return }
   showSchedules.value = true
   loadingJobs.value = true
   try {
-    const { data } = await listReportJobs(dirId.value, { size: 50 })
-    jobs.value = (data.content ?? data) as Job[]
+    jobs.value = await fetchAllJobs(dirId.value)
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
     notif.error(err.response?.data?.detail || err.message || 'Failed to load jobs')
@@ -938,6 +1076,10 @@ function openEditJob(job: Job): void {
       ? (job.reportParams!.attributes as string[]).join(', ')
       : String(job.reportParams?.attributes ?? ''),
     objectType: (job.reportParams?.objectType as string) ?? '',
+    includeOperational: job.reportParams?.includeOperational === true,
+    columns: Array.isArray(job.reportParams?.columns)
+      ? (job.reportParams!.columns as string[]).join(', ')
+      : String(job.reportParams?.columns ?? ''),
     enabled: job.enabled,
   }
   showJobForm.value = true
@@ -962,6 +1104,11 @@ function buildJobPayload(): Record<string, unknown> {
   }
   if (currentJobFormType.value?.attributes) params.attributes = splitAttributes(jobForm.value.attributes)
   if (jobFormNeedsObjectType.value && jobForm.value.objectType) params.objectType = jobForm.value.objectType
+  // Same params an on-demand run of this report sends, so the delivered file
+  // matches what the operator sees: operational attributes, and the columns.
+  if (jobFormIsEntryReport.value && jobForm.value.includeOperational) params.includeOperational = true
+  const columns = splitAttributes(jobForm.value.columns)
+  if (columns.length) params.columns = columns
   // Scheduled jobs run as the system, so the backend pins each one to a
   // single OU at save time. Branch-based types (USERS_IN_BRANCH,
   // MISSING_DATA) leave scopeBaseDn off — the backend derives it from the
@@ -1003,8 +1150,7 @@ async function saveJob(): Promise<void> {
       notif.success('Job created')
     }
     cancelJobForm()
-    const { data } = await listReportJobs(dirId.value, { size: 50 })
-    jobs.value = (data.content ?? data) as Job[]
+    jobs.value = await fetchAllJobs(dirId.value)
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
     notif.error(err.response?.data?.detail || err.message || 'Save failed')
@@ -1030,8 +1176,7 @@ async function runNow(job: Job): Promise<void> {
   try {
     await runReportJobNow(dirId.value, job.id)
     notif.success(`Triggered '${job.name}'`)
-    const { data } = await listReportJobs(dirId.value, { size: 50 })
-    jobs.value = (data.content ?? data) as Job[]
+    jobs.value = await fetchAllJobs(dirId.value)
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
     notif.error(err.response?.data?.detail || err.message || 'Run failed')
@@ -1048,8 +1193,7 @@ async function doDelete(): Promise<void> {
     await deleteReportJob(dirId.value, deleteTarget.value.id)
     notif.success('Job deleted')
     deleteTarget.value = null
-    const { data } = await listReportJobs(dirId.value, { size: 50 })
-    jobs.value = (data.content ?? data) as Job[]
+    jobs.value = await fetchAllJobs(dirId.value)
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
     notif.error(err.response?.data?.detail || err.message || 'Delete failed')

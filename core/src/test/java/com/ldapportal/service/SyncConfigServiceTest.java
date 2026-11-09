@@ -73,6 +73,7 @@ class SyncConfigServiceTest {
     @Mock private com.ldapportal.ldap.sync.RecomputeEngine engine;
     @Mock private AuditService auditService;
     @Mock private com.ldapportal.repository.SyncReconcileRunRepository reconcileRunRepo;
+    @Mock private com.ldapportal.ldap.sync.SyncDriftStore driftStore;
 
     private SyncConfigService service;
 
@@ -80,7 +81,8 @@ class SyncConfigServiceTest {
     void setUp() {
         service = new SyncConfigService(linkRepo, setRepo, membershipRepo, directoryRepo,
                 reconciler, verifier, enqueuer, previewService, reconcileHistory, engine, auditService,
-                reconcileRunRepo, verifyProgress);
+                reconcileRunRepo, verifyProgress, driftStore,
+                new com.ldapportal.ldap.sync.SyncVerifySnapshot(setRepo, driftStore));
     }
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
@@ -248,6 +250,8 @@ class SyncConfigServiceTest {
         assertThat(out.missingOnTarget()).isEqualTo(2);
         // The drift counts are cached on the set so the dashboard can read them cheaply.
         verify(setRepo).recordVerifyResult(eq(setId), any(), eq(2), eq(1), eq(0));
+        // Every item replaces the set's stored ones (only the latest verify is kept).
+        verify(driftStore).replace(eq(setId), eq(out.items()));
         // No held references counted (none in the result): nothing stored for them.
         verify(setRepo, never()).recordVerifyHeld(any(), anyInt(), anyInt());
     }
@@ -278,8 +282,330 @@ class SyncConfigServiceTest {
 
         // A partial scan must not overwrite a previously good snapshot with low counts...
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+        // ...nor replace the stored items with a partial list...
+        verify(driftStore, never()).replace(any(), any());
         // ...but it's noted, so the UI can say the snapshot may be out of date.
         verify(setRepo).recordVerifyIncomplete(eq(setId), any());
+    }
+
+    @Test
+    void drift_pagesTheStoredItems_andSaysWhenTheCountsPredateThem() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setLastVerifiedAt(java.time.OffsetDateTime.now());
+        set.setVerifyMissingCount(2);
+        set.setVerifyOrphanCount(0);
+        set.setVerifyMismatchCount(0);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        var none = new java.util.EnumMap<com.ldapportal.entity.enums.SyncDriftCategory, Long>(
+                com.ldapportal.entity.enums.SyncDriftCategory.class);
+        for (var c : com.ldapportal.entity.enums.SyncDriftCategory.values()) none.put(c, 0L);
+        when(driftStore.countsByCategory(setId)).thenReturn(none);
+
+        // Counts on the set, nothing stored: from a verify before items were kept.
+        assertThat(service.drift(setId, null, null, 0, 50).detailsRecorded()).isFalse();
+
+        var stored = new java.util.EnumMap<>(none);
+        stored.put(com.ldapportal.entity.enums.SyncDriftCategory.MISSING, 2L);
+        when(driftStore.countsByCategory(setId)).thenReturn(stored);
+        when(driftStore.count(setId, com.ldapportal.entity.enums.SyncDriftCategory.MISSING, "jo")).thenReturn(1L);
+        when(driftStore.page(setId, com.ldapportal.entity.enums.SyncDriftCategory.MISSING, "jo", 400, 200))
+                .thenReturn(List.of(new com.ldapportal.ldap.sync.SyncDriftStore.Row(3,
+                        new com.ldapportal.dto.sync.SyncDriftItem(com.ldapportal.entity.enums.SyncDriftCategory.MISSING,
+                                "uid=jo,dc=t", "uid=jo,dc=s", "jo", List.of()))));
+
+        var page = service.drift(setId, com.ldapportal.entity.enums.SyncDriftCategory.MISSING, "jo", 2, 999);
+
+        assertThat(page.detailsRecorded()).isTrue();
+        assertThat(page.size()).isEqualTo(200); // clamped
+        assertThat(page.matched()).isEqualTo(1);
+        assertThat(page.entries()).singleElement().satisfies(e -> {
+            assertThat(e.seq()).isEqualTo(3);
+            assertThat(e.sourceDn()).isEqualTo("uid=jo,dc=s");
+        });
+    }
+
+    @Test
+    void driftCsv_writesARowPerDifferingAttribute_hidesSecrets_andNeutralisesFormulas() throws Exception {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        org.mockito.Mockito.doAnswer(inv -> {
+            java.util.function.Consumer<com.ldapportal.ldap.sync.SyncDriftStore.Row> sink = inv.getArgument(1);
+            sink.accept(new com.ldapportal.ldap.sync.SyncDriftStore.Row(0, new com.ldapportal.dto.sync.SyncDriftItem(
+                    com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, "uid=old,dc=t", null, null, List.of())));
+            sink.accept(new com.ldapportal.ldap.sync.SyncDriftStore.Row(1, new com.ldapportal.dto.sync.SyncDriftItem(
+                    com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, "uid=jo,dc=t", "uid=jo,dc=s", "jo", List.of(
+                    new com.ldapportal.dto.sync.SyncDriftItem.AttributeDiff("title", List.of("=HYPERLINK(1)"),
+                            List.of("Eng", "Lead"), false, false),
+                    new com.ldapportal.dto.sync.SyncDriftItem.AttributeDiff("userPassword", List.of(), List.of(),
+                            true, false)))));
+            return null;
+        }).when(driftStore).forEach(eq(setId), any());
+        java.io.StringWriter out = new java.io.StringWriter();
+
+        service.writeDriftCsv(setId, out);
+
+        assertThat(out.toString()).isEqualTo(
+                "\"category\",\"targetDn\",\"sourceDn\",\"identity\",\"attribute\",\"expected\",\"actual\"\r\n"
+                + "\"ORPHAN\",\"uid=old,dc=t\",\"\",\"\",\"\",\"\",\"\"\r\n"
+                + "\"MISMATCH\",\"uid=jo,dc=t\",\"uid=jo,dc=s\",\"jo\",\"title\",\"'=HYPERLINK(1)\",\"Eng|Lead\"\r\n"
+                + "\"MISMATCH\",\"uid=jo,dc=t\",\"uid=jo,dc=s\",\"jo\",\"userPassword\",\"(hidden)\",\"(hidden)\"\r\n");
+    }
+
+    // ── Drift repair ────────────────────────────────────────────────────────
+
+    private static com.ldapportal.ldap.sync.SyncDriftStore.Row driftRow(int seq,
+            com.ldapportal.entity.enums.SyncDriftCategory c, String uid) {
+        return new com.ldapportal.ldap.sync.SyncDriftStore.Row(seq, new com.ldapportal.dto.sync.SyncDriftItem(c,
+                "uid=" + uid + ",dc=dst", c == com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN ? null : "uid=" + uid + ",dc=src",
+                uid, List.of()));
+    }
+
+    private static com.ldapportal.ldap.sync.SyncContentVerifier.Recheck recheck(String uid,
+            com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState state) {
+        return new com.ldapportal.ldap.sync.SyncContentVerifier.Recheck("uid=" + uid + ",dc=src", state, uid,
+                "uid=" + uid + ",dc=dst",
+                state == com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.MISMATCH
+                        ? List.of(new com.ldapportal.dto.sync.SyncDriftItem.AttributeDiff("mail", List.of("a@x"),
+                                List.of("b@x"), false, false))
+                        : List.of(),
+                state == com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.NOT_MEMBER
+                        ? "The source entry no longer belongs to this set." : null);
+    }
+
+    /** The stored verify's time a drift action is made against. */
+    private static final java.time.OffsetDateTime AT = java.time.OffsetDateTime.parse("2026-11-05T08:00:00Z");
+
+    /** A set whose stored verify ran at {@link #AT}. */
+    private static SyncSet verifiedSet() {
+        SyncSet set = new SyncSet();
+        set.setLastVerifiedAt(AT);
+        return set;
+    }
+
+    /** Matches a store delete of the rows at exactly these positions. */
+    private static org.mockito.ArgumentMatcher<java.util.Collection<com.ldapportal.ldap.sync.SyncDriftStore.Row>> rowsAt(
+            Integer... seqs) {
+        return rows -> rows.stream().map(com.ldapportal.ldap.sync.SyncDriftStore.Row::seq).toList().equals(List.of(seqs));
+    }
+
+    private UUID driftFixture() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = verifiedSet();
+        set.setId(setId);
+        set.setLinkId(UUID.randomUUID());
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        var M = com.ldapportal.entity.enums.SyncDriftCategory.MISSING;
+        var D = com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH;
+        var O = com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN;
+        when(driftStore.bySeq(eq(setId), any())).thenReturn(List.of(
+                driftRow(0, M, "new"), driftRow(1, D, "drift"), driftRow(2, O, "old"),
+                driftRow(3, D, "fixed"), driftRow(4, M, "gone")));
+        var S = com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.class;
+        when(verifier.recheck(eq(setId), any())).thenReturn(List.of(
+                recheck("new", com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.MISSING),
+                recheck("drift", com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.MISMATCH),
+                recheck("fixed", com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.IN_SYNC),
+                recheck("gone", com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.NOT_MEMBER)));
+        return setId;
+    }
+
+    @Test
+    void previewDriftRepair_saysWhatEachItemWouldGet_afterALiveRecheck() {
+        UUID setId = driftFixture();
+
+        var items = service.previewDriftRepair(setId, List.of(0, 1, 2, 3, 4), AT).items();
+
+        assertThat(items).extracting(i -> i.seq() + ":" + i.action())
+                .containsExactly("0:CREATE", "1:REAPPLY", "2:SKIP", "3:SKIP", "4:SKIP");
+        assertThat(items.get(1).attributes()).singleElement().extracting(a -> a.attribute()).isEqualTo("mail");
+        assertThat(items.get(2).reason()).contains("no source member");
+        assertThat(items.get(3).reason()).isEqualTo("It no longer drifts.");
+        assertThat(items.get(4).reason()).contains("no longer belongs");
+        // Orphans aren't re-checked: they have no source member.
+        verify(verifier).recheck(setId, List.of("uid=new,dc=src", "uid=drift,dc=src", "uid=fixed,dc=src",
+                "uid=gone,dc=src"));
+        verify(engine, never()).process(any(UUID.class), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void repairDrift_runsTheEngine_auditsEachWrite_andDropsWhatIsFixed() {
+        UUID setId = driftFixture();
+        when(linkRepo.findById(any())).thenReturn(Optional.empty());
+        SyncLink link = new SyncLink();
+        UUID targetDir = UUID.randomUUID();
+        link.setTargetDirId(targetDir);
+        when(linkRepo.findById(any())).thenReturn(Optional.of(link));
+        when(engine.process(setId, "uid=new,dc=src", false)).thenReturn(new com.ldapportal.ldap.sync.RecomputeOutcome(
+                com.ldapportal.dto.sync.SyncPreviewAction.ADD, "uid=new,dc=dst", null));
+        when(engine.process(setId, "uid=drift,dc=src", false)).thenReturn(new com.ldapportal.ldap.sync.RecomputeOutcome(
+                com.ldapportal.dto.sync.SyncPreviewAction.MODIFY, "uid=drift,dc=dst", null, List.of("mail")));
+        var left = new java.util.EnumMap<com.ldapportal.entity.enums.SyncDriftCategory, Long>(
+                com.ldapportal.entity.enums.SyncDriftCategory.class);
+        left.put(com.ldapportal.entity.enums.SyncDriftCategory.MISSING, 1L);
+        left.put(com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, 1L);
+        left.put(com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, 0L);
+        when(driftStore.countsByCategory(setId)).thenReturn(left);
+        var principal = new com.ldapportal.auth.AuthPrincipal(com.ldapportal.auth.PrincipalType.SUPERADMIN,
+                UUID.randomUUID(), "ops");
+
+        var r = service.repairDrift(setId, List.of(0, 1, 2, 3, 4), AT, principal);
+
+        assertThat(r.created()).isEqualTo(1);
+        assertThat(r.reapplied()).isEqualTo(1);
+        assertThat(r.skipped()).isEqualTo(3);
+        // Past the hash gate, each just before its own recompute, and only for the entries being repaired.
+        var order = org.mockito.Mockito.inOrder(membershipRepo, engine);
+        order.verify(membershipRepo).forgetAppliedContentOf(eq(setId), eq(List.of("new")), any());
+        order.verify(engine).process(setId, "uid=new,dc=src", false);
+        order.verify(membershipRepo).forgetAppliedContentOf(eq(setId), eq(List.of("drift")), any());
+        order.verify(engine).process(setId, "uid=drift,dc=src", false);
+        verify(membershipRepo, org.mockito.Mockito.times(2)).forgetAppliedContentOf(any(), any(), any());
+        verify(engine, never()).process(eq(setId), eq("uid=gone,dc=src"), org.mockito.ArgumentMatchers.anyBoolean());
+        // Each write audited with the operator; attribute names only.
+        @SuppressWarnings("unchecked") org.mockito.ArgumentCaptor<java.util.Map<String, Object>> detail = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).record(eq(principal), eq(targetDir),
+                eq(com.ldapportal.entity.enums.AuditAction.ENTRY_CREATE), eq("uid=new,dc=dst"), any());
+        verify(auditService).record(eq(principal), eq(targetDir),
+                eq(com.ldapportal.entity.enums.AuditAction.ENTRY_UPDATE), eq("uid=drift,dc=dst"), detail.capture());
+        assertThat(detail.getValue()).containsEntry("operation", "drift-repair").containsEntry("attributes", List.of("mail"));
+        // Created, re-applied, and found already fixed leave the stored verify; counts restated.
+        verify(driftStore).delete(eq(setId), org.mockito.ArgumentMatchers.argThat(rowsAt(0, 1, 3)));
+        // Only while the verify the items came from is still the stored one.
+        verify(setRepo).restateVerifyCounts(setId, AT, 1, 1, 0);
+    }
+
+    @Test
+    void repairDrift_reportsHeldAndFailedOutcomes_withoutAuditingThem() {
+        UUID setId = driftFixture();
+        when(linkRepo.findById(any())).thenReturn(Optional.empty());
+        when(engine.process(setId, "uid=new,dc=src", false)).thenReturn(new com.ldapportal.ldap.sync.RecomputeOutcome(
+                com.ldapportal.dto.sync.SyncPreviewAction.REVIEW, "uid=new,dc=dst", "placement conflict"));
+        when(engine.process(setId, "uid=drift,dc=src", false)).thenThrow(new IllegalStateException("contended"));
+
+        var r = service.repairDrift(setId, List.of(0, 1), AT, null);
+
+        assertThat(r.held()).isEqualTo(1);
+        assertThat(r.failed()).isEqualTo(1);
+        assertThat(r.items()).extracting(i -> i.outcome().name()).contains("HELD", "FAILED");
+        verify(auditService, never()).record(any(), any(), any(), any(), any());
+        verify(driftStore).delete(eq(setId), org.mockito.ArgumentMatchers.argThat(rowsAt(3))); // only the one found already in sync
+    }
+
+    @Test
+    void repairDrift_cutShort_leavesTheHashOfEntriesItNeverReached() {
+        UUID setId = driftFixture();
+        when(linkRepo.findById(any())).thenReturn(Optional.empty());
+        // The first recompute fails hard (e.g. the target went away mid-repair).
+        when(engine.process(setId, "uid=new,dc=src", false)).thenThrow(new IllegalStateException("target down"));
+        when(engine.process(setId, "uid=drift,dc=src", false)).thenThrow(new IllegalStateException("target down"));
+
+        service.repairDrift(setId, List.of(0, 1), AT, null);
+
+        // Each identity is reset only as its own recompute is attempted.
+        verify(membershipRepo).forgetAppliedContentOf(eq(setId), eq(List.of("new")), any());
+        verify(membershipRepo).forgetAppliedContentOf(eq(setId), eq(List.of("drift")), any());
+        verify(membershipRepo, never()).forgetAppliedContentOf(eq(setId),
+                org.mockito.ArgumentMatchers.argThat(c -> c.size() > 1), any());
+    }
+
+    @Test
+    void repairDrift_refusesAnEmptyOrOversizedSelection() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(verifiedSet()));
+        assertThatThrownBy(() -> service.repairDrift(setId, List.of(), AT, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        List<Integer> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 201; i++) many.add(i);
+        assertThatThrownBy(() -> service.previewDriftRepair(setId, many, AT))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("At most 200");
+    }
+
+    @Test
+    void deleteOrphans_needsTheTypedConfirmation() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(verifiedSet()));
+        assertThatThrownBy(() -> service.deleteOrphans(setId, List.of(1), AT, "yes", null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Type DELETE");
+        verify(engine, never()).orphanDelete(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void deleteOrphans_deletesThroughTheEngine_auditsIt_andLeavesNonOrphansAlone() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = verifiedSet();
+        set.setId(setId);
+        set.setLinkId(UUID.randomUUID());
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        when(linkRepo.findById(any())).thenReturn(Optional.empty());
+        var O = com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN;
+        when(driftStore.bySeq(eq(setId), any())).thenReturn(List.of(
+                driftRow(0, O, "ghost"), driftRow(1, O, "gone"), driftRow(2, O, "kids"), driftRow(3, O, "kept"),
+                driftRow(4, com.ldapportal.entity.enums.SyncDriftCategory.MISSING, "new")));
+        UUID dir = UUID.randomUUID();
+        when(engine.orphanDelete(setId, "uid=ghost,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+                com.ldapportal.dto.sync.SyncPreviewAction.DELETE, dir, "uid=ghost,dc=dst", null));
+        when(engine.orphanDelete(setId, "uid=gone,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+                com.ldapportal.dto.sync.SyncPreviewAction.UNCHANGED, dir, "uid=gone,dc=dst",
+                "Any wording: the flag, not the message, marks it gone.", true));
+        when(engine.orphanDelete(setId, "uid=kids,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+                com.ldapportal.dto.sync.SyncPreviewAction.ERROR, dir, "uid=kids,dc=dst", "delete failed: NOT_ALLOWED_ON_NONLEAF"));
+        when(engine.orphanDelete(setId, "uid=kept,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+                com.ldapportal.dto.sync.SyncPreviewAction.UNCHANGED, dir, "uid=kept,dc=dst", "This set now manages it."));
+        var principal = new com.ldapportal.auth.AuthPrincipal(com.ldapportal.auth.PrincipalType.SUPERADMIN,
+                UUID.randomUUID(), "ops");
+
+        var r = service.deleteOrphans(setId, List.of(0, 1, 2, 3, 4), AT, "DELETE", principal);
+
+        assertThat(r.deleted()).isEqualTo(1);
+        assertThat(r.failed()).isEqualTo(1);
+        assertThat(r.skipped()).isEqualTo(3);
+        assertThat(r.items().get(4).message()).contains("Only orphaned entries");
+        verify(engine, never()).orphanDelete(eq(setId), eq("uid=new,dc=dst"), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(auditService).record(eq(principal), eq(dir), eq(com.ldapportal.entity.enums.AuditAction.ENTRY_DELETE),
+                eq("uid=ghost,dc=dst"), org.mockito.ArgumentMatchers.argThat(
+                        d -> "orphan-delete".equals(((java.util.Map<?, ?>) d).get("operation"))));
+        verify(auditService, org.mockito.Mockito.times(1)).record(any(), any(), any(), any(), any());
+        // The deleted one and the one already gone leave the stored verify.
+        verify(driftStore).delete(eq(setId), org.mockito.ArgumentMatchers.argThat(rowsAt(0, 1)));
+    }
+
+    @Test
+    void driftActions_refuseASelectionFromAnOlderVerify() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(verifiedSet()));
+        var older = AT.minusMinutes(5);
+
+        assertThatThrownBy(() -> service.deleteOrphans(setId, List.of(1), older, "DELETE", null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("drift list changed");
+        assertThatThrownBy(() -> service.previewOrphanDelete(setId, List.of(1), null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("drift list changed");
+        assertThatThrownBy(() -> service.repairDrift(setId, List.of(1), older, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("drift list changed");
+        assertThatThrownBy(() -> service.previewDriftRepair(setId, List.of(1), older))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("drift list changed");
+        // The same instant in another offset is the same verify.
+        when(driftStore.bySeq(eq(setId), any())).thenReturn(List.of());
+        assertThatThrownBy(() -> service.previewOrphanDelete(setId, List.of(1),
+                AT.withOffsetSameInstant(java.time.ZoneOffset.ofHours(2))))
+                .hasMessageContaining("no longer stored");
+        verify(engine, never()).orphanDelete(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(verifier, never()).recheck(any(), any());
+    }
+
+    @Test
+    void previewOrphanDelete_checksWithoutApplying() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(verifiedSet()));
+        when(driftStore.bySeq(eq(setId), any())).thenReturn(List.of(
+                driftRow(0, com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, "ghost")));
+        when(engine.orphanDelete(setId, "uid=ghost,dc=dst", false)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+                com.ldapportal.dto.sync.SyncPreviewAction.DELETE, null, "uid=ghost,dc=dst", null));
+
+        var items = service.previewOrphanDelete(setId, List.of(0), AT).items();
+
+        assertThat(items).singleElement().satisfies(i -> assertThat(i.action().name()).isEqualTo("DELETE"));
+        verify(engine, never()).orphanDelete(setId, "uid=ghost,dc=dst", true);
     }
 
     @Test

@@ -26,8 +26,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * column), evaluated in the job's timezone (null = UTC) — parity with the
  * commercial scheduler.
  *
- * <p>An in-memory {@code inProgress} set prevents a long run from overlapping
- * with the next poll. Execution + result recording live in
+ * <p>Each run first claims the job in the database
+ * ({@link ScheduledReportJobService#claimRun}), so with several backend
+ * instances polling the same rows a due job still runs — and emails — once.
+ * An in-memory {@code inProgress} set additionally prevents a long run from
+ * overlapping with the next poll on the same instance. Execution + result recording live in
  * {@link ScheduledReportJobService#runJob(ScheduledReportJob, ReportRunTrigger)},
  * which never throws, so one bad job can't break the loop.</p>
  */
@@ -76,6 +79,14 @@ public class ScheduledReportJobScheduler {
             return;
         }
         try {
+            // The in-memory guard above only covers this instance; the database
+            // claim covers every instance, and a poll whose snapshot predates
+            // a run-now of the same job.
+            if (!jobService.claimRun(job)) {
+                log.info("Report job '{}' ({}) was already claimed by another run — skipping",
+                        job.getName(), job.getId());
+                return;
+            }
             jobService.runJob(job, trigger);
         } finally {
             inProgress.remove(job.getId());

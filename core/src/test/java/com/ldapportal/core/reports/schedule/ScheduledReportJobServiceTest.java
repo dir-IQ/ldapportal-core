@@ -7,20 +7,26 @@ import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.core.reports.ReportData;
 import com.ldapportal.dto.reports.ReportJobRequest;
+import com.ldapportal.entity.Account;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.ScheduledReportJob;
+import com.ldapportal.entity.enums.AccountRole;
+import com.ldapportal.repository.AccountRepository;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.ScheduledReportJobRepository;
 import com.ldapportal.service.EmailService;
 import com.ldapportal.service.S3UploadService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -48,6 +54,7 @@ class ScheduledReportJobServiceTest {
     private final S3UploadService s3 = mock(S3UploadService.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-06-20T08:00:00Z"), ZoneOffset.UTC);
     private final PermissionService permissionService = mock(PermissionService.class);
+    private final AccountRepository accountRepo = mock(AccountRepository.class);
 
     private ScheduledReportJobService service;
     private final UUID dirId = UUID.randomUUID();
@@ -55,10 +62,42 @@ class ScheduledReportJobServiceTest {
     @BeforeEach
     void setup() {
         service = new ScheduledReportJobService(jobRepo, dirRepo, List.of(contentProvider), List.of(renderer),
-                entitlements, emailService, s3, clock, permissionService);
+                entitlements, emailService, s3, clock, permissionService, accountRepo);
         when(contentProvider.supportedTypes())
                 .thenReturn(List.of(ScheduledReportType.core("DISABLED_ACCOUNTS", "Disabled Accounts")));
         when(entitlements.exposes(any())).thenReturn(true);
+    }
+
+    @Test
+    void creatorNames_prefersDisplayName_fallsBackToUsername_skipsUnknown() {
+        Account withName = new Account();
+        withName.setId(UUID.randomUUID());
+        withName.setUsername("alice");
+        withName.setDisplayName("Alice Admin");
+        Account noName = new Account();
+        noName.setId(UUID.randomUUID());
+        noName.setUsername("bob");
+        UUID deleted = UUID.randomUUID();
+        when(accountRepo.findAllById(any())).thenReturn(List.of(withName, noName));
+
+        List<ScheduledReportJob> jobs = new ArrayList<>();
+        for (UUID creator : new UUID[] {withName.getId(), noName.getId(), deleted, null}) {
+            ScheduledReportJob j = new ScheduledReportJob();
+            j.setCreatedByAdminId(creator);
+            jobs.add(j);
+        }
+
+        Map<UUID, String> names = service.creatorNames(jobs);
+        assertThat(names).containsExactlyInAnyOrderEntriesOf(Map.of(
+                withName.getId(), "Alice Admin", noName.getId(), "bob"));
+        // Looking up a job with no recorded creator must not throw.
+        assertThat(names.get(null)).isNull();
+    }
+
+    @Test
+    void creatorNames_noCreators_skipsTheLookup() {
+        assertThat(service.creatorNames(List.of(new ScheduledReportJob()))).isEmpty();
+        verify(accountRepo, never()).findAllById(any());
     }
 
     private ReportJobRequest req(ReportOutputFormat fmt, ReportDeliveryMethod delivery, String recipient) {
@@ -145,7 +184,7 @@ class ScheduledReportJobServiceTest {
         when(dc.getDisplayName()).thenReturn("Corp LDAP");
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
         when(contentProvider.appliesTo(dc, "DISABLED_ACCOUNTS")).thenReturn(true);
-        when(contentProvider.run(eq(dc), eq("DISABLED_ACCOUNTS"), any(), any()))
+        when(contentProvider.run(eq(dc), eq("DISABLED_ACCOUNTS"), any(), any(), any()))
                 .thenReturn(new ReportData(List.of("c"), List.of()));
         when(renderer.supports(ReportOutputFormat.CSV)).thenReturn(true);
         when(renderer.render(any(), any())).thenReturn(new RenderedReport(new byte[]{1, 2, 3}, "text/csv", "r.csv"));
@@ -173,7 +212,7 @@ class ScheduledReportJobServiceTest {
         when(dc.getDisplayName()).thenReturn("Corp LDAP");
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
         when(contentProvider.appliesTo(dc, "DISABLED_ACCOUNTS")).thenReturn(true);
-        when(contentProvider.run(any(), any(), any(), any())).thenReturn(new ReportData(List.of("c"), List.of()));
+        when(contentProvider.run(any(), any(), any(), any(), any())).thenReturn(new ReportData(List.of("c"), List.of()));
         when(renderer.supports(ReportOutputFormat.CSV)).thenReturn(true);
         when(renderer.render(any(), any())).thenReturn(new RenderedReport(new byte[]{1, 2, 3}, "text/csv", "r.csv"));
         when(emailService.sendWithAttachment(any(), any(), any(), any(), any(), any()))
@@ -194,7 +233,7 @@ class ScheduledReportJobServiceTest {
         when(dc.getDisplayName()).thenReturn("Corp LDAP");
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
         when(contentProvider.appliesTo(dc, "DISABLED_ACCOUNTS")).thenReturn(true);
-        when(contentProvider.run(any(), any(), any(), any())).thenReturn(new ReportData(List.of("c"), List.of()));
+        when(contentProvider.run(any(), any(), any(), any(), any())).thenReturn(new ReportData(List.of("c"), List.of()));
         when(renderer.supports(ReportOutputFormat.CSV)).thenReturn(true);
         when(renderer.render(any(), any())).thenReturn(new RenderedReport(new byte[]{1, 2, 3}, "text/csv", "r.csv"));
         when(emailService.sendWithAttachment(any(), any(), any(), any(), any(), any()))
@@ -214,7 +253,7 @@ class ScheduledReportJobServiceTest {
         DirectoryConnection dc = mock(DirectoryConnection.class);
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
         when(contentProvider.appliesTo(dc, "DISABLED_ACCOUNTS")).thenReturn(true);
-        when(contentProvider.run(any(), any(), any(), any())).thenReturn(new ReportData(List.of("c"), List.of()));
+        when(contentProvider.run(any(), any(), any(), any(), any())).thenReturn(new ReportData(List.of("c"), List.of()));
         when(renderer.supports(ReportOutputFormat.CSV)).thenReturn(true);
         when(renderer.render(any(), any())).thenReturn(new RenderedReport(new byte[]{9}, "text/csv", "r.csv"));
         when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
@@ -246,7 +285,7 @@ class ScheduledReportJobServiceTest {
         when(dc.getDisplayName()).thenReturn("Corp LDAP");
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
         when(contentProvider.appliesTo(dc, "DISABLED_ACCOUNTS")).thenReturn(true);
-        when(contentProvider.run(any(), any(), any(), any())).thenReturn(new ReportData(List.of("c"), List.of()));
+        when(contentProvider.run(any(), any(), any(), any(), any())).thenReturn(new ReportData(List.of("c"), List.of()));
         when(renderer.supports(ReportOutputFormat.CSV)).thenReturn(true);
         when(renderer.render(any(), any())).thenReturn(new RenderedReport(new byte[]{1, 2, 3}, "text/csv", "r.csv"));
         when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
@@ -277,7 +316,7 @@ class ScheduledReportJobServiceTest {
         DirectoryConnection dc = mock(DirectoryConnection.class);
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
         when(contentProvider.appliesTo(dc, "DISABLED_ACCOUNTS")).thenReturn(true);
-        when(contentProvider.run(any(), any(), any(), any())).thenThrow(new RuntimeException("ldap down"));
+        when(contentProvider.run(any(), any(), any(), any(), any())).thenThrow(new RuntimeException("ldap down"));
         when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
 
         service.runJob(j, ReportRunTrigger.SCHEDULED); // must not throw
@@ -410,5 +449,213 @@ class ScheduledReportJobServiceTest {
         assertThat(saved.getReportParams()).doesNotContainKey("scopeBaseDn");
         org.mockito.Mockito.verifyNoInteractions(permissionService);
     }
-}
 
+    // ── run-as: a scheduled run gets what its creator would get on demand ──
+
+    /** A job wired for a successful CSV-by-email run, with the provider's output captured. */
+    private ScheduledReportJob runnableJob(ReportData output) {
+        ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
+        DirectoryConnection dc = mock(DirectoryConnection.class);
+        when(dc.getDisplayName()).thenReturn("Corp LDAP");
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        when(contentProvider.appliesTo(dc, "DISABLED_ACCOUNTS")).thenReturn(true);
+        when(contentProvider.run(any(), any(), any(), any(), any())).thenReturn(output);
+        when(renderer.supports(ReportOutputFormat.CSV)).thenReturn(true);
+        when(renderer.render(any(), any())).thenReturn(new RenderedReport(new byte[]{1}, "text/csv", "r.csv"));
+        when(emailService.sendWithAttachment(any(), any(), any(), any(), any(), any()))
+                .thenReturn(EmailService.SendResult.SENT);
+        when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
+        return j;
+    }
+
+    private Account account(UUID id, AccountRole role, boolean active) {
+        Account a = new Account();
+        a.setId(id);
+        a.setUsername("alice");
+        a.setRole(role);
+        a.setActive(active);
+        return a;
+    }
+
+    private AuthPrincipal capturedRunAs() {
+        ArgumentCaptor<AuthPrincipal> runAs = ArgumentCaptor.forClass(AuthPrincipal.class);
+        verify(contentProvider).run(any(), eq("DISABLED_ACCOUNTS"), any(), any(), runAs.capture());
+        return runAs.getValue();
+    }
+
+    @Test
+    void runJob_adminsJob_runsAsThatAdmin() {
+        ScheduledReportJob j = runnableJob(new ReportData(List.of("dn"), List.of()));
+        UUID adminId = UUID.randomUUID();
+        j.setCreatedByAdminId(adminId);
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(account(adminId, AccountRole.ADMIN, true)));
+
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
+
+        assertThat(capturedRunAs()).isEqualTo(new AuthPrincipal(PrincipalType.ADMIN, adminId, "alice"));
+        assertThat(j.getLastRunStatus()).isEqualTo(ReportJobRunStatus.SUCCESS);
+    }
+
+    @Test
+    void runJob_superadminsJob_runsUnbounded() {
+        ScheduledReportJob j = runnableJob(new ReportData(List.of("dn"), List.of()));
+        UUID rootId = UUID.randomUUID();
+        j.setCreatedByAdminId(rootId);
+        when(accountRepo.findById(rootId)).thenReturn(Optional.of(account(rootId, AccountRole.SUPERADMIN, true)));
+
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
+
+        assertThat(capturedRunAs()).isNull();
+    }
+
+    @Test
+    void runJob_jobWithNoRecordedCreator_runsUnbounded() {
+        ScheduledReportJob j = runnableJob(new ReportData(List.of("dn"), List.of()));
+
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
+
+        assertThat(capturedRunAs()).isNull();
+        verify(accountRepo, never()).findById(any());
+    }
+
+    @Test
+    void runJob_deactivatedCreator_recordsFailed_doesNotRun() {
+        ScheduledReportJob j = runnableJob(new ReportData(List.of("dn"), List.of()));
+        UUID adminId = UUID.randomUUID();
+        j.setCreatedByAdminId(adminId);
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(account(adminId, AccountRole.ADMIN, false)));
+
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
+
+        verify(contentProvider, never()).run(any(), any(), any(), any(), any());
+        assertThat(j.getLastRunStatus()).isEqualTo(ReportJobRunStatus.FAILED);
+        assertThat(j.getLastRunMessage()).contains("deactivated");
+    }
+
+    @Test
+    void runJob_creatorLostTheJobsOu_recordsFailed_sendsNothing() {
+        ScheduledReportJob j = runnableJob(new ReportData(List.of("dn"), List.of()));
+        UUID adminId = UUID.randomUUID();
+        j.setCreatedByAdminId(adminId);
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(account(adminId, AccountRole.ADMIN, true)));
+        when(contentProvider.run(any(), any(), any(), any(), any()))
+                .thenThrow(new AccessDeniedException("DN is outside authorized OUs for this admin"));
+
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
+
+        verify(emailService, never()).sendWithAttachment(any(), any(), any(), any(), any(), any());
+        assertThat(j.getLastRunStatus()).isEqualTo(ReportJobRunStatus.FAILED);
+        assertThat(j.getLastRunMessage()).contains("outside authorized OUs");
+    }
+
+    // ── columns: a scheduled file carries the columns saved with the job ──
+
+    @Test
+    void runJob_projectsTheReportToTheStoredColumns_inOrder() {
+        Map<String, String> row = new LinkedHashMap<>();
+        row.put("dn", "uid=a,ou=people,dc=example,dc=com");
+        row.put("cn", "A");
+        row.put("mail", "a@example.com");
+        row.put("groups", "devs");
+        ScheduledReportJob j = runnableJob(new ReportData(List.of("dn", "cn", "mail", "groups"), List.of(row)));
+        j.setReportParams(Map.of("columns", List.of("mail", "cn")));
+
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
+
+        ArgumentCaptor<ReportData> rendered = ArgumentCaptor.forClass(ReportData.class);
+        verify(renderer).render(rendered.capture(), any());
+        assertThat(rendered.getValue().columns()).containsExactly("dn", "mail", "cn");
+    }
+
+    @Test
+    void runJob_withoutStoredColumns_rendersEveryColumn() {
+        ScheduledReportJob j = runnableJob(new ReportData(List.of("dn", "cn", "groups"), List.of()));
+        j.setReportParams(Map.of("lookbackDays", 30));
+
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
+
+        ArgumentCaptor<ReportData> rendered = ArgumentCaptor.forClass(ReportData.class);
+        verify(renderer).render(rendered.capture(), any());
+        assertThat(rendered.getValue().columns()).containsExactly("dn", "cn", "groups");
+    }
+
+    @Test
+    void exportColumns_acceptsAListOrACommaSeparatedString() {
+        assertThat(ScheduledReportJobService.exportColumns(Map.of("columns", List.of("dn", "mail"))))
+                .containsExactly("dn", "mail");
+        assertThat(ScheduledReportJobService.exportColumns(Map.of("columns", "dn, mail ,")))
+                .containsExactly("dn", "mail");
+        assertThat(ScheduledReportJobService.exportColumns(Map.of())).isNull();
+    }
+
+    // ── run claim: one delivery per run across instances ──
+
+    @Test
+    void claimRun_neverRunJob_claimsTheNullRow_andAdvancesTheJob() {
+        ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        when(jobRepo.claimFirstRun(j.getId(), now)).thenReturn(1);
+
+        assertThat(service.claimRun(j)).isTrue();
+
+        assertThat(j.getLastRunAt()).isEqualTo(now);
+        verify(jobRepo, never()).claimRun(any(), any(), any());
+    }
+
+    @Test
+    void claimRun_movesLastRunAtFromTheValueTheJobWasReadWith() {
+        ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
+        OffsetDateTime seen = OffsetDateTime.parse("2026-06-19T08:00:00Z");
+        j.setLastRunAt(seen);
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        when(jobRepo.claimRun(j.getId(), seen, now)).thenReturn(1);
+
+        assertThat(service.claimRun(j)).isTrue();
+
+        assertThat(j.getLastRunAt()).isEqualTo(now);
+    }
+
+    @Test
+    void claimRun_lost_returnsFalse_andLeavesTheJobAsRead() {
+        ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
+        OffsetDateTime seen = OffsetDateTime.parse("2026-06-19T08:00:00Z");
+        j.setLastRunAt(seen);
+        when(jobRepo.claimRun(any(), any(), any())).thenReturn(0);
+
+        assertThat(service.claimRun(j)).isFalse();
+
+        assertThat(j.getLastRunAt()).isEqualTo(seen);
+    }
+
+    @Test
+    void runJob_neverThrows_evenWhenTheOutcomeCannotBeSaved() {
+        ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
+        when(dirRepo.findById(dirId)).thenThrow(new RuntimeException("db down"));
+        when(jobRepo.findById(j.getId())).thenThrow(new RuntimeException("db down"));
+
+        service.runJob(j, ReportRunTrigger.SCHEDULED); // must not throw
+    }
+
+    // ── recipients: one copy per address ──
+
+    @Test
+    void runJob_sendsOneCopyPerAddress_evenWhenListedTwiceOrInAnotherCase() {
+        ScheduledReportJob j = runnableJob(new ReportData(List.of("c"), List.of()));
+        j.setDeliveryRecipients("a@b.com, c@d.com,A@B.com , a@b.com");
+
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
+
+        verify(emailService).sendWithAttachment(eq("a@b.com"), any(), any(), any(), any(), any());
+        verify(emailService).sendWithAttachment(eq("c@d.com"), any(), any(), any(), any(), any());
+        verify(emailService, org.mockito.Mockito.times(2))
+                .sendWithAttachment(any(), any(), any(), any(), any(), any());
+        assertThat(j.getLastRunMessage()).contains("2/2 recipient(s)");
+    }
+
+    @Test
+    void splitRecipients_keepsTheFirstSpelling_inOrder_andDropsBlanks() {
+        assertThat(ScheduledReportJobService.splitRecipients(" B@x.com ,, a@y.com, b@X.COM ,"))
+                .containsExactly("B@x.com", "a@y.com");
+        assertThat(ScheduledReportJobService.splitRecipients(null)).isEmpty();
+    }
+}

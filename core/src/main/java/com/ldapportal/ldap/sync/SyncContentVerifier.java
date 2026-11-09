@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.dto.sync.SyncDriftItem;
 import com.ldapportal.dto.sync.SyncVerifyResult;
+import com.ldapportal.entity.enums.SyncDriftCategory;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.SyncLink;
@@ -78,6 +80,12 @@ public class SyncContentVerifier {
     /** Cap on how many sample DNs each mismatch category returns. */
     static final int SAMPLE_LIMIT = 25;
 
+    /** Values kept per side of one differing attribute in a drift item (a big group's members). */
+    static final int VALUE_LIMIT = 50;
+
+    /** Attributes whose values a drift item never shows (password material). */
+    static final Set<String> SECRET_ATTRIBUTES = com.ldapportal.ldap.diff.DirectoryDiffEngine.SECRET_ATTRIBUTES;
+
     private final SyncSetRepository syncSetRepo;
     private final SyncLinkRepository syncLinkRepo;
     private final DirectoryConnectionRepository directoryRepo;
@@ -119,6 +127,7 @@ public class SyncContentVerifier {
         // so the desired image matches what was actually applied (see class doc).
         ReferenceResolver resolver = referenceResolvers.snapshot(ctx.link);
         Map<String, MembershipDecision> members = new LinkedHashMap<>();
+        Map<String, String> sourceDns = new HashMap<>();
         boolean sourceComplete = true;
         try {
             int read = 0;
@@ -126,6 +135,7 @@ public class SyncContentVerifier {
                 var decision = membershipFunction.evaluate(ctx.set, ctx.strategy, e, resolver);
                 if (decision.member() && decision.targetDn() != null) {
                     members.put(normDn(decision.targetDn()), decision);
+                    sourceDns.put(normDn(decision.targetDn()), e.getDN());
                 }
                 tracking.processed(++read);
             }
@@ -158,7 +168,8 @@ public class SyncContentVerifier {
                 || exists.computeIfAbsent(normDn(dn), k -> readExists(ctx, dn));
         Map<String, Expected> expected = new LinkedHashMap<>();
         members.forEach((key, d) -> expected.put(key, new Expected(d.targetDn(), d.desiredAttrs(),
-                d.heldAttributeNames(), lookup.candidates(d.unresolvedReferences(), targetExists))));
+                d.heldAttributeNames(), lookup.candidates(d.unresolvedReferences(), targetExists),
+                sourceDns.get(key), d.identity())));
 
         Set<String> excluded = SyncExcludedAttributes.effectiveFor(ctx.set);
         tracking.phase(SyncVerifyPhase.COMPARING);
@@ -168,9 +179,100 @@ public class SyncContentVerifier {
                 targetSchemas.forDirectory(ctx.target), SyncReferenceAttributes.forSet(ctx.set), (n, dn) -> {
                     tracking.processed(n);
                     tracking.current(dn);
-                }, anchorAttr, managedElsewhere(syncSetId, expected, actual, anchorAttr));
+                }, anchorAttr, owners(syncSetId, expected, actual, anchorAttr));
         tracking.processed(expected.size());
         return result.withHeldReferences(heldReferencesOnSource(ctx, members.values()));
+    }
+
+    /** What a live re-check of one source member found. */
+    public enum RecheckState {
+        /** The target entry matches the projected source. */
+        IN_SYNC,
+        /** No entry at the member's target DN. */
+        MISSING,
+        /** The target entry's attributes differ from the projected source. */
+        MISMATCH,
+        /** The source entry no longer belongs to the set (filter, scope or placement). */
+        NOT_MEMBER,
+        /** The source entry no longer exists. */
+        SOURCE_GONE,
+        /** The set, its link or a directory is unavailable, or a read failed. */
+        UNAVAILABLE
+    }
+
+    /**
+     * One source member re-checked live: its state, identity, target DN and,
+     * for a MISMATCH, the attributes that differ ({@link #attributeDiffs}).
+     */
+    public record Recheck(String sourceDn, RecheckState state, String identity, String targetDn,
+                          List<SyncDriftItem.AttributeDiff> attributes, String note) {
+    }
+
+    /**
+     * Re-check the given source members against the target right now, exactly
+     * as a full verify would compare them ({@link #compare}, one entry at a
+     * time): each source entry is read and projected, and the entry at its
+     * target DN read and diffed. The set and its directories are loaded once.
+     * Never writes.
+     *
+     * @return one result per source DN, in the order given
+     */
+    public List<Recheck> recheck(UUID syncSetId, List<String> sourceDns) {
+        Context ctx = loadContext(syncSetId);
+        List<Recheck> out = new ArrayList<>(sourceDns.size());
+        if (ctx == null) {
+            for (String dn : sourceDns) {
+                out.add(new Recheck(dn, RecheckState.UNAVAILABLE, null, null, List.of(),
+                        "Sync set, link, or source/target directory is unavailable or disabled."));
+            }
+            return out;
+        }
+        ReferenceResolver resolver = referenceResolvers.snapshot(ctx.link);
+        UntranslatedReferenceTargets.Lookup lookup = untranslatedTargets.forSet(ctx.set);
+        Set<String> excluded = SyncExcludedAttributes.effectiveFor(ctx.set);
+        var schema = targetSchemas.forDirectory(ctx.target);
+        List<String> dnAttrs = SyncReferenceAttributes.forSet(ctx.set);
+        String idAttr = SyncIdentity.attribute(ctx.set, ctx.strategy);
+        String anchor = anchorAttribute(ctx.set);
+        String[] targetAttrs = anchor == null ? new String[] {"*"} : new String[] {"*", anchor};
+        for (String sourceDn : sourceDns) {
+            try {
+                SearchResultEntry src = connectionFactory.withConnectionUnreplicated(ctx.source,
+                        conn -> conn.getEntry(sourceDn, "*", idAttr));
+                if (src == null) {
+                    out.add(new Recheck(sourceDn, RecheckState.SOURCE_GONE, null, null, List.of(),
+                            "The source entry no longer exists."));
+                    continue;
+                }
+                MembershipDecision d = membershipFunction.evaluate(ctx.set, ctx.strategy, src, resolver);
+                if (!d.member() || d.targetDn() == null) {
+                    out.add(new Recheck(sourceDn, RecheckState.NOT_MEMBER, d.identity(), null, List.of(),
+                            "The source entry no longer belongs to this set."));
+                    continue;
+                }
+                Entry target = connectionFactory.withConnectionUnreplicated(ctx.target,
+                        conn -> conn.getEntry(d.targetDn(), targetAttrs));
+                java.util.function.Predicate<String> targetExists = dn -> readExists(ctx, dn);
+                Map<String, Expected> expected = new LinkedHashMap<>();
+                String key = normDn(d.targetDn());
+                expected.put(key, new Expected(d.targetDn(), d.desiredAttrs(), d.heldAttributeNames(),
+                        lookup.candidates(d.unresolvedReferences(), targetExists), sourceDn, d.identity()));
+                Map<String, Entry> actual = target == null ? Map.of() : Map.of(key, target);
+                SyncVerifyResult r = compare(expected, actual, excluded, true, true, schema, dnAttrs,
+                        CompareProgress.NONE, null, Owners.NONE);
+                SyncDriftItem item = r.items().isEmpty() ? null : r.items().get(0);
+                RecheckState state = item == null ? RecheckState.IN_SYNC
+                        : item.category() == SyncDriftCategory.MISSING ? RecheckState.MISSING : RecheckState.MISMATCH;
+                out.add(new Recheck(sourceDn, state, d.identity(), d.targetDn(),
+                        item == null ? List.of() : item.attributes(), null));
+            } catch (Exception ex) {
+                log.warn("Sync set {}: re-check of [{}] failed ({})", syncSetId, sourceDn, ex.toString());
+                String msg = ex.getMessage();
+                out.add(new Recheck(sourceDn, RecheckState.UNAVAILABLE, null, null, List.of(),
+                        "Couldn't read the entry: " + (msg == null || msg.isBlank() ? ex.getClass().getSimpleName() : msg)));
+            }
+        }
+        return out;
     }
 
     /**
@@ -271,7 +373,7 @@ public class SyncContentVerifier {
                                     Set<String> excluded, boolean sourceComplete, boolean targetComplete,
                                     com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs) {
         return compare(expected, actual, excluded, sourceComplete, targetComplete, schema, dnAttrs,
-                CompareProgress.NONE, null, NOT_ELSEWHERE);
+                CompareProgress.NONE, null, Owners.NONE);
     }
 
     /** Says whether another set manages an anchored entry: (anchor value, entry DN) → true when it does. */
@@ -282,6 +384,16 @@ public class SyncContentVerifier {
 
     static final ManagedElsewhere NOT_ELSEWHERE = (v, dn) -> false;
 
+    /**
+     * Who the index says placed an anchored target entry: another set
+     * ({@code elsewhere}), so it's that set's, or this set ({@code here}), so
+     * it's leaving this set (a held delete, or one the next reconcile makes).
+     * Either way it isn't this set's orphan.
+     */
+    record Owners(ManagedElsewhere elsewhere, ManagedElsewhere here) {
+        static final Owners NONE = new Owners(NOT_ELSEWHERE, NOT_ELSEWHERE);
+    }
+
     /** Identities per query when looking up who manages the orphan candidates. */
     static final int IDENTITY_BATCH = 500;
 
@@ -289,12 +401,13 @@ public class SyncContentVerifier {
      * For the anchored target entries this set can't account for: whether
      * another set's index places that anchor value at that very DN, so the entry
      * is that set's, not this one's orphan (several sets may write their anchor
-     * into the same attribute under one target base).
+     * into the same attribute under one target base). One this set's own index
+     * still places there is leaving the set, not an orphan either.
      */
-    private ManagedElsewhere managedElsewhere(UUID syncSetId, Map<String, Expected> expected,
-                                              Map<String, Entry> actual, String anchorAttr) {
+    private Owners owners(UUID syncSetId, Map<String, Expected> expected,
+                          Map<String, Entry> actual, String anchorAttr) {
         if (anchorAttr == null) {
-            return NOT_ELSEWHERE;
+            return Owners.NONE;
         }
         java.util.Set<String> values = new java.util.LinkedHashSet<>();
         for (Map.Entry<String, Entry> en : actual.entrySet()) {
@@ -306,36 +419,44 @@ public class SyncContentVerifier {
             }
         }
         if (values.isEmpty()) {
-            return NOT_ELSEWHERE;
+            return Owners.NONE;
         }
-        // identity -> normalized target DNs other sets place it at
+        // identity -> normalized target DNs other sets (elsewhere) or this set (here) place it at
         Map<String, Set<String>> elsewhere = new HashMap<>();
+        Map<String, Set<String>> here = new HashMap<>();
         List<String> all = new ArrayList<>(values);
         for (int from = 0; from < all.size(); from += IDENTITY_BATCH) {
             for (com.ldapportal.entity.Membership m
                     : membershipRepo.findAllByIdentityIn(all.subList(from, Math.min(all.size(), from + IDENTITY_BATCH)))) {
-                if (!syncSetId.equals(m.getSyncSetId()) && m.getTargetDn() != null) {
-                    elsewhere.computeIfAbsent(m.getIdentity(), k -> new java.util.HashSet<>()).add(normDn(m.getTargetDn()));
+                if (m.getTargetDn() != null) {
+                    (syncSetId.equals(m.getSyncSetId()) ? here : elsewhere)
+                            .computeIfAbsent(m.getIdentity(), k -> new java.util.HashSet<>()).add(normDn(m.getTargetDn()));
                 }
             }
         }
-        return (value, dn) -> elsewhere.getOrDefault(value, Set.of()).contains(normDn(dn));
+        return new Owners((value, dn) -> elsewhere.getOrDefault(value, Set.of()).contains(normDn(dn)),
+                (value, dn) -> here.getOrDefault(value, Set.of()).contains(normDn(dn)));
     }
 
     static SyncVerifyResult compare(Map<String, Expected> expected, Map<String, Entry> actual,
                                     Set<String> excluded, boolean sourceComplete, boolean targetComplete,
                                     com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs,
                                     CompareProgress progress, String anchorAttr,
-                                    ManagedElsewhere managedElsewhere) {
+                                    Owners owners) {
         int inSync = 0;
         int compared = 0;
         List<String> missing = new ArrayList<>();
         List<String> mismatches = new ArrayList<>();
+        List<SyncDriftItem> missingItems = new ArrayList<>();
+        List<SyncDriftItem> mismatchItems = new ArrayList<>();
         for (Map.Entry<String, Expected> en : expected.entrySet()) {
-            progress.at(compared++, en.getValue().displayDn());
+            Expected exp = en.getValue();
+            progress.at(compared++, exp.displayDn());
             Entry target = actual.get(en.getKey());
             if (target == null) {
-                missing.add(en.getValue().displayDn());
+                missing.add(exp.displayDn());
+                missingItems.add(new SyncDriftItem(SyncDriftCategory.MISSING, exp.displayDn(), exp.sourceDn(),
+                        exp.identity(), List.of()));
                 continue;
             }
             // A held reference (its referent isn't synced yet) is kept on the
@@ -349,28 +470,116 @@ public class SyncContentVerifier {
             if (mods.isEmpty()) {
                 inSync++;
             } else {
-                mismatches.add(en.getValue().displayDn());
+                mismatches.add(exp.displayDn());
+                mismatchItems.add(new SyncDriftItem(SyncDriftCategory.MISMATCH, target.getDN(), exp.sourceDn(),
+                        exp.identity(), attributeDiffs(mods, desired, target)));
             }
         }
 
         // With an anchor, only entries carrying it are the set's to account for:
         // an unanchored entry under the target base is someone else's.
         List<String> orphans = new ArrayList<>();
+        List<SyncDriftItem> orphanItems = new ArrayList<>();
+        int leaving = 0;
         for (Map.Entry<String, Entry> en : actual.entrySet()) {
-            if (!expected.containsKey(en.getKey())
-                    && (anchorAttr == null || isOwnOrphan(en.getValue(), anchorAttr, managedElsewhere))) {
-                orphans.add(en.getValue().getDN());
+            if (expected.containsKey(en.getKey())) {
+                continue;
             }
+            if (anchorAttr != null) {
+                if (!isOwnOrphan(en.getValue(), anchorAttr, owners.elsewhere())) {
+                    continue;
+                }
+                // Still in this set's own index there: leaving the set (a delete
+                // held for review, or the next reconcile's), not unaccounted for.
+                if (placedBy(en.getValue(), anchorAttr, owners.here())) {
+                    leaving++;
+                    continue;
+                }
+            }
+            orphans.add(en.getValue().getDN());
+            orphanItems.add(new SyncDriftItem(SyncDriftCategory.ORPHAN, en.getValue().getDN(), null, null,
+                    List.of()));
         }
 
+        List<SyncDriftItem> items = new ArrayList<>(missingItems.size() + orphanItems.size() + mismatchItems.size());
+        items.addAll(missingItems);
+        items.addAll(orphanItems);
+        items.addAll(mismatchItems);
         return new SyncVerifyResult(
                 expected.size(), actual.size(), inSync,
                 missing.size(), orphans.size(), mismatches.size(),
                 sample(missing), sample(orphans), sample(mismatches),
-                sourceComplete, targetComplete, null, anchorAttr != null);
+                sourceComplete, targetComplete, null, anchorAttr != null, null, items, leaving);
+    }
+
+    /**
+     * One {@link SyncDriftItem.AttributeDiff} per attribute the engine would
+     * modify: what the projected source wants against what the target has.
+     * Password material shows no values; each side keeps at most
+     * {@link #VALUE_LIMIT} values, and a binary value shows as its size.
+     */
+    static List<SyncDriftItem.AttributeDiff> attributeDiffs(List<Modification> mods, List<Attribute> desired,
+                                                            Entry target) {
+        Map<String, SyncDriftItem.AttributeDiff> out = new LinkedHashMap<>();
+        for (Modification m : mods) {
+            String name = m.getAttributeName();
+            String key = name.toLowerCase(Locale.ROOT);
+            if (out.containsKey(key)) {
+                continue;
+            }
+            int semi = key.indexOf(';');
+            boolean hidden = SECRET_ATTRIBUTES.contains(semi < 0 ? key : key.substring(0, semi));
+            List<String> want = values(desired.stream().filter(a -> a.getName().equalsIgnoreCase(name)).findFirst()
+                    .orElse(null));
+            List<String> have = values(target.getAttribute(name));
+            boolean truncated = want.size() > VALUE_LIMIT || have.size() > VALUE_LIMIT;
+            out.put(key, new SyncDriftItem.AttributeDiff(name,
+                    hidden ? List.of() : limit(want), hidden ? List.of() : limit(have), hidden, truncated));
+        }
+        return List.copyOf(out.values());
+    }
+
+    private static List<String> values(Attribute a) {
+        if (a == null || !a.hasValue()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>(a.size());
+        for (byte[] raw : a.getValueByteArrays()) {
+            out.add(printable(raw) ? new String(raw, java.nio.charset.StandardCharsets.UTF_8)
+                    : "(binary, " + raw.length + " bytes)");
+        }
+        return out;
+    }
+
+    private static boolean printable(byte[] raw) {
+        java.nio.charset.CharsetDecoder dec = java.nio.charset.StandardCharsets.UTF_8.newDecoder();
+        try {
+            String s = dec.decode(java.nio.ByteBuffer.wrap(raw)).toString();
+            return s.chars().noneMatch(c -> c < 0x20 && c != '\t' && c != '\n' && c != '\r');
+        } catch (java.nio.charset.CharacterCodingException ex) {
+            return false;
+        }
+    }
+
+    private static List<String> limit(List<String> v) {
+        return v.size() <= VALUE_LIMIT ? v : List.copyOf(v.subList(0, VALUE_LIMIT));
     }
 
     /** Anchored, and not placed at its DN by another set under any of its anchor values. */
+    /** Whether {@code index} places the entry at its DN under any of its anchor values. */
+    private static boolean placedBy(Entry e, String anchorAttr, ManagedElsewhere index) {
+        String[] values = e.getAttributeValues(anchorAttr);
+        if (values == null) {
+            return false;
+        }
+        for (String v : values) {
+            if (index.test(v, e.getDN())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isOwnOrphan(Entry e, String anchorAttr, ManagedElsewhere managedElsewhere) {
         String[] values = e.getAttributeValues(anchorAttr);
         if (values == null || values.length == 0) {
@@ -502,7 +711,13 @@ public class SyncContentVerifier {
      * has it (see {@link UntranslatedReferenceTargets}).
      */
     record Expected(String displayDn, List<Attribute> desired, Set<String> held,
-                    Map<String, Map<String, String>> keepCandidates) {
+                    Map<String, Map<String, String>> keepCandidates, String sourceDn, String identity) {
+
+        /** Without the source member's DN and identity (they only label drift items). */
+        Expected(String displayDn, List<Attribute> desired, Set<String> held,
+                 Map<String, Map<String, String>> keepCandidates) {
+            this(displayDn, desired, held, keepCandidates, null, null);
+        }
     }
 
     private static Set<String> union(Set<String> a, Set<String> b) {

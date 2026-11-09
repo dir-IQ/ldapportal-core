@@ -568,6 +568,43 @@ function openCopyForm(p: ProfileRow) {
 
 // Export / import as a portable JSON file (another directory or install).
 const showImport = ref(false)
+/** Set when the editor's Other tab opens the import on the profile being edited. */
+const importPreset = ref<{ directoryId: string; targetProfileId: string } | null>(null)
+
+/** The saved row of the profile open in the editor; null while creating one. */
+const editingRow = computed<ProfileRow | null>(() =>
+  (editing.value ? profiles.value.find(p => p.id === editing.value) : undefined) ?? null)
+
+function openImportFromList() {
+  importPreset.value = null
+  showImport.value = true
+}
+
+function openImportIntoEditing() {
+  const row = editingRow.value
+  if (!row) return
+  importPreset.value = { directoryId: row.directoryId, targetProfileId: row.id }
+  showImport.value = true
+}
+
+/**
+ * After an import. If it replaced the form of the profile open in the editor,
+ * reopen that profile from the server: the editor's copy is now stale, and
+ * saving it would overwrite what was just imported.
+ */
+async function onImported() {
+  const intoEditing = importPreset.value?.targetProfileId
+  importPreset.value = null
+  await reload()
+  if (intoEditing && showModal.value && editing.value === intoEditing) {
+    const fresh = profiles.value.find(p => p.id === intoEditing)
+    if (fresh) {
+      const tab = modalTab.value
+      await openEdit(fresh)
+      modalTab.value = tab
+    }
+  }
+}
 const importDirectories = computed(() =>
   directories.value.map(d => ({ id: d.id as string, displayName: (d.displayName ?? d.id) as string })))
 
@@ -1533,6 +1570,7 @@ const modalTabs = [
   { id: 'layout', label: 'Forms' },
   { id: 'groups', label: 'Groups' },
   { id: 'policy', label: 'Policy' },
+  { id: 'other', label: 'Other' },
 ]
 
 function toggleApprover(accountId: string) {
@@ -1550,7 +1588,7 @@ function toggleApprover(accountId: string) {
         <p class="text-sm text-gray-500 mt-1">Configure provisioning profiles and attribute mappings</p>
       </div>
       <div v-if="canManage" class="flex items-center gap-2">
-        <button class="btn-secondary" @click="showImport = true">Import</button>
+        <button class="btn-secondary" @click="openImportFromList">Import</button>
         <button class="btn-primary" @click="openCreate">+ Create Profile</button>
       </div>
     </div>
@@ -1600,7 +1638,10 @@ function toggleApprover(accountId: string) {
         </svg>
         <p class="text-sm">Loading profile…</p>
       </div>
-      <div v-else class="space-y-4">
+      <!-- On the Attributes tab this wrapper becomes a flex column that fills
+           the modal body, so the tab can scroll within the modal's current
+           height (see the Attributes tab below). -->
+      <div v-else :class="['space-y-4', modalTab === 'attributes' ? 'flex-1 min-h-0 flex flex-col' : '']">
         <!-- Tab Navigation -->
         <div class="flex border-b gap-1">
           <button v-for="tab in modalTabs" :key="tab.id"
@@ -1620,34 +1661,6 @@ function toggleApprover(accountId: string) {
           <div>
             <label for="sp-description" class="block text-sm font-medium text-gray-700 mb-1">Description</label>
             <textarea id="sp-description" v-model="profile.description" class="input w-full" rows="2"></textarea>
-          </div>
-          <div>
-            <label for="sp-theme-color" class="block text-sm font-medium text-gray-700 mb-1">Theme Color</label>
-            <!-- Picker on the left, light/dark preview (and any advice) to its
-                 right; the help text spans the full width below. Wraps on narrow
-                 screens. -->
-            <div class="flex flex-wrap items-start gap-x-5 gap-y-2">
-              <div class="flex items-center gap-2 shrink-0">
-                <!-- A native colour input can't represent "unset" (it always holds
-                     a value), so bind :value with a display fallback and commit on
-                     @input; the hex field and Clear button own the unset state. -->
-                <input id="sp-theme-color" type="color"
-                  :value="profile.themeColor || '#2563eb'"
-                  @input="profile.themeColor = ($event.target as HTMLInputElement).value"
-                  class="h-9 w-10 rounded border border-gray-300 cursor-pointer p-0.5 shrink-0"
-                  aria-label="Profile theme colour picker" />
-                <input v-model="profile.themeColor" class="input w-28" maxlength="7"
-                  placeholder="(unset)" aria-label="Theme colour hex" />
-                <button v-if="profile.themeColor" type="button" class="btn-neutral text-xs"
-                  @click="profile.themeColor = ''">Clear</button>
-              </div>
-              <ThemeColorPreview class="min-w-0 flex-1 basis-80" :color="profile.themeColor" :name="profile.name" />
-            </div>
-            <p class="mt-2 text-xs text-gray-500">
-              Optional. When set, the profile's tag (on the user and group pages, their
-              new/edit dialogs and the bulk pages) is tinted with this colour, and its
-              name is shaded as needed to stay readable. Leave blank for a neutral tag.
-            </p>
           </div>
           <div v-if="!editing">
             <label for="sp-directory" class="block text-sm font-medium text-gray-700 mb-1">Directory</label>
@@ -1784,8 +1797,13 @@ function toggleApprover(accountId: string) {
 
         </div>
 
-        <!-- Attributes Tab -->
-        <div v-if="modalTab === 'attributes'" class="space-y-3">
+        <!-- Attributes Tab. Its list can run to dozens of rows, and AppModal
+             grows (and then holds) the panel to the tallest content shown, so
+             switching here used to stretch the modal to full height. Instead
+             the tab takes no height of its own (basis-0) and fills the space
+             the other tabs already gave the modal, scrolling inside it.
+             min-h keeps a usable area if the modal is still short. -->
+        <div v-if="modalTab === 'attributes'" class="flex-1 basis-0 min-h-64 overflow-y-auto space-y-3">
           <div class="flex items-center gap-2">
             <button class="btn-primary text-sm" :disabled="availableAttributes.length === 0" @click="toggleAttrPicker">
               {{ showAttrPicker ? 'Cancel' : 'Add Attributes' }}
@@ -2110,6 +2128,72 @@ function toggleApprover(accountId: string) {
           </fieldset>
         </div>
 
+        <!-- Other Tab: appearance, plus actions on the saved profile -->
+        <div v-if="modalTab === 'other'" class="space-y-6">
+          <div>
+            <label for="sp-theme-color" class="block text-sm font-medium text-gray-700 mb-1">Theme Color</label>
+            <!-- Picker on the left, light/dark preview (and any advice) to its
+                 right; the help text spans the full width below. Wraps on narrow
+                 screens. -->
+            <div class="flex flex-wrap items-start gap-x-5 gap-y-2">
+              <div class="flex items-center gap-2 shrink-0">
+                <!-- A native colour input can't represent "unset" (it always holds
+                     a value), so bind :value with a display fallback and commit on
+                     @input; the hex field and Clear button own the unset state. -->
+                <input id="sp-theme-color" type="color"
+                  :value="profile.themeColor || '#2563eb'"
+                  @input="profile.themeColor = ($event.target as HTMLInputElement).value"
+                  class="h-9 w-10 rounded border border-gray-300 cursor-pointer p-0.5 shrink-0"
+                  aria-label="Profile theme colour picker" />
+                <input v-model="profile.themeColor" class="input w-28" maxlength="7"
+                  placeholder="(unset)" aria-label="Theme colour hex" />
+                <button v-if="profile.themeColor" type="button" class="btn-neutral text-xs"
+                  @click="profile.themeColor = ''">Clear</button>
+              </div>
+              <ThemeColorPreview class="min-w-0 flex-1 basis-80" :color="profile.themeColor" :name="profile.name" />
+            </div>
+            <p class="mt-2 text-xs text-gray-500">
+              Optional. When set, the profile's tag (on the user and group pages, their
+              new/edit dialogs and the bulk pages) is tinted with this colour, and its
+              name is shaded as needed to stay readable. Leave blank for a neutral tag.
+            </p>
+          </div>
+
+          <section aria-labelledby="sp-other-copy">
+            <h3 id="sp-other-copy" class="text-sm font-semibold text-gray-800 border-b border-gray-200 pb-1 mb-2">Copy form</h3>
+            <p class="text-xs text-gray-500 mb-2">
+              Copy this profile's user form (its attributes and layout) onto other profiles,
+              e.g. identical dev / test / prod directories sharing one definition.
+            </p>
+            <button type="button" class="btn-secondary" :disabled="!editingRow"
+              :title="editingRow ? undefined : 'Save the profile first'"
+              @click="editingRow && openCopyForm(editingRow)">Copy form to other profiles…</button>
+          </section>
+
+          <section aria-labelledby="sp-other-transfer">
+            <h3 id="sp-other-transfer" class="text-sm font-semibold text-gray-800 border-b border-gray-200 pb-1 mb-2">Export / import</h3>
+            <p class="text-xs text-gray-500 mb-2">
+              Save this profile as a portable JSON file, or load an exported file's user form into it.
+            </p>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" class="btn-secondary" :disabled="!editingRow"
+                :title="editingRow ? undefined : 'Save the profile first'"
+                @click="editingRow && doExport(editingRow)">Export to file</button>
+              <button type="button" class="btn-secondary" :disabled="!editingRow"
+                :title="editingRow ? undefined : 'Save the profile first'"
+                @click="openImportIntoEditing">Import form from file…</button>
+            </div>
+          </section>
+
+          <p class="text-xs text-gray-500">
+            <template v-if="editingRow">
+              Copy and export use the last saved version of this profile; save your changes first
+              to include them. An import replaces this profile's user form and reloads the editor.
+            </template>
+            <template v-else>Save the profile first to copy, export or import its form.</template>
+          </p>
+        </div>
+
         <!-- Policy Tab -->
         <div v-if="modalTab === 'policy'" class="space-y-4">
           <!-- Password Generation Settings -->
@@ -2243,7 +2327,8 @@ function toggleApprover(accountId: string) {
     <!-- Group change preview dialog removed — compliance check is now inline on the Groups tab -->
 
     <CopyFormDialog v-model="showCopyForm" :source="copyFormSource" :profiles="profiles" @copied="reload" />
-    <ImportProfileDialog v-model="showImport" :directories="importDirectories" :profiles="profiles" @imported="reload" />
+    <ImportProfileDialog v-model="showImport" :directories="importDirectories" :profiles="profiles"
+      :preset="importPreset" @imported="onImported" />
 
     <!-- Clone modal -->
     <AppModal v-model="showCloneModal" title="Clone Profile" size="sm">

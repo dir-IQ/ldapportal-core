@@ -93,6 +93,19 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
             + "and m.state = com.ldapportal.entity.enums.MembershipState.APPLIED")
     int forgetAppliedContent(@Param("syncSetId") UUID syncSetId, @Param("none") byte[] none);
 
+    /**
+     * {@link #forgetAppliedContent}, for just these identities: their next
+     * recompute re-reads the target and re-applies what no longer matches,
+     * rather than skipping on an unchanged projection (a drift repair).
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query("update Membership m set m.contentHash = :none where m.syncSetId = :syncSetId "
+            + "and m.state = com.ldapportal.entity.enums.MembershipState.APPLIED and m.identity in :identities")
+    int forgetAppliedContentOf(@Param("syncSetId") UUID syncSetId,
+                               @Param("identities") java.util.Collection<String> identities,
+                               @Param("none") byte[] none);
+
     /** Rows not stamped by the current reconcile epoch (never scanned, or seen in a prior generation). */
     @Query("select m from Membership m where m.syncSetId = :syncSetId "
             + "and (m.lastScanEpoch is null or m.lastScanEpoch < :epoch)")

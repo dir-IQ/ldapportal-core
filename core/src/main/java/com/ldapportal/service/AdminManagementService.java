@@ -22,6 +22,7 @@ import com.ldapportal.entity.enums.FeatureKey;
 import com.ldapportal.exception.ConflictException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.AccountRepository;
+import com.ldapportal.repository.ScheduledReportJobRepository;
 
 import com.ldapportal.repository.AdminFeaturePermissionRepository;
 import com.ldapportal.repository.AdminProfileRoleRepository;
@@ -51,6 +52,7 @@ public class AdminManagementService {
     private final PasswordEncoder                 passwordEncoder;
     private final AuditService                    auditService;
     private final ApprovalNotificationService     notificationService;
+    private final ScheduledReportJobRepository    reportJobRepo;
 
     // ── Admin account CRUD ────────────────────────────────────────────────────
 
@@ -557,6 +559,9 @@ public class AdminManagementService {
         Account a = requireAccount(adminId);
         String username = a.getUsername();
         AccountRole role = a.getRole();
+        // Their scheduled reports ran with their OU scope; once the account is
+        // gone the FK nulls the creator and the job would run unbounded.
+        reportJobRepo.disableAllCreatedBy(adminId);
         accountRepo.delete(a);
 
         if (principal != null) {

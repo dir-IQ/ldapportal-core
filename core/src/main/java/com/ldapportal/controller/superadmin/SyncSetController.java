@@ -289,6 +289,93 @@ public class SyncSetController {
         return service.verifyContents(id);
     }
 
+    /**
+     * Every drift item the set's last complete content verify found (only the
+     * latest is kept), a page at a time: optionally one {@code category}
+     * (MISSING, ORPHAN, MISMATCH) and matching {@code q}.
+     */
+    @GetMapping("/{id}/drift")
+    public com.ldapportal.dto.sync.SyncDriftPage drift(@PathVariable UUID id,
+                                                     @RequestParam(required = false) String category,
+                                                     @RequestParam(required = false) String q,
+                                                     @RequestParam(defaultValue = "0") int page,
+                                                     @RequestParam(defaultValue = "50") int size) {
+        return service.drift(id, driftCategory(category), q, page, size);
+    }
+
+    /** The {@code category} param: blank for every category; an unknown name is a 400. */
+    private static com.ldapportal.entity.enums.SyncDriftCategory driftCategory(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return com.ldapportal.entity.enums.SyncDriftCategory.valueOf(raw.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Unknown drift category: " + raw
+                    + " (expected MISSING, ORPHAN or MISMATCH)");
+        }
+    }
+
+    /** The stored drift items as CSV (see {@code SyncConfigService.writeDriftCsv}). */
+    @GetMapping(value = "/{id}/drift.csv", produces = "text/csv")
+    public ResponseEntity<byte[]> driftCsv(@PathVariable UUID id) {
+        // In memory, like the run-entries CSV: an async streaming body isn't authorized.
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        Writer writer = new OutputStreamWriter(bytes, StandardCharsets.UTF_8);
+        service.writeDriftCsv(id, writer);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"sync-drift-" + id + ".csv\"")
+                .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                .body(bytes.toByteArray());
+    }
+
+    /**
+     * What repairing these drift items would do, each re-checked live now
+     * (create a missing entry, re-apply a drifted one, or skip it and why).
+     * Read-only; needs the manage permission because it previews a write.
+     */
+    @PostMapping("/{id}/drift/repair/preview")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncDriftRepairPreview previewDriftRepair(
+            @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncDriftRepairRequest req) {
+        return service.previewDriftRepair(id, req.seqs(), req.verifiedAt());
+    }
+
+    /**
+     * Repair these drift items through the sync engine: create the missing,
+     * re-apply the drifted, each re-checked first; audited with the operator.
+     */
+    @PostMapping("/{id}/drift/repair")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncDriftRepairResult repairDrift(
+            @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncDriftRepairRequest req,
+            @AuthenticationPrincipal AuthPrincipal principal) {
+        return service.repairDrift(id, req.seqs(), req.verifiedAt(), principal);
+    }
+
+    /**
+     * What deleting these orphaned drift items would do, each re-checked live:
+     * delete an entry provably this set's, or leave it alone and say why.
+     */
+    @PostMapping("/{id}/drift/orphans/delete/preview")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncOrphanDeletePreview previewOrphanDelete(
+            @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncOrphanDeleteRequest req) {
+        return service.previewOrphanDelete(id, req.seqs(), req.verifiedAt());
+    }
+
+    /**
+     * Delete these orphaned drift items from the target, each re-checked first;
+     * {@code confirm} must be {@code DELETE}. Audited with the operator.
+     */
+    @PostMapping("/{id}/drift/orphans/delete")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncOrphanDeleteResult deleteOrphans(
+            @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncOrphanDeleteRequest req,
+            @AuthenticationPrincipal AuthPrincipal principal) {
+        return service.deleteOrphans(id, req.seqs(), req.verifiedAt(), req.confirm(), principal);
+    }
+
     @PostMapping("/{id}/recompute")
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public ResponseEntity<Void> recompute(@PathVariable UUID id, @Valid @RequestBody RecomputeKeyRequest req) {
