@@ -167,7 +167,7 @@ public class OperationalReportService {
             return ReportScope.unbounded(requestedBase);
         }
         List<String> bases = permissionService.resolveSearchBaseDns(principal, directoryId, requestedBase);
-        List<String> groupBases = List.copyOf(permissionService.getAuthorizedOuDns(principal, directoryId));
+        List<String> groupBases = permissionService.resolveGroupSearchBaseDns(principal, directoryId);
         return new ReportScope(bases, groupBases,
                 dn -> permissionService.isDnWithinScope(principal, directoryId, dn), true);
     }

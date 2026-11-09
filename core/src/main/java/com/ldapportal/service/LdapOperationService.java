@@ -1421,7 +1421,12 @@ public class LdapOperationService {
             }
         }
 
-        UserGroupIndex groups = groupsColumn ? UserGroupIndex.build(groupService, dc, bases) : null;
+        // Groups are looked up across everything the caller can see, not just the
+        // export's base: that is usually a user OU with no groups under it.
+        UserGroupIndex groups = groupsColumn
+                ? UserGroupIndex.build(groupService, dc,
+                        permissionService.resolveGroupSearchBaseDns(principal, directoryId))
+                : null;
         return bulkUserService.exportCsvFromBases(dc, filter, bases, effectiveAttrs, groups);
     }
 

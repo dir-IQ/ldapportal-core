@@ -229,7 +229,9 @@ describe('UserListView feature gating', () => {
     const cols = wrapper.findComponent({ name: 'ResultsTable' }).props('columns') as Array<{ key: string, label: string }>
     expect(cols.find(c => c.key === 'employeenumber')!.label).toBe('employeeNumber')
     expect(cols.find(c => c.key === 'dn')!.label).toBe('dn')
-    expect(cols.find(c => c.key === '__groups')!.label).toBe('groups')
+    expect(cols.find(c => c.key === '__groups')).toMatchObject({ label: 'groups' })
+    // Shown by default, so the CSV export carries it unless turned off.
+    expect(cols.find(c => c.key === '__groups')).not.toHaveProperty('defaultHidden', true)
     expect(cols.some(c => c.key === 'userpassword' || c.key === 'memberof')).toBe(false)
   })
 
