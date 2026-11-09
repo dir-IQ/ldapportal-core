@@ -26,7 +26,6 @@ import org.springframework.security.access.AccessDeniedException;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -78,7 +77,7 @@ class ScheduledReportParityTest {
         dc.setBaseDn("dc=example,dc=com");
 
         when(permissionService.resolveSearchBaseDns(alice, dirId, PEOPLE)).thenReturn(List.of(PEOPLE));
-        when(permissionService.getAuthorizedOuDns(alice, dirId)).thenReturn(Set.of(PEOPLE, GROUPS));
+        when(permissionService.resolveGroupSearchBaseDns(alice, dirId)).thenReturn(List.of(PEOPLE, GROUPS));
         when(permissionService.isDnWithinScope(eq(alice), eq(dirId), anyString())).thenAnswer(i -> {
             String dn = i.getArgument(2);
             return dn.endsWith(PEOPLE) || dn.endsWith(GROUPS);

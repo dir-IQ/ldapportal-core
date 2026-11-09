@@ -132,6 +132,25 @@ describe('AuditLogView', () => {
     wrapper.unmount()
   })
 
+  it('shows the directory and target container of a bulk operation', async () => {
+    vi.mocked(auditApi.getAuditLog).mockResolvedValue({ data: { content: [{
+      id: 'e2', occurredAt: '2026-11-08T10:00:00Z', action: 'bulk.attribute_update',
+      directoryName: 'Corp OpenLDAP', targetDn: 'ou=People,dc=example,dc=com',
+      detail: { totalDns: 2, updated: 2, errors: 0 },
+    }] } } as never)
+    const wrapper = mount(AuditLogView, { attachTo: document.body })
+    await flushPromises()
+    button('Filter')!.click()
+    await flushPromises()
+
+    const headers = Array.from(document.querySelectorAll('th')).map((th) => th.textContent?.trim())
+    expect(headers).toContain('Directory')
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('Corp OpenLDAP')
+    expect(text).toContain('ou=People,dc=example,dc=com')
+    wrapper.unmount()
+  })
+
   it('shows a sync record\'s set and directory names, without the sync set id', async () => {
     vi.mocked(auditApi.getAuditLog).mockResolvedValue({ data: { content: [{
       id: 'e1', occurredAt: '2026-10-29T10:00:00Z', action: 'entry.create', targetDn: 'uid=a,dc=dst',

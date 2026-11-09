@@ -861,7 +861,6 @@ const visibleColumnKeys = ref<string[]>([])
 const cols = computed(() => [
   ...buildUserAttributeColumns(discoveredAttrs.value, {
     groupsKey: '__groups',
-    groupsDefaultHidden: true,
     schemaNames: schemaNames.value,
     // IVIA enrichment columns (keyed `isva.*` by the backend) keep their
     // stable internal key but display the marketing `ivia.` prefix.
@@ -1021,7 +1020,7 @@ async function load(all: boolean = searchMeta.value?.all === true) {
         const arr = Array.isArray(vals) ? vals : (vals == null ? [] : [vals])
         row[attr] = arr.join(', ')
       }
-      // Group membership for the (default-hidden) Groups column. The raw
+      // Group membership for the Groups column. The raw
       // DNs feed GroupChips; the joined names back the quick-filter and
       // cell title so an operator can filter the table on a group name.
       const gdns = memberOfValues(attrs)

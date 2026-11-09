@@ -1638,7 +1638,10 @@ function toggleApprover(accountId: string) {
         </svg>
         <p class="text-sm">Loading profile…</p>
       </div>
-      <div v-else class="space-y-4">
+      <!-- On the Attributes tab this wrapper becomes a flex column that fills
+           the modal body, so the tab can scroll within the modal's current
+           height (see the Attributes tab below). -->
+      <div v-else :class="['space-y-4', modalTab === 'attributes' ? 'flex-1 min-h-0 flex flex-col' : '']">
         <!-- Tab Navigation -->
         <div class="flex border-b gap-1">
           <button v-for="tab in modalTabs" :key="tab.id"
@@ -1794,8 +1797,13 @@ function toggleApprover(accountId: string) {
 
         </div>
 
-        <!-- Attributes Tab -->
-        <div v-if="modalTab === 'attributes'" class="space-y-3">
+        <!-- Attributes Tab. Its list can run to dozens of rows, and AppModal
+             grows (and then holds) the panel to the tallest content shown, so
+             switching here used to stretch the modal to full height. Instead
+             the tab takes no height of its own (basis-0) and fills the space
+             the other tabs already gave the modal, scrolling inside it.
+             min-h keeps a usable area if the modal is still short. -->
+        <div v-if="modalTab === 'attributes'" class="flex-1 basis-0 min-h-64 overflow-y-auto space-y-3">
           <div class="flex items-center gap-2">
             <button class="btn-primary text-sm" :disabled="availableAttributes.length === 0" @click="toggleAttrPicker">
               {{ showAttrPicker ? 'Cancel' : 'Add Attributes' }}
