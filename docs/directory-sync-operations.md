@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background, the Drift tab laid out like the Reconciliation tab with bulk-only actions; 2026-11-10).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background, the Drift tab laid out like the Reconciliation tab with bulk-only actions, every held reference listed and exportable from the Drift tab; 2026-11-10).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -742,11 +742,28 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   so. It also counts **held references**: members with a reference value
   (`secDN`, group `member`, …) the sync holds back because the entry it names
   isn't placed by any sync set. They aren't drift — a held value is left as
-  the target has it — but each is listed with its value and whether the entry
-  it names **doesn't exist on the source** (a source data problem a reconcile
-  can't fix) or simply **isn't synced yet** (it fills in once that entry
-  lands). The counts are stored with the drift snapshot, so the inventory
-  shows them without running a verify.
+  the target has it — but a complete verify stores **every** held value
+  alongside its drift items (only the latest is kept), each with the member's
+  source entry, the attribute, the DN it names and what the verify found out
+  about that entry:
+  - **Doesn't exist on source** (`DANGLING`): a source data problem a
+    reconcile can't fix. Correct or remove the value on the source entry
+    listed.
+  - **Not synced yet** (`UNSYNCED`): the entry exists but no set places it;
+    the value fills in once one does.
+  - **Not checked** (`UNCHECKED`): not looked up, because the verify reached
+    its limit of 10,000 distinct referenced entries or the source read failed.
+
+  The Drift tab shows them under their own chips after the drift kinds
+  (*Held: doesn't exist on source*, *Held: not synced yet*, *Held: not
+  checked*, each only when there are some), paged and searchable like the
+  drift items, and the summary links straight to the ones to fix. **Export
+  CSV** on a held chip downloads them all
+  (`status,sourceDn,attribute,reference,entryDn,identity`). They're served by
+  `GET …/sets/{id}/drift/held` (`status`, `q`, `page`, `size`) and
+  `…/drift/held.csv`; the drift page's `held` field counts them per status.
+  A verify made before they were stored shows only the counts, with a prompt
+  to verify again.
 - **Drift column and drifting sets.** Each set stores its last *complete*
   content verify (it runs after every scheduled or manual reconcile, and on
   **Verify now**). The sets table's **Drift** column shows it — e.g.

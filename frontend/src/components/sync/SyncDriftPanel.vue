@@ -19,8 +19,10 @@
                       title="Compare the set's source and target entry by entry in Directory Diff, independently of the sync's own comparison: every attribute's values side by side, with a live re-read per entry">
             Compare in Directory Diff
           </RouterLink>
-          <button v-if="data?.verifiedAt && totalDrift > 0" type="button" class="btn-neutral btn-compact"
-                  :disabled="exporting" @click="exportCsv">
+          <button v-if="data?.verifiedAt && (totalDrift > 0 || heldTotal > 0)" type="button"
+                  class="btn-neutral btn-compact" :disabled="exporting"
+                  :title="heldView ? 'Download every held reference as CSV' : 'Download every drift item as CSV'"
+                  @click="exportCsv">
             {{ exporting ? 'Exporting…' : 'Export CSV' }}
           </button>
           <button type="button" class="btn-secondary btn-compact" :disabled="verifying"
@@ -62,51 +64,47 @@
         ✓ Source and target agree: no drift at the last check.
       </p>
 
-      <!-- Held references: from this session's check, else the last complete one's counts. -->
-      <div v-if="live?.heldReferences?.entries" data-testid="held-references" class="text-gray-600">
-        <p>
-          Held references: <span class="font-medium tabular-nums">{{ live.heldReferences.entries }}</span>
-          {{ live.heldReferences.entries === 1 ? 'entry has' : 'entries have' }} a reference the sync holds back
-          (not counted as drift).
-          <template v-if="live.heldReferences.dangling">
-            <span class="text-amber-700">{{ live.heldReferences.dangling }} of them
-              {{ live.heldReferences.dangling === 1 ? 'names' : 'name' }} an entry that doesn’t exist on the
-              source</span>: fix those on the source; a reconcile can’t.
-          </template>
-          The rest name entries not synced yet, and fill in once those are.
-          <template v-if="live.heldReferences.unchecked"> Not every referenced entry was looked up.</template>
-        </p>
-        <ul class="font-mono text-xs text-gray-500 list-disc pl-4">
-          <li v-for="h in live.heldReferences.samples" :key="h.entryDn + h.attribute + h.reference">
-            {{ h.entryDn }}: {{ h.attribute }} → {{ h.reference }}
-            <span class="font-sans" :class="h.dangling ? 'text-amber-700' : 'text-gray-500'">
-              ({{ h.dangling ? 'doesn’t exist' : 'not synced yet' }})
-            </span>
-          </li>
-        </ul>
-      </div>
+      <!-- Held references: not drift, but listed (every one) under their own chips below. -->
+      <p v-if="heldTotal" class="text-gray-600" data-testid="held-references">
+        Held references (not drift): <span class="font-medium tabular-nums">{{ heldTotal }}</span>
+        {{ heldTotal === 1 ? 'value names' : 'values name' }} an entry the sync hasn’t placed, so the target keeps its
+        own.<template v-if="heldCounts.DANGLING">
+          <button type="button" class="text-amber-700 hover:underline" @click="setCategory('HELD_DANGLING')">
+            <span class="font-medium tabular-nums">{{ heldCounts.DANGLING }}</span>
+            {{ heldCounts.DANGLING === 1 ? 'names an entry that doesn’t' : 'name entries that don’t' }} exist on the
+            source</button>:
+          fix those on the source; a reconcile can’t.</template>
+        The rest fill in once the entries they name are synced.
+      </p>
       <p v-else-if="set.verify?.held" class="text-gray-600" data-testid="held-snapshot">
         At the last content check, {{ set.verify.held }}
         {{ set.verify.held === 1 ? 'entry had' : 'entries had' }} a held reference (a value naming an entry the sync
         hasn’t placed)<template v-if="set.verify.dangling">; <span class="text-amber-700">{{ set.verify.dangling }}
           {{ set.verify.dangling === 1 ? 'names' : 'name' }} an entry that doesn’t exist on the source</span></template>.
-        Verify now lists them.
+        Verify now to list them all.
       </p>
     </div>
 
-    <template v-if="data?.verifiedAt && totalDrift > 0">
-      <!-- Kind filter chips with counts, as the Reconciliation tab's state chips. -->
+    <template v-if="data?.verifiedAt && (totalDrift > 0 || heldTotal > 0)">
+      <!--
+        Kind filter chips with counts, as the Reconciliation tab's state chips.
+        Held references aren't drift: their chips come after a divider, as "Not
+        in set" does there, and list them instead of drift items.
+      -->
       <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by kind of drift">
-        <button v-for="c in chips" :key="c.key" type="button"
-                class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full"
-                :class="[c.chip, category === c.value ? 'ring-2 ring-offset-1 ring-blue-500' : '']"
-                :aria-pressed="category === c.value" :title="c.hint" @click="setCategory(c.value)">
-          <span v-if="c.dot" class="w-1.5 h-1.5 rounded-full" :class="c.dot" aria-hidden="true"></span>
-          {{ c.label }} <span class="tabular-nums">{{ c.n }}</span>
-        </button>
+        <template v-for="c in chips" :key="c.key">
+          <span v-if="c.key === firstHeldKey" class="w-px h-4 bg-gray-300 mx-1" aria-hidden="true"></span>
+          <button type="button"
+                  class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full"
+                  :class="[c.chip, category === c.value ? 'ring-2 ring-offset-1 ring-blue-500' : '']"
+                  :aria-pressed="category === c.value" :title="c.hint" @click="setCategory(c.value)">
+            <span v-if="c.dot" class="w-1.5 h-1.5 rounded-full" :class="c.dot" aria-hidden="true"></span>
+            {{ c.label }} <span class="tabular-nums">{{ c.n }}</span>
+          </button>
+        </template>
       </div>
 
-      <p v-if="counts.ORPHAN" class="text-xs text-gray-500" data-testid="orphan-scope">
+      <p v-if="!heldView && counts.ORPHAN" class="text-xs text-gray-500" data-testid="orphan-scope">
         {{ set.sourceAnchorAttribute
           ? 'Orphans are entries carrying the set’s source anchor that no source entry accounts for; entries without it, or that another set places there, aren’t counted.'
           : 'This set writes no source anchor, so every entry under the target base that matches its filter counts, including ones another set or nothing manages.' }}
@@ -118,6 +116,59 @@
       <input v-model="search" class="input input-sm w-full" placeholder="Filter by DN, attribute or value…"
              aria-label="Filter drift" />
 
+      <!-- Held references: one row per held value, with the source entry that holds it. -->
+      <template v-if="heldView">
+        <p class="text-xs text-gray-500" data-testid="held-help">
+          Each row is a reference value (a group member, a manager, a secDN) that names an entry no sync set has placed,
+          so the target keeps its own value. <span class="text-amber-700">Doesn’t exist on source</span>: the entry it
+          names is gone, so fix the source entry shown (remove or correct the value); a reconcile can’t.
+          <span class="font-medium">Not synced yet</span>: the entry exists, and the value fills in once a sync set
+          places it.
+          <template v-if="heldPage?.counts.UNCHECKED">
+            <span class="font-medium">Not checked</span>: the entry wasn’t looked up (over
+            {{ HELD_CHECK_LIMIT.toLocaleString() }} distinct entries, or the read failed).
+          </template>
+        </p>
+        <p v-if="heldPage && !heldPage.detailsRecorded" class="text-xs text-amber-700" data-testid="held-no-details">
+          These counts come from a check made before every held reference was kept. Verify now to list them.
+        </p>
+        <div class="overflow-x-auto rounded-lg border border-gray-200">
+          <table class="min-w-full divide-y divide-gray-200 text-sm" data-testid="held-table">
+            <thead class="bg-gray-50">
+              <tr>
+                <th v-for="h in ['Status', 'Source entry', 'Attribute', 'Names']" :key="h" scope="col"
+                    class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">{{ h }}</th>
+              </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-100">
+              <tr v-if="loading && !heldEntries.length">
+                <td colspan="4" class="px-4 py-8 text-center text-gray-500">Loading…</td>
+              </tr>
+              <tr v-else-if="!heldEntries.length">
+                <td colspan="4" class="px-4 py-8 text-center text-gray-500">No held references match.</td>
+              </tr>
+              <tr v-for="h in heldEntries" :key="h.seq" :data-testid="`held-row-${h.seq}`">
+                <td class="px-4 py-3 align-top whitespace-nowrap">
+                  <span :class="HELD[h.status].badge">{{ HELD[h.status].label }}</span>
+                </td>
+                <td class="px-4 py-3 align-top text-[13px] font-mono break-all">
+                  <RouterLink v-if="sourceDirectoryId && h.sourceDn" :to="browserLink(sourceDirectoryId, h.sourceDn)"
+                              class="text-blue-700 hover:underline" :title="`On the target: ${h.entryDn}`">{{ h.sourceDn }}</RouterLink>
+                  <span v-else class="text-gray-700" :title="`On the target: ${h.entryDn}`">{{ h.sourceDn ?? h.entryDn }}</span>
+                </td>
+                <td class="px-4 py-3 align-top text-[13px] font-mono text-gray-700">{{ h.attribute }}</td>
+                <td class="px-4 py-3 align-top text-[13px] font-mono break-all">
+                  <RouterLink v-if="sourceDirectoryId && h.status === 'UNSYNCED'" :to="browserLink(sourceDirectoryId, h.reference)"
+                              class="text-blue-700 hover:underline">{{ h.reference }}</RouterLink>
+                  <span v-else class="text-gray-700">{{ h.reference }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+
+      <template v-else>
       <!--
         Bulk actions on the selected rows (this page only): Repair takes the
         missing and drifted ones, Delete the orphans this set can prove are its own.
@@ -232,6 +283,8 @@
         </table>
       </div>
 
+      </template>
+
       <div class="flex items-center justify-between gap-2 flex-wrap text-xs text-gray-600 pt-1 border-t border-gray-100">
         <label class="flex items-center gap-1.5">
           Rows
@@ -241,7 +294,7 @@
             <option :value="100">100</option>
             <option :value="200">200</option>
           </select>
-          <span class="text-gray-500">of {{ data?.matched ?? 0 }}</span>
+          <span class="text-gray-500">of {{ matched }}</span>
         </label>
         <div class="flex items-center gap-2">
           <button type="button" class="btn-neutral btn-compact" :disabled="page <= 0" @click="page--">Prev</button>
@@ -336,6 +389,7 @@ import { useNotificationStore } from '@/stores/notifications'
 import { downloadBlob } from '@/composables/useApi'
 import {
   getDrift, downloadDriftCsv, previewDriftRepair, repairDrift, previewOrphanDelete, deleteOrphans,
+  getHeldReferences, downloadHeldCsv, type SyncHeldStatus, type SyncHeldPage, type SyncHeldEntry,
   type SyncSet, type SyncVerifyResult, type SyncDriftPage, type SyncDriftEntry, type SyncDriftCategory,
   type SyncDriftRepairPreviewItem, type SyncOrphanDeletePreviewItem,
 } from '@/api/sync'
@@ -357,7 +411,11 @@ const emit = defineEmits<{ verify: []; changed: [] }>()
 
 const notif = useNotificationStore()
 
-type CategoryFilter = '' | SyncDriftCategory
+/** A held-reference chip: lists held references of one status instead of drift items. */
+type HeldFilter = 'HELD_DANGLING' | 'HELD_UNSYNCED' | 'HELD_UNCHECKED'
+type CategoryFilter = '' | SyncDriftCategory | HeldFilter
+/** Mirrors SyncContentVerifier.HELD_CHECK_LIMIT: distinct referenced entries looked up per check. */
+const HELD_CHECK_LIMIT = 10_000
 const category = ref<CategoryFilter>('')
 const search = ref('')
 /** The search as sent: `search`, trimmed, once typing pauses. */
@@ -378,8 +436,27 @@ const KIND: Record<SyncDriftCategory, { label: string; badge: string }> = {
 const counts = computed<Record<SyncDriftCategory, number>>(() =>
   data.value?.counts ?? { MISSING: 0, ORPHAN: 0, MISMATCH: 0 })
 const totalDrift = computed<number>(() => counts.value.MISSING + counts.value.ORPHAN + counts.value.MISMATCH)
-const entries = computed<SyncDriftEntry[]>(() => data.value?.entries ?? [])
-const pageCount = computed<number>(() => Math.max(1, Math.ceil((data.value?.matched ?? 0) / size.value)))
+/** The held references of the selected status, when a held chip is selected. */
+const heldPage = ref<SyncHeldPage | null>(null)
+const heldView = computed<boolean>(() => category.value.startsWith('HELD_'))
+const heldStatus = computed<SyncHeldStatus | undefined>(() =>
+  heldView.value ? (category.value.slice('HELD_'.length) as SyncHeldStatus) : undefined)
+const heldCounts = computed<Record<SyncHeldStatus, number>>(() => ({
+  DANGLING: 0, UNSYNCED: 0, UNCHECKED: 0, ...(data.value?.held ?? {}),
+}))
+const heldTotal = computed<number>(() =>
+  heldCounts.value.DANGLING + heldCounts.value.UNSYNCED + heldCounts.value.UNCHECKED)
+const heldEntries = computed<SyncHeldEntry[]>(() => (heldView.value ? heldPage.value?.entries ?? [] : []))
+const entries = computed<SyncDriftEntry[]>(() => (heldView.value ? [] : data.value?.entries ?? []))
+const matched = computed<number>(() =>
+  (heldView.value ? heldPage.value?.matched : data.value?.matched) ?? 0)
+const pageCount = computed<number>(() => Math.max(1, Math.ceil(matched.value / size.value)))
+
+const HELD: Record<SyncHeldStatus, { label: string; badge: string }> = {
+  DANGLING: { label: 'Doesn’t exist on source', badge: 'badge-amber' },
+  UNSYNCED: { label: 'Not synced yet', badge: 'badge-gray' },
+  UNCHECKED: { label: 'Not checked', badge: 'badge-gray' },
+}
 const laterIncomplete = computed<boolean>(() => {
   const d = data.value
   return !!d?.incompleteAt && (!d.verifiedAt || d.incompleteAt > d.verifiedAt)
@@ -388,7 +465,7 @@ const laterIncomplete = computed<boolean>(() => {
 interface Chip { key: string; label: string; value: CategoryFilter; n: number; chip: string; dot: string; hint: string }
 const chips = computed<Chip[]>(() => [
   { key: 'all', label: 'All', value: '', n: totalDrift.value, chip: 'bg-gray-100 text-gray-700', dot: '',
-    hint: 'Every drift item the last complete check found.' },
+    hint: 'Every drift item the last complete check found (held references aren’t drift).' },
   { key: 'missing', label: 'Missing on target', value: 'MISSING', n: counts.value.MISSING,
     chip: 'bg-red-50 text-red-700', dot: 'bg-red-600',
     hint: 'In the set on the source, but not on the target: new in the source, or deleted on the target.' },
@@ -398,7 +475,22 @@ const chips = computed<Chip[]>(() => [
   { key: 'mismatch', label: 'Content drift', value: 'MISMATCH', n: counts.value.MISMATCH,
     chip: 'bg-yellow-50 text-yellow-800', dot: 'bg-yellow-500',
     hint: 'On both sides, but the target\'s attributes differ from what the source projects.' },
+  ...heldChips.value,
 ])
+
+/** Held-reference chips, each only when the last check found some of that status. */
+const heldChips = computed<Chip[]>(() => ([
+  { key: 'held-dangling', label: 'Held: doesn’t exist on source', value: 'HELD_DANGLING' as CategoryFilter,
+    n: heldCounts.value.DANGLING, chip: 'bg-orange-50 text-orange-800', dot: 'bg-orange-500',
+    hint: 'Reference values naming an entry that doesn’t exist on the source. Not drift: fix them on the source.' },
+  { key: 'held-unsynced', label: 'Held: not synced yet', value: 'HELD_UNSYNCED' as CategoryFilter,
+    n: heldCounts.value.UNSYNCED, chip: 'bg-slate-50 text-slate-700', dot: 'bg-slate-400',
+    hint: 'Reference values naming a source entry no sync set places yet. Not drift: they fill in once one does.' },
+  { key: 'held-unchecked', label: 'Held: not checked', value: 'HELD_UNCHECKED' as CategoryFilter,
+    n: heldCounts.value.UNCHECKED, chip: 'bg-gray-50 text-gray-600', dot: 'bg-gray-400',
+    hint: 'Reference values whose named entry wasn’t looked up on the source.' },
+]).filter(c => c.n > 0))
+const firstHeldKey = computed<string | undefined>(() => heldChips.value[0]?.key)
 
 function setCategory(c: CategoryFilter): void {
   category.value = c
@@ -645,14 +737,22 @@ async function load(): Promise<void> {
   const seq = ++loadSeq
   loading.value = true
   try {
-    const { data: d } = await getDrift(props.set.id, {
-      category: category.value || undefined,
-      q: query.value || undefined,
-      page: page.value,
-      size: size.value,
-    })
-    if (seq !== loadSeq) return
-    data.value = d
+    if (heldView.value) {
+      const { data: d } = await getHeldReferences(props.set.id, {
+        status: heldStatus.value, q: query.value || undefined, page: page.value, size: size.value,
+      })
+      if (seq !== loadSeq) return
+      heldPage.value = d
+    } else {
+      const { data: d } = await getDrift(props.set.id, {
+        category: (category.value || undefined) as SyncDriftCategory | undefined,
+        q: query.value || undefined,
+        page: page.value,
+        size: size.value,
+      })
+      if (seq !== loadSeq) return
+      data.value = d
+    }
     expanded.value = new Set()
     selected.value = new Set()
   } catch (e) {
@@ -665,8 +765,14 @@ async function load(): Promise<void> {
 async function exportCsv(): Promise<void> {
   exporting.value = true
   try {
-    const { data: blob } = await downloadDriftCsv(props.set.id)
-    downloadBlob(blob, `sync-drift-${props.set.name.replace(/[^A-Za-z0-9._-]+/g, '-')}.csv`)
+    const name = props.set.name.replace(/[^A-Za-z0-9._-]+/g, '-')
+    if (heldView.value) {
+      const { data: blob } = await downloadHeldCsv(props.set.id)
+      downloadBlob(blob, `sync-held-references-${name}.csv`)
+    } else {
+      const { data: blob } = await downloadDriftCsv(props.set.id)
+      downloadBlob(blob, `sync-drift-${name}.csv`)
+    }
   } catch (e) {
     notif.error(errMsg(e))
   } finally {

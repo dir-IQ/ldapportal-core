@@ -502,6 +502,8 @@ export interface SyncDriftPage {
   page: number
   size: number
   entries: SyncDriftEntry[]
+  /** Stored held references per status: not drift, listed by `getHeldReferences`. */
+  held?: Partial<Record<SyncHeldStatus, number>>
 }
 
 export const getDrift = (setId: string,
@@ -510,6 +512,46 @@ export const getDrift = (setId: string,
 
 export const downloadDriftCsv = (setId: string) =>
   client.get<Blob>(`/superadmin/sync/sets/${setId}/drift.csv`, { responseType: 'blob' })
+
+/**
+ * What a content verify found out about the entry a held reference names:
+ * DANGLING it doesn't exist on the source (fix the reference there), UNSYNCED
+ * it exists but no set places it yet (fills in once one does), UNCHECKED it
+ * wasn't looked up.
+ */
+export type SyncHeldStatus = 'DANGLING' | 'UNSYNCED' | 'UNCHECKED'
+
+/** One reference value the sync holds back, from the last complete verify. */
+export interface SyncHeldEntry {
+  seq: number
+  /** The target DN of the member holding the reference. */
+  entryDn: string
+  /** That member's source entry: where a dangling reference is fixed. */
+  sourceDn: string | null
+  identity: string | null
+  attribute: string
+  /** The source DN the held value names. */
+  reference: string
+  status: SyncHeldStatus
+}
+
+export interface SyncHeldPage {
+  verifiedAt: string | null
+  /** False when the set's held count predates stored rows (verifying again records them). */
+  detailsRecorded: boolean
+  counts: Record<SyncHeldStatus, number>
+  matched: number
+  page: number
+  size: number
+  entries: SyncHeldEntry[]
+}
+
+export const getHeldReferences = (setId: string,
+  params: { status?: SyncHeldStatus; q?: string; page?: number; size?: number } = {}) =>
+  client.get<SyncHeldPage>(`/superadmin/sync/sets/${setId}/drift/held`, { params })
+
+export const downloadHeldCsv = (setId: string) =>
+  client.get<Blob>(`/superadmin/sync/sets/${setId}/drift/held.csv`, { responseType: 'blob' })
 
 /** What repairing one drift item would do, re-checked live. */
 export interface SyncDriftRepairPreviewItem {

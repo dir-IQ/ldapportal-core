@@ -42,6 +42,7 @@ class SyncReconcileSchedulerTest {
     @Mock private SyncContentVerifier verifier;
     @Mock private SyncReconcileHistory history;
     @Mock private SyncDriftStore driftStore;
+    @Mock private SyncHeldStore heldStore;
     @Mock private EntitlementService entitlementService;
 
     private SyncReconcileScheduler scheduler;
@@ -49,7 +50,7 @@ class SyncReconcileSchedulerTest {
     @BeforeEach
     void setUp() {
         scheduler = new SyncReconcileScheduler(syncSetRepo, reconciler, verifier, history,
-                new SyncVerifySnapshot(syncSetRepo, driftStore), entitlementService, 3600L);
+                new SyncVerifySnapshot(syncSetRepo, driftStore, heldStore), entitlementService, 3600L);
         when(entitlementService.has(Entitlement.DIRECTORY_SYNC)).thenReturn(true);
     }
 

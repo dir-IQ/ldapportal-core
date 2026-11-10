@@ -245,9 +245,14 @@ class SyncContentVerifierTest {
         var unsynced = MembershipDecision.in("2", "cn=b,dc=t", List.of(), new byte[0],
                 Map.of(), Map.of("member", List.of("uid=pending,ou=people,dc=s")));
         var clean = MembershipDecision.in("3", "cn=c,dc=t", List.of(), new byte[0], Map.of(), Map.of());
+        Map<String, MembershipDecision> members = new LinkedHashMap<>();
+        members.put("cn=a,dc=t", linked);
+        members.put("cn=b,dc=t", unsynced);
+        members.put("cn=c,dc=t", clean);
 
         // ghost exists nowhere; pending exists on the source but isn't synced yet.
-        var held = SyncContentVerifier.heldReferences(List.of(linked, unsynced, clean),
+        var held = SyncContentVerifier.heldReferences(members,
+                Map.of("cn=a,dc=t", "cn=a,ou=src", "cn=b,dc=t", "cn=b,ou=src"),
                 dn -> !dn.startsWith("uid=ghost"));
 
         assertThat(held.entries()).isEqualTo(2);
@@ -256,6 +261,34 @@ class SyncContentVerifierTest {
         assertThat(held.samples()).extracting(SyncVerifyResult.HeldSample::reference, SyncVerifyResult.HeldSample::dangling)
                 .containsExactly(org.assertj.core.groups.Tuple.tuple("uid=ghost,ou=people,dc=s", true),
                         org.assertj.core.groups.Tuple.tuple("uid=pending,ou=people,dc=s", false));
+        // Every held value is kept for the Drift tab, with the source entry that holds it.
+        assertThat(held.items()).extracting(com.ldapportal.dto.sync.SyncHeldReference::sourceDn,
+                        com.ldapportal.dto.sync.SyncHeldReference::attribute,
+                        com.ldapportal.dto.sync.SyncHeldReference::status)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("cn=a,ou=src", "secDN",
+                                com.ldapportal.entity.enums.SyncHeldStatus.DANGLING),
+                        org.assertj.core.groups.Tuple.tuple("cn=b,ou=src", "member",
+                                com.ldapportal.entity.enums.SyncHeldStatus.UNSYNCED));
+    }
+
+    @org.junit.jupiter.api.Test
+    void heldReferences_keepsEveryValueBeyondTheSamples_andLeavesUnreadOnesUnchecked() {
+        List<String> refs = new java.util.ArrayList<>();
+        for (int i = 0; i < SyncContentVerifier.SAMPLE_LIMIT + 5; i++) {
+            refs.add("uid=u" + i + ",dc=s");
+        }
+        var group = MembershipDecision.in("g", "cn=g,dc=t", List.of(), new byte[0],
+                Map.of("member", refs), Map.of());
+
+        // A read that can't tell (null) is not evidence either way.
+        var held = SyncContentVerifier.heldReferences(Map.of("cn=g,dc=t", group), Map.of(), dn -> null);
+
+        assertThat(held.samples()).hasSize(SyncContentVerifier.SAMPLE_LIMIT);
+        assertThat(held.items()).hasSize(refs.size())
+                .allSatisfy(r -> assertThat(r.status()).isEqualTo(com.ldapportal.entity.enums.SyncHeldStatus.UNCHECKED));
+        assertThat(held.unchecked()).isTrue();
+        assertThat(held.dangling()).isZero();
     }
 
     // ── Drift items ─────────────────────────────────────────────────────────

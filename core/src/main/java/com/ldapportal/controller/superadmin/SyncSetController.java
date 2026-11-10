@@ -330,6 +330,46 @@ public class SyncSetController {
     }
 
     /**
+     * Every held reference the set's last complete content verify found (only the
+     * latest is kept), a page at a time: optionally one {@code status}
+     * (DANGLING, UNSYNCED, UNCHECKED) and matching {@code q}. Not drift.
+     */
+    @GetMapping("/{id}/drift/held")
+    public com.ldapportal.dto.sync.SyncHeldPage heldReferences(@PathVariable UUID id,
+                                                             @RequestParam(required = false) String status,
+                                                             @RequestParam(required = false) String q,
+                                                             @RequestParam(defaultValue = "0") int page,
+                                                             @RequestParam(defaultValue = "50") int size) {
+        return service.heldReferences(id, heldStatus(status), q, page, size);
+    }
+
+    /** The {@code status} param: blank for every status; an unknown name is a 400. */
+    private static com.ldapportal.entity.enums.SyncHeldStatus heldStatus(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return com.ldapportal.entity.enums.SyncHeldStatus.valueOf(raw.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Unknown held-reference status: " + raw
+                    + " (expected DANGLING, UNSYNCED or UNCHECKED)");
+        }
+    }
+
+    /** The stored held references as CSV (see {@code SyncConfigService.writeHeldCsv}). */
+    @GetMapping(value = "/{id}/drift/held.csv", produces = "text/csv")
+    public ResponseEntity<byte[]> heldReferencesCsv(@PathVariable UUID id) {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        Writer writer = new OutputStreamWriter(bytes, StandardCharsets.UTF_8);
+        service.writeHeldCsv(id, writer);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"sync-held-references-" + id + ".csv\"")
+                .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                .body(bytes.toByteArray());
+    }
+
+    /**
      * What repairing these drift items would do, each re-checked live now
      * (create a missing entry, re-apply a drifted one, or skip it and why).
      * Read-only; needs the manage permission because it previews a write.

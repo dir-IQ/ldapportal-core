@@ -74,6 +74,7 @@ class SyncConfigServiceTest {
     @Mock private AuditService auditService;
     @Mock private com.ldapportal.repository.SyncReconcileRunRepository reconcileRunRepo;
     @Mock private com.ldapportal.ldap.sync.SyncDriftStore driftStore;
+    @Mock private com.ldapportal.ldap.sync.SyncHeldStore heldStore;
 
     private SyncConfigService service;
 
@@ -81,8 +82,8 @@ class SyncConfigServiceTest {
     void setUp() {
         service = new SyncConfigService(linkRepo, setRepo, membershipRepo, directoryRepo,
                 reconciler, verifier, enqueuer, previewService, reconcileHistory, engine, auditService,
-                reconcileRunRepo, verifyProgress, driftStore,
-                new com.ldapportal.ldap.sync.SyncVerifySnapshot(setRepo, driftStore));
+                reconcileRunRepo, verifyProgress, driftStore, heldStore,
+                new com.ldapportal.ldap.sync.SyncVerifySnapshot(setRepo, driftStore, heldStore));
     }
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
@@ -262,11 +263,47 @@ class SyncConfigServiceTest {
         when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
         when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(10, 10, 10, 0, 0, 0,
                 List.of(), List.of(), List.of(), true, true, null, true,
-                new SyncVerifyResult.HeldReferences(4, 3, false, List.of())));
+                new SyncVerifyResult.HeldReferences(4, 3, false, List.of(), List.of(held))));
 
         service.verifyContents(setId);
 
         verify(setRepo).recordVerifyHeld(setId, 4, 3);
+        // Every held reference is kept, not only the samples sent back.
+        verify(heldStore).replace(setId, List.of(held));
+    }
+
+    private final com.ldapportal.dto.sync.SyncHeldReference held = new com.ldapportal.dto.sync.SyncHeldReference(
+            "cn=a,dc=t", "cn=a,dc=s", "a", "member", "uid=ghost,dc=s",
+            com.ldapportal.entity.enums.SyncHeldStatus.DANGLING);
+
+    @Test
+    void heldReferences_pagesTheStoredOnes_andFlagsCountsThatPredateThem() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setLastVerifiedAt(java.time.OffsetDateTime.now());
+        set.setVerifyHeldCount(2);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        var none = new java.util.EnumMap<com.ldapportal.entity.enums.SyncHeldStatus, Long>(
+                com.ldapportal.entity.enums.SyncHeldStatus.class);
+        when(heldStore.countsByStatus(setId)).thenReturn(none);
+
+        // A held count but nothing stored: the verify predates the stored list.
+        assertThat(service.heldReferences(setId, null, null, 0, 25).detailsRecorded()).isFalse();
+
+        none.put(com.ldapportal.entity.enums.SyncHeldStatus.DANGLING, 1L);
+        when(heldStore.count(setId, com.ldapportal.entity.enums.SyncHeldStatus.DANGLING, "ghost")).thenReturn(1L);
+        when(heldStore.page(setId, com.ldapportal.entity.enums.SyncHeldStatus.DANGLING, "ghost", 25, 25))
+                .thenReturn(List.of(new com.ldapportal.ldap.sync.SyncHeldStore.Row(7, held)));
+
+        var page = service.heldReferences(setId, com.ldapportal.entity.enums.SyncHeldStatus.DANGLING, "ghost", 1, 25);
+
+        assertThat(page.detailsRecorded()).isTrue();
+        assertThat(page.matched()).isEqualTo(1);
+        assertThat(page.entries()).singleElement().satisfies(e -> {
+            assertThat(e.seq()).isEqualTo(7);
+            assertThat(e.sourceDn()).isEqualTo("cn=a,dc=s");
+            assertThat(e.reference()).isEqualTo("uid=ghost,dc=s");
+        });
     }
 
     @Test
@@ -284,6 +321,7 @@ class SyncConfigServiceTest {
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
         // ...nor replace the stored items with a partial list...
         verify(driftStore, never()).replace(any(), any());
+        verify(heldStore, never()).replace(any(), any());
         // ...but it's noted, so the UI can say the snapshot may be out of date.
         verify(setRepo).recordVerifyIncomplete(eq(setId), any());
     }
