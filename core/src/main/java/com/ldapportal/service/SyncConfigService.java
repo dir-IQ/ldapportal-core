@@ -755,11 +755,26 @@ public class SyncConfigService {
     /** Most drift items one repair (or its preview) takes: one page of the Drift tab. */
     static final int MAX_DRIFT_REPAIR = MAX_DRIFT_PAGE;
 
-    /** One stored drift item and what its live re-check decided. */
-    private record PlannedRepair(com.ldapportal.ldap.sync.SyncDriftStore.Row row,
-                                 com.ldapportal.dto.sync.SyncDriftRepairPreview.Action action,
+    /** One chosen drift item and what its live re-check decided ({@code row} null: no longer stored). */
+    private record PlannedRepair(Chosen chosen, com.ldapportal.dto.sync.SyncDriftRepairPreview.Action action,
                                  com.ldapportal.ldap.sync.SyncContentVerifier.Recheck recheck, String reason) {
+        com.ldapportal.ldap.sync.SyncDriftStore.Row row() {
+            return chosen.row();
+        }
     }
+
+    /**
+     * A drift item as the caller chose it: its position in the verify they
+     * loaded ({@code seq}, which every result reports it under), the target DN
+     * they saw, and its row in the stored verify now, or null when that no
+     * longer lists it.
+     */
+    private record Chosen(int seq, String targetDn, com.ldapportal.ldap.sync.SyncDriftStore.Row row) {
+    }
+
+    /** Why a chosen item is skipped when a newer verify no longer lists it. */
+    static final String NO_LONGER_LISTED = "The latest content check (it ran after you loaded the list) no longer "
+            + "lists it as drift.";
 
     /**
      * What repairing these drift items would do, each re-checked live against
@@ -768,12 +783,23 @@ public class SyncConfigService {
      */
     public com.ldapportal.dto.sync.SyncDriftRepairPreview previewDriftRepair(UUID syncSetId, List<Integer> seqs,
                                                                            java.time.OffsetDateTime verifiedAt) {
-        requireCurrentVerify(requireSet(syncSetId), verifiedAt);
-        return new com.ldapportal.dto.sync.SyncDriftRepairPreview(planRepair(syncSetId, seqs).stream()
-                .map(p -> new com.ldapportal.dto.sync.SyncDriftRepairPreview.Item(p.row().seq(), p.action(),
+        return previewDriftRepair(syncSetId, seqs, verifiedAt, null);
+    }
+
+    /**
+     * As above, with each item's stored target DN ({@code targetDns}, in the
+     * order of {@code seqs}), so a selection made from an older verify than the
+     * stored one still finds its entries (see {@link #choose}).
+     */
+    public com.ldapportal.dto.sync.SyncDriftRepairPreview previewDriftRepair(UUID syncSetId, List<Integer> seqs,
+                                                                           java.time.OffsetDateTime verifiedAt,
+                                                                           List<String> targetDns) {
+        List<Chosen> chosen = choose(syncSetId, requireSet(syncSetId), seqs, verifiedAt, targetDns);
+        return new com.ldapportal.dto.sync.SyncDriftRepairPreview(planRepair(syncSetId, chosen).stream()
+                .map(p -> new com.ldapportal.dto.sync.SyncDriftRepairPreview.Item(p.chosen().seq(), p.action(),
                         p.recheck() != null && p.recheck().targetDn() != null ? p.recheck().targetDn()
-                                : p.row().item().targetDn(),
-                        p.row().item().sourceDn(),
+                                : p.chosen().targetDn(),
+                        p.row() != null ? p.row().item().sourceDn() : null,
                         p.recheck() != null ? p.recheck().attributes() : List.of(), p.reason()))
                 .toList());
     }
@@ -790,9 +816,16 @@ public class SyncConfigService {
     public com.ldapportal.dto.sync.SyncDriftRepairResult repairDrift(UUID syncSetId, List<Integer> seqs,
                                                                    java.time.OffsetDateTime verifiedAt,
                                                                    AuthPrincipal principal) {
+        return repairDrift(syncSetId, seqs, verifiedAt, null, principal);
+    }
+
+    /** As above, with each item's stored target DN (see {@link #previewDriftRepair(UUID, List, java.time.OffsetDateTime, List)}). */
+    public com.ldapportal.dto.sync.SyncDriftRepairResult repairDrift(UUID syncSetId, List<Integer> seqs,
+                                                                   java.time.OffsetDateTime verifiedAt,
+                                                                   List<String> targetDns,
+                                                                   AuthPrincipal principal) {
         SyncSet set = requireSet(syncSetId);
-        requireCurrentVerify(set, verifiedAt);
-        List<PlannedRepair> plan = planRepair(syncSetId, seqs);
+        List<PlannedRepair> plan = planRepair(syncSetId, choose(syncSetId, set, seqs, verifiedAt, targetDns));
         var toRun = plan.stream().filter(p -> p.action() != com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.SKIP)
                 .toList();
         UUID targetDirectoryId = linkRepo.findById(set.getLinkId()).map(SyncLink::getTargetDirId).orElse(null);
@@ -802,12 +835,12 @@ public class SyncConfigService {
         List<com.ldapportal.ldap.sync.SyncDriftStore.Row> fixed = new ArrayList<>();
         int created = 0, reapplied = 0, inSync = 0, skipped = 0, held = 0, failed = 0;
         for (PlannedRepair p : plan) {
-            int seq = p.row().seq();
+            int seq = p.chosen().seq();
             if (p.action() == com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.SKIP) {
                 skipped++;
                 items.add(new com.ldapportal.dto.sync.SyncDriftRepairResult.Item(seq,
-                        com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome.SKIPPED, p.row().item().targetDn(), p.reason()));
-                if (p.recheck() != null && p.recheck().state()
+                        com.ldapportal.dto.sync.SyncDriftRepairResult.Outcome.SKIPPED, p.chosen().targetDn(), p.reason()));
+                if (p.row() != null && p.recheck() != null && p.recheck().state()
                         == com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.IN_SYNC) {
                     fixed.add(p.row());
                 }
@@ -895,18 +928,30 @@ public class SyncConfigService {
      */
     public com.ldapportal.dto.sync.SyncOrphanDeletePreview previewOrphanDelete(UUID syncSetId, List<Integer> seqs,
                                                                              java.time.OffsetDateTime verifiedAt) {
-        requireCurrentVerify(requireSet(syncSetId), verifiedAt);
+        return previewOrphanDelete(syncSetId, seqs, verifiedAt, null);
+    }
+
+    /** As above, with each item's stored target DN (see {@link #choose}). */
+    public com.ldapportal.dto.sync.SyncOrphanDeletePreview previewOrphanDelete(UUID syncSetId, List<Integer> seqs,
+                                                                             java.time.OffsetDateTime verifiedAt,
+                                                                             List<String> targetDns) {
         List<com.ldapportal.dto.sync.SyncOrphanDeletePreview.Item> items = new ArrayList<>();
-        for (var row : storedRows(syncSetId, seqs)) {
+        for (Chosen c : choose(syncSetId, requireSet(syncSetId), seqs, verifiedAt, targetDns)) {
+            if (c.row() == null) {
+                items.add(new com.ldapportal.dto.sync.SyncOrphanDeletePreview.Item(c.seq(),
+                        com.ldapportal.dto.sync.SyncOrphanDeletePreview.Action.SKIP, c.targetDn(), NO_LONGER_LISTED));
+                continue;
+            }
+            var row = c.row();
             String dn = row.item().targetDn();
             if (row.item().category() != com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN) {
-                items.add(new com.ldapportal.dto.sync.SyncOrphanDeletePreview.Item(row.seq(),
+                items.add(new com.ldapportal.dto.sync.SyncOrphanDeletePreview.Item(c.seq(),
                         com.ldapportal.dto.sync.SyncOrphanDeletePreview.Action.SKIP, dn,
                         "Only orphaned entries are deleted here; repair this one instead."));
                 continue;
             }
             var check = orphanCheck(syncSetId, dn, false);
-            items.add(new com.ldapportal.dto.sync.SyncOrphanDeletePreview.Item(row.seq(),
+            items.add(new com.ldapportal.dto.sync.SyncOrphanDeletePreview.Item(c.seq(),
                     check.outcome() == com.ldapportal.dto.sync.SyncPreviewAction.DELETE
                             ? com.ldapportal.dto.sync.SyncOrphanDeletePreview.Action.DELETE
                             : com.ldapportal.dto.sync.SyncOrphanDeletePreview.Action.SKIP,
@@ -927,22 +972,36 @@ public class SyncConfigService {
     public com.ldapportal.dto.sync.SyncOrphanDeleteResult deleteOrphans(UUID syncSetId, List<Integer> seqs,
                                                                       java.time.OffsetDateTime verifiedAt,
                                                                       String confirm, AuthPrincipal principal) {
+        return deleteOrphans(syncSetId, seqs, verifiedAt, null, confirm, principal);
+    }
+
+    /** As above, with each item's stored target DN (see {@link #choose}). */
+    public com.ldapportal.dto.sync.SyncOrphanDeleteResult deleteOrphans(UUID syncSetId, List<Integer> seqs,
+                                                                      java.time.OffsetDateTime verifiedAt,
+                                                                      List<String> targetDns,
+                                                                      String confirm, AuthPrincipal principal) {
         SyncSet set = requireSet(syncSetId);
         if (!com.ldapportal.dto.sync.SyncOrphanDeleteRequest.CONFIRM_WORD.equals(confirm)) {
             throw new IllegalArgumentException("Type " + com.ldapportal.dto.sync.SyncOrphanDeleteRequest.CONFIRM_WORD
                     + " to confirm deleting entries from the target.");
         }
-        requireCurrentVerify(set, verifiedAt);
-        var rows = storedRows(syncSetId, seqs);
+        List<Chosen> chosen = choose(syncSetId, set, seqs, verifiedAt, targetDns);
         SyncAuditLabels labels = SyncAuditLabels.of(set, linkRepo, directoryRepo);
         List<com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item> items = new ArrayList<>();
         List<com.ldapportal.ldap.sync.SyncDriftStore.Row> gone = new ArrayList<>();
         int deleted = 0, skipped = 0, failed = 0;
-        for (var row : rows) {
+        for (Chosen c : chosen) {
+            if (c.row() == null) {
+                skipped++;
+                items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(c.seq(),
+                        com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.SKIPPED, c.targetDn(), NO_LONGER_LISTED));
+                continue;
+            }
+            var row = c.row();
             String dn = row.item().targetDn();
             if (row.item().category() != com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN) {
                 skipped++;
-                items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(row.seq(),
+                items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(c.seq(),
                         com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.SKIPPED, dn,
                         "Only orphaned entries are deleted here; repair this one instead."));
                 continue;
@@ -952,7 +1011,7 @@ public class SyncConfigService {
                 case DELETE -> {
                     deleted++;
                     gone.add(row);
-                    items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(row.seq(),
+                    items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(c.seq(),
                             com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.DELETED, dn, null));
                     if (principal != null && r.targetDirectoryId() != null) {
                         Map<String, Object> detail = new java.util.LinkedHashMap<>();
@@ -965,12 +1024,12 @@ public class SyncConfigService {
                 }
                 case ERROR -> {
                     failed++;
-                    items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(row.seq(),
+                    items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(c.seq(),
                             com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.FAILED, dn, r.message()));
                 }
                 default -> {
                     skipped++;
-                    items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(row.seq(),
+                    items.add(new com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item(c.seq(),
                             com.ldapportal.dto.sync.SyncOrphanDeleteResult.Outcome.SKIPPED, dn, r.message()));
                     if (r.alreadyGone()) {
                         gone.add(row);
@@ -1000,36 +1059,52 @@ public class SyncConfigService {
     }
 
     /**
-     * The stored rows for a repair or delete selection: at least one item, at
-     * most {@value #MAX_DRIFT_REPAIR}, and still stored.
+     * Resolve a repair or delete selection (at least one item, at most
+     * {@value #MAX_DRIFT_REPAIR}) against the stored verify. Chosen from the
+     * stored one ({@code verifiedAt} is its time): each item by position.
+     * Chosen from an older one, whose positions a newer verify has renumbered:
+     * each item by the target DN the caller saw ({@code targetDns}, in the
+     * order of {@code seqs}), so it's never another entry, and one the newer
+     * verify no longer lists comes back with no row. Without target DNs such a
+     * selection is refused. Each item is re-checked live before anything is
+     * written, so acting on the newer verify's row is as safe as on the old one.
      */
-    private List<com.ldapportal.ldap.sync.SyncDriftStore.Row> storedRows(UUID syncSetId, List<Integer> seqs) {
-        List<Integer> wanted = seqs == null ? List.of() : seqs.stream().filter(java.util.Objects::nonNull).distinct().toList();
-        if (wanted.isEmpty()) {
+    private List<Chosen> choose(UUID syncSetId, SyncSet set, List<Integer> seqs,
+                                java.time.OffsetDateTime verifiedAt, List<String> targetDns) {
+        if (seqs == null || seqs.stream().noneMatch(java.util.Objects::nonNull)) {
             throw new IllegalArgumentException("Choose at least one drift item.");
+        }
+        boolean withDns = targetDns != null && targetDns.size() == seqs.size();
+        Map<Integer, String> wanted = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < seqs.size(); i++) {
+            if (seqs.get(i) != null) {
+                wanted.putIfAbsent(seqs.get(i), withDns ? targetDns.get(i) : null);
+            }
         }
         if (wanted.size() > MAX_DRIFT_REPAIR) {
             throw new IllegalArgumentException("At most " + MAX_DRIFT_REPAIR + " drift items can be handled at once.");
         }
-        var rows = driftStore.bySeq(syncSetId, wanted);
-        if (rows.isEmpty()) {
-            throw new IllegalArgumentException("Those drift items are no longer stored; verify again and retry.");
-        }
-        return rows;
-    }
-
-    /**
-     * Refuse a selection made from an older verify than the stored one. Item
-     * positions are renumbered by every complete verify, so without this a
-     * verify landing between loading the Drift tab (or its preview) and acting
-     * would repair or delete entries the operator never chose.
-     */
-    private static void requireCurrentVerify(SyncSet set, java.time.OffsetDateTime verifiedAt) {
         java.time.OffsetDateTime stored = set.getLastVerifiedAt();
-        if (verifiedAt == null || stored == null || !stored.isEqual(verifiedAt)) {
+        if (verifiedAt != null && stored != null && stored.isEqual(verifiedAt)) {
+            var rows = driftStore.bySeq(syncSetId, wanted.keySet());
+            if (rows.isEmpty()) {
+                throw new IllegalArgumentException("Those drift items are no longer stored; verify again and retry.");
+            }
+            return rows.stream().map(r -> new Chosen(r.seq(), r.item().targetDn(), r)).toList();
+        }
+        if (!withDns || stored == null || wanted.values().stream().anyMatch(java.util.Objects::isNull)) {
             throw new IllegalArgumentException("The drift list changed since you loaded it (a newer content check ran);"
                     + " reload it and choose again.");
         }
+        Map<String, com.ldapportal.ldap.sync.SyncDriftStore.Row> byDn = new java.util.HashMap<>();
+        driftStore.byTargetDn(syncSetId, wanted.values())
+                .forEach(r -> byDn.putIfAbsent(r.item().targetDn().toLowerCase(java.util.Locale.ROOT), r));
+        List<Chosen> out = new ArrayList<>();
+        wanted.forEach((seq, dn) -> out.add(new Chosen(seq, dn, byDn.get(dn.toLowerCase(java.util.Locale.ROOT)))));
+        log.info("Sync set {}: drift selection from an older verify ({}) matched by target DN against the stored "
+                + "one ({}): {} of {} still listed", syncSetId, verifiedAt, stored,
+                out.stream().filter(c -> c.row() != null).count(), out.size());
+        return out;
     }
 
     /**
@@ -1044,35 +1119,39 @@ public class SyncConfigService {
                 left.getOrDefault(com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH, 0L).intValue());
     }
 
-    private List<PlannedRepair> planRepair(UUID syncSetId, List<Integer> seqs) {
-        List<com.ldapportal.ldap.sync.SyncDriftStore.Row> rows = storedRows(syncSetId, seqs);
-        var repairable = rows.stream().filter(r -> r.item().category() != com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN
-                && r.item().sourceDn() != null).toList();
-        var rechecks = verifier.recheck(syncSetId, repairable.stream().map(r -> r.item().sourceDn()).toList());
+    private List<PlannedRepair> planRepair(UUID syncSetId, List<Chosen> chosen) {
+        var repairable = chosen.stream().filter(c -> c.row() != null
+                && c.row().item().category() != com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN
+                && c.row().item().sourceDn() != null).toList();
+        var rechecks = verifier.recheck(syncSetId, repairable.stream().map(c -> c.row().item().sourceDn()).toList());
         Map<Integer, com.ldapportal.ldap.sync.SyncContentVerifier.Recheck> bySeq = new java.util.HashMap<>();
         for (int i = 0; i < repairable.size(); i++) {
             bySeq.put(repairable.get(i).seq(), rechecks.get(i));
         }
-        List<PlannedRepair> out = new ArrayList<>(rows.size());
-        for (var row : rows) {
+        List<PlannedRepair> out = new ArrayList<>(chosen.size());
+        for (var c : chosen) {
             var skip = com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.SKIP;
-            if (row.item().category() == com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN) {
-                out.add(new PlannedRepair(row, skip, null,
+            if (c.row() == null) {
+                out.add(new PlannedRepair(c, skip, null, NO_LONGER_LISTED));
+                continue;
+            }
+            if (c.row().item().category() == com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN) {
+                out.add(new PlannedRepair(c, skip, null,
                         "An orphaned entry has no source member to repair it from."));
                 continue;
             }
-            var rc = bySeq.get(row.seq());
+            var rc = bySeq.get(c.seq());
             if (rc == null) {
-                out.add(new PlannedRepair(row, skip, null, "No source member was recorded for it."));
+                out.add(new PlannedRepair(c, skip, null, "No source member was recorded for it."));
                 continue;
             }
             switch (rc.state()) {
-                case MISSING -> out.add(new PlannedRepair(row,
+                case MISSING -> out.add(new PlannedRepair(c,
                         com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.CREATE, rc, null));
-                case MISMATCH -> out.add(new PlannedRepair(row,
+                case MISMATCH -> out.add(new PlannedRepair(c,
                         com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.REAPPLY, rc, null));
-                case IN_SYNC -> out.add(new PlannedRepair(row, skip, rc, "It no longer drifts."));
-                default -> out.add(new PlannedRepair(row, skip, rc, rc.note()));
+                case IN_SYNC -> out.add(new PlannedRepair(c, skip, rc, "It no longer drifts."));
+                default -> out.add(new PlannedRepair(c, skip, rc, rc.note()));
             }
         }
         return out;

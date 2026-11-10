@@ -258,6 +258,30 @@ describe('SyncDriftPanel', () => {
     expect(w.text()).not.toContain('Compare in Directory Diff')
   })
 
+  it('a check it didn\'t start reloads the items in place, keeping the filter and re-selecting by DN', async () => {
+    const w = mountPanel({ canManage: true })
+    await flushPromises()
+    await btn(w, 'Content drift').trigger('click')
+    await flushPromises()
+    await selectRow(w, 2)
+    vi.mocked(syncApi.getDrift).mockClear()
+    // The newer check renumbered the same entry from 2 to 9.
+    vi.mocked(syncApi.getDrift).mockResolvedValueOnce({ data: page({
+      verifiedAt: '2026-11-05T09:00:00Z', counts: { MISSING: 0, ORPHAN: 0, MISMATCH: 1 }, matched: 1,
+      entries: [{ seq: 9, category: 'MISMATCH', targetDn: 'uid=js,ou=people,dc=hr', sourceDn: 'uid=js,ou=staff,dc=corp',
+        identity: 'js', attributes: [] }],
+    }) } as never)
+
+    await w.setProps({ reloadKey: 1 })
+    await flushPromises()
+
+    expect(syncApi.getDrift).toHaveBeenCalledTimes(1)
+    expect(syncApi.getDrift).toHaveBeenCalledWith('set-1', expect.objectContaining({ category: 'MISMATCH', page: 0 }))
+    expect(btn(w, 'Content drift').attributes('aria-pressed')).toBe('true')
+    expect((w.find('[data-testid="drift-row-9"] input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
+    expect(w.find('[data-testid="drift-bulk"]').text()).toContain('1 selected')
+  })
+
   describe('held references', () => {
     const withHeld = () => vi.mocked(syncApi.getDrift).mockResolvedValue(
       { data: page({ held: { DANGLING: 1, UNSYNCED: 30, UNCHECKED: 0 } }) } as never)
@@ -344,10 +368,13 @@ describe('SyncDriftPanel', () => {
       await flushPromises()
       const success = vi.spyOn(useNotificationStore(), 'success')
 
+      await selectRow(w, 0)
       await selectRow(w, 2)
-      await btn(w, 'Repair (1)').trigger('click')
+      await btn(w, 'Repair (2)').trigger('click')
       await flushPromises()
-      expect(syncApi.previewDriftRepair).toHaveBeenCalledWith('set-1', [2], AT)
+      // With each chosen row's target DN, in case a newer check renumbers them meanwhile.
+      expect(syncApi.previewDriftRepair).toHaveBeenCalledWith('set-1', [0, 2], AT,
+        ['uid=pn,ou=people,dc=hr', 'uid=js,ou=people,dc=hr'])
       const groups = (k: string) => w.find(`[data-testid="repair-group-${k}"]`).text().replace(/\s+/g, ' ')
       expect(groups('create')).toContain('1 to create on the target')
       expect(groups('reapply')).toContain('1 to re-apply from the source')
@@ -358,7 +385,8 @@ describe('SyncDriftPanel', () => {
       await btn(w, 'Repair 2').trigger('click')
       await flushPromises()
 
-      expect(syncApi.repairDrift).toHaveBeenCalledWith('set-1', [0, 2], AT)
+      expect(syncApi.repairDrift).toHaveBeenCalledWith('set-1', [0, 2], AT,
+        ['uid=pn,ou=people,dc=hr', 'uid=js,ou=people,dc=hr'])
       expect(success).toHaveBeenCalledWith('Repair finished: 1 created, 1 re-applied')
       expect(w.emitted('changed')).toHaveLength(1)
       expect(syncApi.getDrift).toHaveBeenCalledTimes(2) // reloaded
@@ -373,11 +401,12 @@ describe('SyncDriftPanel', () => {
 
       await btn(w, 'Repair (2)').trigger('click')
       await flushPromises()
-      expect(syncApi.previewDriftRepair).toHaveBeenCalledWith('set-1', [0, 2], AT)
+      expect(syncApi.previewDriftRepair).toHaveBeenCalledWith('set-1', [0, 2], AT,
+        ['uid=pn,ou=people,dc=hr', 'uid=js,ou=people,dc=hr'])
 
       await btn(w, 'Delete (1)').trigger('click')
       await flushPromises()
-      expect(syncApi.previewOrphanDelete).toHaveBeenCalledWith('set-1', [1], AT)
+      expect(syncApi.previewOrphanDelete).toHaveBeenCalledWith('set-1', [1], AT, ['uid=old,ou=people,dc=hr'])
     })
 
     it('warns with the reason when something was held or failed', async () => {
@@ -466,7 +495,7 @@ describe('SyncDriftPanel', () => {
       await selectRow(w, 1)
       await btn(w, 'Delete (1)').trigger('click')
       await flushPromises()
-      expect(syncApi.previewOrphanDelete).toHaveBeenCalledWith('set-1', [1], AT)
+      expect(syncApi.previewOrphanDelete).toHaveBeenCalledWith('set-1', [1], AT, ['uid=old,ou=people,dc=hr'])
       expect(w.find('[data-testid="delete-group-delete"]').text()).toContain('1 to delete from the target')
       expect(w.find('[data-testid="delete-group-skip"]').text()).toContain('This set now manages it.')
       const go = () => btn(w, 'Delete 1')
@@ -479,7 +508,7 @@ describe('SyncDriftPanel', () => {
       await go().trigger('click')
       await flushPromises()
 
-      expect(syncApi.deleteOrphans).toHaveBeenCalledWith('set-1', [1], AT, 'DELETE')
+      expect(syncApi.deleteOrphans).toHaveBeenCalledWith('set-1', [1], AT, 'DELETE', ['uid=old,ou=people,dc=hr'])
       expect(success).toHaveBeenCalledWith('Delete finished: 1 deleted')
       expect(w.emitted('changed')).toHaveLength(1)
       expect(w.find('[data-testid="delete-preview"]').exists()).toBe(false)
