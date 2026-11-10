@@ -31,6 +31,7 @@ import com.ldapportal.ldap.LdapBrowseService;
 import com.ldapportal.ldap.LdapGroupService;
 import com.ldapportal.ldap.LdapSchemaService;
 import com.ldapportal.ldap.LdapUserService;
+import com.ldapportal.ldap.model.LdapGroup;
 import com.ldapportal.ldap.model.LdapUser;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.service.AuditService;
@@ -653,6 +654,43 @@ class LdapOperationServiceTest {
         assertThat(page.total()).isEqualTo(4);
         assertThat(page.totalIsLowerBound()).isFalse();
         verify(userService, never()).countUsers(any(), anyString(), any(), anyLong());
+    }
+
+    @Test
+    void searchUsersPage_includeGroups_namesDirectAndNestedGroupsTheCallerCanSee() {
+        DirectoryConnection dc = singleOuDirectory();
+        String groupsOu = "ou=Groups,dc=example,dc=com";
+        String alice = "cn=alice," + USERS_OU;
+        when(userService.searchUsers(eq(dc), anyString(), eq(USERS_OU), eq(11), any(String[].class)))
+                .thenReturn(List.of(new LdapUser(alice, Map.of("uid", List.of("alice")))));
+        when(permissionService.resolveGroupSearchBaseDns(any(), eq(dirId))).thenReturn(List.of(groupsOu));
+        // alice is in devs directly, devs is in engineering, and posix lists her by uid.
+        LdapGroup devs = new LdapGroup("cn=devs," + groupsOu,
+                Map.of("cn", List.of("devs"), "member", List.of(alice)));
+        LdapGroup engineering = new LdapGroup("cn=engineering," + groupsOu,
+                Map.of("cn", List.of("engineering"), "member", List.of("cn=devs," + groupsOu)));
+        LdapGroup posix = new LdapGroup("cn=posix," + groupsOu,
+                Map.of("cn", List.of("posix"), "memberuid", List.of("alice")));
+        when(groupService.searchGroups(eq(dc), anyString(), eq(groupsOu), any(String[].class)))
+                .thenReturn(List.of(engineering, devs, posix));
+
+        UserSearchPage page = service.searchUsersPage(dirId, adminPrincipal(), null, null, 10, new String[0], true);
+
+        assertThat(page.groups()).containsOnlyKeys(alice);
+        assertThat(page.groups().get(alice)).containsExactly(
+                "cn=devs," + groupsOu, "cn=posix," + groupsOu, "cn=engineering," + groupsOu);
+    }
+
+    @Test
+    void searchUsersPage_withoutIncludeGroups_neitherScansGroupsNorReturnsThem() {
+        DirectoryConnection dc = singleOuDirectory();
+        when(userService.searchUsers(eq(dc), anyString(), eq(USERS_OU), eq(11), any(String[].class)))
+                .thenReturn(people(USERS_OU, 2));
+
+        UserSearchPage page = service.searchUsersPage(dirId, adminPrincipal(), null, null, 10, new String[0]);
+
+        assertThat(page.groups()).isNull();
+        verify(groupService, never()).searchGroups(any(), anyString(), any(), any(String[].class));
     }
 
     @Test

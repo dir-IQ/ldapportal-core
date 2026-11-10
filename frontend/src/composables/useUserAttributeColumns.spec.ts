@@ -16,11 +16,12 @@ describe('buildUserAttributeColumns', () => {
     expect(cols[0]).toMatchObject({ key: 'dn', label: 'dn', alwaysVisible: true, lockPosition: true })
   })
 
-  it('drops secrets, raw membership attributes and a duplicate dn', () => {
+  it('drops secrets and a duplicate dn, and offers memberOf / isMemberOf hidden', () => {
     const cols = buildUserAttributeColumns(
       ['dn', 'cn', 'userPassword', 'unicodepwd;binary', 'memberOf', 'ismemberof', 'mail'])
 
-    expect(cols.map(c => c.key)).toEqual(['dn', 'cn', 'mail'])
+    expect(cols.map(c => c.key)).toEqual(['dn', 'cn', 'mail', 'ismemberof', 'memberOf'])
+    expect(cols.filter(c => c.defaultHidden).map(c => c.key)).toEqual(['ismemberof', 'memberOf'])
   })
 
   it('heads columns by schema casing, then known default casing, then as given', () => {

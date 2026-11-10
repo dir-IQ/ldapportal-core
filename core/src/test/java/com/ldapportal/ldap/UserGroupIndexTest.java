@@ -16,7 +16,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** {@link UserGroupIndex}: a user's direct groups, worked out from the group entries. */
+/** {@link UserGroupIndex}: a user's direct and nested groups, worked out from the group entries. */
 class UserGroupIndexTest {
 
     private static final String JSMITH = "uid=jsmith,ou=people,dc=x";
@@ -54,10 +54,50 @@ class UserGroupIndexTest {
     }
 
     @Test
-    void withColumn_putsTheGroupsColumnLast_replacingAnAttributeOfThatName() {
-        assertThat(UserGroupIndex.withColumn(List.of("dn", "Groups", "mail")))
-                .containsExactly("dn", "mail", UserGroupIndex.COLUMN);
-        assertThat(UserGroupIndex.withColumn(List.of())).containsExactly("groups");
+    void withColumns_putsTheGroupsColumnsLast_replacingAttributesOfThoseNames() {
+        assertThat(UserGroupIndex.withColumns(List.of("dn", "Groups", "mail", "AllGroups")))
+                .containsExactly("dn", "mail", UserGroupIndex.COLUMN, UserGroupIndex.ALL_COLUMN);
+        assertThat(UserGroupIndex.withColumns(List.of())).containsExactly("groups", "allgroups");
+    }
+
+    // ── Nesting ──────────────────────────────────────────────────────────────
+
+    @Test
+    void allGroupsOf_followsNesting_directFirstThenEachLevelOutwards() {
+        UserGroupIndex index = UserGroupIndex.of(List.of(
+                group("cn=company,ou=g,dc=x", "company", "member", "cn=engineering,ou=g,dc=x"),
+                group("cn=engineering,ou=g,dc=x", "engineering", "uniqueMember", "CN=Devs,OU=g,DC=x"),
+                group("cn=devs,ou=g,dc=x", "devs", "member", JSMITH),
+                group("cn=posix,ou=g,dc=x", "posix", "memberUid", "jsmith"),
+                group("cn=unrelated,ou=g,dc=x", "unrelated", "member", "uid=adoe,ou=people,dc=x")));
+
+        assertThat(index.groupsOf(JSMITH, "jsmith")).containsExactly("devs", "posix");
+        assertThat(index.allGroupsOf(JSMITH, "jsmith")).containsExactly("devs", "posix", "engineering", "company");
+        assertThat(index.allGroupDnsOf(JSMITH, "jsmith")).containsExactly(
+                "cn=devs,ou=g,dc=x", "cn=posix,ou=g,dc=x", "cn=engineering,ou=g,dc=x", "cn=company,ou=g,dc=x");
+        assertThat(index.allCell(JSMITH, "jsmith")).isEqualTo("devs|posix|engineering|company");
+        // The import-facing cell stays direct-only.
+        assertThat(index.cell(JSMITH, "jsmith")).isEqualTo("devs|posix");
+    }
+
+    @Test
+    void allGroupsOf_followsAMembershipCycleOnce() {
+        UserGroupIndex index = UserGroupIndex.of(List.of(
+                group("cn=a,ou=g,dc=x", "a", "member", JSMITH, "cn=b,ou=g,dc=x"),
+                group("cn=b,ou=g,dc=x", "b", "member", "cn=a,ou=g,dc=x")));
+
+        assertThat(index.allGroupsOf(JSMITH, null)).containsExactly("a", "b");
+    }
+
+    @Test
+    void allGroupsOf_stopsAtGroupsThatWereNotIndexed() {
+        // engineering (outside the caller's bases) isn't indexed, so company,
+        // which lists it, is reached only through it and isn't named.
+        UserGroupIndex index = UserGroupIndex.of(List.of(
+                group("cn=devs,ou=g,dc=x", "devs", "member", JSMITH),
+                group("cn=company,ou=g,dc=x", "company", "member", "cn=engineering,ou=hidden,dc=x")));
+
+        assertThat(index.allGroupsOf(JSMITH, null)).containsExactly("devs");
     }
 
     @Test
