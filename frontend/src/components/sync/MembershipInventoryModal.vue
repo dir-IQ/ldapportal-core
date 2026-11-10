@@ -48,6 +48,7 @@
 
       <div v-if="tab === 'drift' && set" id="sync-panel-drift" role="tabpanel" aria-labelledby="sync-tab-drift">
         <SyncDriftPanel :set="set" :live="verifyResult" :verifying="verifying" :refresh-key="driftKey"
+                        :reload-key="driftReloadKey"
                         :can-diff="canDiff" :source-directory-id="sourceDirectoryId ?? null"
                         :target-directory-id="targetDirectoryId ?? null" :can-manage="canManageSync"
                         @verify="verify" @changed="emit('changed')" />
@@ -279,6 +280,15 @@ const tabs: Array<{ id: Tab; label: string }> = [
 ]
 // Bumped when a content check finishes, so the Drift tab reloads its stored items.
 const driftKey = ref(0)
+/**
+ * Bumped when a content check this inventory didn't start completes (the one a
+ * reconcile ends with): the Drift tab reloads its items in place.
+ */
+const driftReloadKey = ref(0)
+/** The last completed check seen, so each one reloads the Drift tab once. */
+let lastVerifyRunId: string | null | undefined
+/** After a run finishes, until when (server time) to look for the check it ends with. */
+const postRunWatchUntil = ref<number>(0)
 /** Drift at the last complete content check, for the tab's badge. */
 const driftTotal = computed<number>(() => {
   const v = props.set?.verify
@@ -504,6 +514,8 @@ async function verify() {
     notif.error(errMsg(e))
   } finally {
     verifying.value = false
+    // This check already reloaded the Drift tab (driftKey): just note it.
+    lastVerifyRunId = undefined
     void refreshActivity()
   }
 }
@@ -539,7 +551,30 @@ const reconcileRunning = computed<boolean>(() => activity.value?.reconcile?.stat
 const verifyRunning = computed<boolean>(() =>
   activity.value?.verify?.status === 'RUNNING' && (verifying.value || reconciling.value))
 const needsWatch = computed<boolean>(() =>
-  reconciling.value || verifying.value || !!awaitingRun.value || reconcileRunning.value)
+  reconciling.value || verifying.value || !!awaitingRun.value || reconcileRunning.value
+  || activity.value?.verify?.status === 'RUNNING' || serverNow() < postRunWatchUntil.value)
+
+/** How long after a run to look for the content check it ends with (it starts once the run is done). */
+const POST_RUN_VERIFY_WAIT_MS = 90_000
+
+/**
+ * A content check completed that this inventory didn't run (the one after a
+ * scheduled or manual reconcile): reload the Drift tab, whose stored items it
+ * just replaced. The first read only notes the latest one.
+ */
+function noteVerify(data: SyncSetActivity) {
+  const v = data.verify
+  const done = v && v.status === 'COMPLETE' ? v.runId : null
+  if (lastVerifyRunId === undefined || verifying.value) {
+    lastVerifyRunId = done
+    return
+  }
+  if (done && done !== lastVerifyRunId) {
+    lastVerifyRunId = done
+    postRunWatchUntil.value = 0
+    driftReloadKey.value++
+  }
+}
 
 async function refreshActivity() {
   if (!props.set || !show.value) return
@@ -548,6 +583,7 @@ async function refreshActivity() {
     const wasRunning = reconcileRunning.value
     activity.value = data
     clockOffset.value = data.asOf ? Date.parse(data.asOf) - Date.now() : 0
+    noteVerify(data)
     if (awaitingRun.value) {
       checkRunDone(data)
     } else if (wasRunning && !reconcileRunning.value) {
@@ -578,6 +614,7 @@ function stopWatching() {
 
 /** The rows, chips and Not in set as a finished run left them. */
 function refreshAfterRun() {
+  postRunWatchUntil.value = serverNow() + POST_RUN_VERIFY_WAIT_MS
   historyKey.value++
   void load()
   void loadNotInSet()
@@ -665,6 +702,8 @@ watch([show, () => props.set?.id], ([open]) => {
     notInSet.value = null
     awaitingRun.value = null
     reconciling.value = false
+    lastVerifyRunId = undefined
+    postRunWatchUntil.value = 0
     historyKey.value++
     selected.value = new Set()
     load()

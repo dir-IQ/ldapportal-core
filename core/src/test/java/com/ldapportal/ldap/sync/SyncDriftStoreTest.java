@@ -152,4 +152,15 @@ class SyncDriftStoreTest {
         assertThat(store.page(set, null, null, 0, 10)).extracting(r -> r.item().targetDn())
                 .containsExactly(orphan("z").targetDn(), orphan("a").targetDn());
     }
+
+    @Test
+    void byTargetDn_findsTheStoredItems_caseInsensitively() {
+        UUID set = UUID.randomUUID();
+        store.replace(set, List.of(missing("pn"), orphan("old"), mismatch("jo", "Lead")));
+
+        assertThat(store.byTargetDn(set, List.of("UID=JO,ou=people,dc=t", "uid=nobody,ou=people,dc=t")))
+                .extracting(SyncDriftStore.Row::seq).containsExactly(2);
+        assertThat(store.byTargetDn(set, List.of())).isEmpty();
+        assertThat(store.byTargetDn(UUID.randomUUID(), List.of("uid=jo,ou=people,dc=t"))).isEmpty();
+    }
 }

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background, the Drift tab laid out like the Reconciliation tab with bulk-only actions, every held reference listed and exportable from the Drift tab, entries viewed in place from the Drift tab; 2026-11-10).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background, the Drift tab laid out like the Reconciliation tab with bulk-only actions, every held reference listed and exportable from the Drift tab, drift repairs and deletes that survive a newer content check, entries viewed in place from the Drift tab; 2026-11-10).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -727,10 +727,17 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
     now manages it*, *Its source entry is in the set again; reconcile to sync
     it*).
   - **Against the verify you chose from.** Items are numbered within the
-    stored verify, and every complete verify renumbers them. A preview, repair
-    or delete carries the time of the verify its items were chosen from, and is
-    refused if a newer one has run since. Reload the Drift tab and choose
-    again.
+    stored verify, and every complete verify renumbers them; one runs after
+    every reconcile, so a newer one can land while you're choosing. A preview,
+    repair or delete carries the time of the verify its items were chosen from
+    and each item's target DN. If a newer verify has replaced it, each item is
+    found in the newer one by its target DN (never by its old number, which may
+    now name another entry); one the newer verify no longer lists is skipped
+    with *The latest content check … no longer lists it as drift*. Each is
+    re-checked live before anything is written either way. A request without
+    target DNs is still refused in that case. While the inventory is open, the
+    Drift tab reloads itself when the check after a reconcile completes,
+    keeping its filter, page and selection.
   - **Typed confirmation.** Type `DELETE` to enable **Delete n**; the server
     refuses a delete without it too.
   - **One entry, not a subtree.** An entry with children fails its delete and
@@ -739,8 +746,9 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
     `operation: orphan-delete`). Deleted entries, and ones already gone, leave
     the Drift tab and the set's counts. Endpoints:
     `POST …/sets/{id}/drift/orphans/delete/preview` and `…/drift/orphans/delete`,
-    body `{"seqs": [...], "verifiedAt": "<the drift page's verifiedAt>", "confirm": "DELETE"}`
-    (repair takes the same `seqs` and `verifiedAt`).
+    body `{"seqs": [...], "verifiedAt": "<the drift page's verifiedAt>", "targetDns": [...], "confirm": "DELETE"}`
+    (repair takes the same `seqs`, `verifiedAt` and `targetDns`; `targetDns`
+    is optional, each item's stored target DN in the order of `seqs`).
 - **Orphan scope.** When the set
   writes a **source anchor**, only target entries carrying it count as
   orphaned: an entry under the same target base that nothing manages isn't

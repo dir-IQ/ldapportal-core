@@ -125,6 +125,25 @@ public class SyncDriftStore {
     }
 
     /**
+     * The set's stored items at these target DNs (compared case-insensitively),
+     * in verify order: how a selection made from an older verify, whose
+     * positions a newer one has renumbered, finds its entries in the newer one.
+     */
+    public List<Row> byTargetDn(UUID syncSetId, java.util.Collection<String> targetDns) {
+        List<String> dns = targetDns.stream().filter(java.util.Objects::nonNull)
+                .map(d -> d.toLowerCase(Locale.ROOT)).distinct().toList();
+        if (dns.isEmpty()) {
+            return List.of();
+        }
+        String in = String.join(",", java.util.Collections.nCopies(dns.size(), "?"));
+        List<Object> args = new ArrayList<>();
+        args.add(syncSetId);
+        args.addAll(dns);
+        return jdbc.query("SELECT seq, category, target_dn, source_dn, identity, attributes FROM sync_verify_entry "
+                + "WHERE sync_set_id = ? AND LOWER(target_dn) IN (" + in + ") ORDER BY seq", rowMapper(), args.toArray());
+    }
+
+    /**
      * Drop these stored items (repaired or deleted since the verify found
      * them). Each is matched by position and target DN, so if a newer verify
      * has replaced the set's items meanwhile, its rows at the same positions

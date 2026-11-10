@@ -427,6 +427,16 @@ class SyncConfigServiceTest {
         return rows -> rows.stream().map(com.ldapportal.ldap.sync.SyncDriftStore.Row::seq).toList().equals(List.of(seqs));
     }
 
+    /** A set whose stored verify is at {@link #AT}, with nothing else stubbed. */
+    private UUID verifiedSetId() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = verifiedSet();
+        set.setId(setId);
+        set.setLinkId(UUID.randomUUID());
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        return setId;
+    }
+
     private UUID driftFixture() {
         UUID setId = UUID.randomUUID();
         SyncSet set = verifiedSet();
@@ -629,6 +639,74 @@ class SyncConfigServiceTest {
                 .hasMessageContaining("no longer stored");
         verify(engine, never()).orphanDelete(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
         verify(verifier, never()).recheck(any(), any());
+    }
+
+    @Test
+    void driftActions_findTheirEntriesByTargetDn_whenANewerVerifyRenumberedThem() {
+        UUID setId = verifiedSetId();
+        var older = AT.minusMinutes(5);
+        var D = com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH;
+        // In the newer verify "drift" sits at position 7, and "gone" isn't listed any more.
+        when(driftStore.byTargetDn(eq(setId), any())).thenReturn(List.of(driftRow(7, D, "drift")));
+        when(verifier.recheck(eq(setId), any())).thenReturn(List.of(
+                recheck("drift", com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.MISMATCH)));
+
+        var items = service.previewDriftRepair(setId, List.of(1, 4), older,
+                List.of("UID=drift,dc=dst", "uid=gone,dc=dst")).items();
+
+        // Reported under the positions the caller chose them by; matched case-insensitively.
+        assertThat(items).extracting(i -> i.seq() + ":" + i.action()).containsExactly("1:REAPPLY", "4:SKIP");
+        assertThat(items.get(1).reason()).isEqualTo(SyncConfigService.NO_LONGER_LISTED);
+        assertThat(items.get(1).targetDn()).isEqualTo("uid=gone,dc=dst");
+        // Never by position: the older positions now name other entries.
+        verify(driftStore, never()).bySeq(any(), any());
+        verify(verifier).recheck(setId, List.of("uid=drift,dc=src"));
+    }
+
+    @Test
+    void repairDrift_fromAnOlderVerify_repairsTheMatchedEntry_andDropsItsCurrentRow() {
+        UUID setId = verifiedSetId();
+        when(linkRepo.findById(any())).thenReturn(Optional.empty());
+        var D = com.ldapportal.entity.enums.SyncDriftCategory.MISMATCH;
+        when(driftStore.byTargetDn(eq(setId), any())).thenReturn(List.of(driftRow(7, D, "drift")));
+        when(verifier.recheck(eq(setId), any())).thenReturn(List.of(
+                recheck("drift", com.ldapportal.ldap.sync.SyncContentVerifier.RecheckState.MISMATCH)));
+        when(engine.process(setId, "uid=drift,dc=src", false)).thenReturn(new com.ldapportal.ldap.sync.RecomputeOutcome(
+                com.ldapportal.dto.sync.SyncPreviewAction.MODIFY, "uid=drift,dc=dst", null, List.of("mail")));
+        when(driftStore.countsByCategory(setId)).thenReturn(new java.util.EnumMap<>(
+                com.ldapportal.entity.enums.SyncDriftCategory.class));
+
+        var r = service.repairDrift(setId, List.of(1), AT.minusMinutes(5), List.of("uid=drift,dc=dst"), null);
+
+        assertThat(r.reapplied()).isEqualTo(1);
+        assertThat(r.items()).singleElement().extracting(i -> i.seq()).isEqualTo(1);
+        // The stored verify's own row (position 7) is the one dropped, and its counts restated.
+        verify(driftStore).delete(eq(setId), org.mockito.ArgumentMatchers.argThat(rowsAt(7)));
+        verify(setRepo).restateVerifyCounts(eq(setId), eq(AT), anyInt(), anyInt(), anyInt());
+    }
+
+    @Test
+    void deleteOrphans_fromAnOlderVerify_skipsTheOnesNoLongerListed() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = verifiedSet();
+        set.setId(setId);
+        set.setLinkId(UUID.randomUUID());
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        when(linkRepo.findById(any())).thenReturn(Optional.empty());
+        when(driftStore.byTargetDn(eq(setId), any())).thenReturn(List.of(
+                driftRow(9, com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, "ghost")));
+        UUID dir = UUID.randomUUID();
+        when(engine.orphanDelete(setId, "uid=ghost,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+                com.ldapportal.dto.sync.SyncPreviewAction.DELETE, dir, "uid=ghost,dc=dst", null));
+
+        var r = service.deleteOrphans(setId, List.of(2, 3), AT.minusMinutes(5),
+                List.of("uid=ghost,dc=dst", "uid=fixed,dc=dst"), "DELETE", null);
+
+        assertThat(r.deleted()).isEqualTo(1);
+        assertThat(r.items()).extracting(i -> i.seq() + ":" + i.outcome())
+                .containsExactly("2:DELETED", "3:SKIPPED");
+        assertThat(r.items().get(1).message()).isEqualTo(SyncConfigService.NO_LONGER_LISTED);
+        verify(engine, never()).orphanDelete(eq(setId), eq("uid=fixed,dc=dst"), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     @Test

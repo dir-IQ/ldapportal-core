@@ -410,8 +410,13 @@ const props = defineProps<{
   /** This session's live check, for its totals, notes and held references. */
   live: SyncVerifyResult | null
   verifying: boolean
-  /** Bumped by the dialog when a check finishes, to reload the stored items. */
+  /** Bumped by the dialog when this session's check finishes: reload the stored items and start over. */
   refreshKey: number
+  /**
+   * Bumped by the dialog when a check it didn't start finishes (the one after a
+   * reconcile): reload the stored items, keeping the filter, page and selection.
+   */
+  reloadKey?: number
   canDiff: boolean
   sourceDirectoryId?: string | null
   targetDirectoryId?: string | null
@@ -597,6 +602,24 @@ function verifiedAt(): string | null {
   return data.value?.verifiedAt ?? null
 }
 
+/**
+ * The target DN of each item chosen for a repair or delete, by its position:
+ * sent alongside, so if a newer check has renumbered the stored items by the
+ * time the preview or apply arrives, the server finds them by DN instead.
+ */
+const chosenDns = new Map<number, string>()
+function choose(seqs: number[]): void {
+  for (const s of seqs) {
+    const e = entries.value.find(x => x.seq === s)
+    if (e) chosenDns.set(s, e.targetDn)
+  }
+}
+/** The chosen DNs for `seqs`, or undefined if any is unknown (the server then needs the same verify). */
+function dnsFor(seqs: number[]): string[] | undefined {
+  const dns = seqs.map(s => chosenDns.get(s))
+  return dns.every((d): d is string => !!d) ? dns : undefined
+}
+
 /** A failed preview or apply: say why and reload, since a stale selection is the usual cause. */
 function actionFailed(e: unknown): void {
   notif.error(errMsg(e))
@@ -610,7 +633,8 @@ async function openRepair(seqs: number[]): Promise<void> {
   showRepair.value = true
   previewing.value = true
   try {
-    const { data: d } = await previewDriftRepair(props.set.id, seqs, at)
+    choose(seqs)
+    const { data: d } = await previewDriftRepair(props.set.id, seqs, at, dnsFor(seqs))
     preview.value = d.items
   } catch (e) {
     showRepair.value = false
@@ -626,7 +650,7 @@ async function applyRepair(): Promise<void> {
   if (!seqs.length || !at) return
   repairing.value = true
   try {
-    const { data: r } = await repairDrift(props.set.id, seqs, at)
+    const { data: r } = await repairDrift(props.set.id, seqs, at, dnsFor(seqs))
     const parts = [
       r.created ? `${r.created} created` : '',
       r.reapplied ? `${r.reapplied} re-applied` : '',
@@ -676,7 +700,8 @@ async function openDelete(seqs: number[]): Promise<void> {
   showDelete.value = true
   deletePreviewing.value = true
   try {
-    const { data: d } = await previewOrphanDelete(props.set.id, seqs, at)
+    choose(seqs)
+    const { data: d } = await previewOrphanDelete(props.set.id, seqs, at, dnsFor(seqs))
     deletePreview.value = d.items
   } catch (e) {
     showDelete.value = false
@@ -692,7 +717,7 @@ async function applyDelete(): Promise<void> {
   if (!seqs.length || !at || deleteConfirm.value !== 'DELETE') return
   deleting.value = true
   try {
-    const { data: r } = await deleteOrphans(props.set.id, seqs, at, deleteConfirm.value)
+    const { data: r } = await deleteOrphans(props.set.id, seqs, at, deleteConfirm.value, dnsFor(seqs))
     const parts = [
       r.deleted ? `${r.deleted} deleted` : '',
       r.skipped ? `${r.skipped} left alone` : '',
@@ -786,8 +811,15 @@ function errMsg(e: unknown): string {
 }
 
 let loadSeq = 0
-async function load(): Promise<void> {
+/**
+ * Load the current page. `keep`: a newer check replaced the stored items under
+ * the operator (positions renumbered), so re-select what they had selected by
+ * target DN rather than clearing it, and keep rows they'd expanded open.
+ */
+async function load(keep = false): Promise<void> {
   const seq = ++loadSeq
+  const keepDns = keep ? new Set(entries.value.filter(e => selected.value.has(e.seq)).map(e => e.targetDn)) : null
+  const openDns = keep ? new Set(entries.value.filter(e => expanded.value.has(e.seq)).map(e => e.targetDn)) : null
   loading.value = true
   try {
     if (heldView.value) {
@@ -806,8 +838,12 @@ async function load(): Promise<void> {
       if (seq !== loadSeq) return
       data.value = d
     }
-    expanded.value = new Set()
-    selected.value = new Set()
+    const reselect = (dns: Set<string> | null) =>
+      new Set(dns ? entries.value.filter(e => dns.has(e.targetDn)).map(e => e.seq) : [])
+    expanded.value = reselect(openDns)
+    selected.value = reselect(keepDns)
+    // Fewer items than before: past the last page, go to it (the page watcher reloads).
+    if (keep && page.value > 0 && page.value >= pageCount.value) page.value = pageCount.value - 1
   } catch (e) {
     if (seq === loadSeq) notif.error(errMsg(e))
   } finally {
@@ -857,5 +893,7 @@ watch([() => props.set.id, () => props.refreshKey], () => {
 watch([category, query, size], () => { page.value = 0 })
 watch([() => props.set.id, () => props.refreshKey, category, query, page, size], () => { void load() },
   { immediate: true })
+// A check someone else's run made: same view, newer items.
+watch(() => props.reloadKey, () => { void load(true) })
 onBeforeUnmount(stopSearchTimer)
 </script>
