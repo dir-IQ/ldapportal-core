@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background; 2026-10-31).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background, the Drift tab laid out like the Reconciliation tab with bulk-only actions; 2026-11-10).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -653,8 +653,10 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   target** / **orphaned on target** / **content drift** entries, and a complete
   check stores **every** drifting entry, replacing the previous check's (only
   the latest is kept; a check that couldn't read both directories keeps the
-  previous list and says so). The Drift tab lists them: filter by kind with the
-  count cards, search by DN, attribute or value, page through them, open an
+  previous list and says so). The Drift tab is laid out like the
+  Reconciliation tab: a **Last content check** summary (with **Verify now**,
+  **Export CSV** and **Compare in Directory Diff**), then the list: filter by
+  kind with the count chips, search by DN, attribute or value, page through them, open an
   entry in the Directory Browser, and expand a content drift to see each
   differing attribute's **source (expected)** and **target (actual)** values
   (password attributes are flagged but their values never shown; a long value
@@ -665,8 +667,10 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   a prompt to verify again.
 - **Repairing drift** (Drift tab; needs *Manage directory sync*). A **missing**
   entry can be **created** and a **content drift** **re-applied** from its
-  source: per row (**Create…** / **Re-apply…**) or for the rows you tick
-  (**Repair (n)…**, one page at a time, up to 200). An orphaned entry has no
+  source: tick the rows and choose **Repair (n)…** in the bar above the table
+  (one page at a time, up to 200). Rows have no buttons of their own, as in
+  the Reconciliation tab; a row that can't be acted on has no checkbox, and
+  when nothing on the page can be, the checkbox column and the bar are hidden. An orphaned entry has no
   source member to repair it from; it can be deleted instead (below).
   - **Preview first.** Each chosen entry is re-checked live against both
     directories (the stored check may be hours old), and the dialog says what
@@ -688,13 +692,14 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
     check, and that check's time (see *Against the verify you chose from*
     below).
 - **Deleting orphans** (Drift tab; needs *Manage directory sync*). An
-  orphaned entry can be **deleted** from the target, per row (**Delete…**) or
-  for the ticked orphans (**Delete (n)…**), but only when the set writes a
+  orphaned entry can be **deleted** from the target: tick it and choose
+  **Delete (n)…**, but only when the set writes a
   **source anchor** and keys on its directory's own identity attribute
   (`entryUUID`, `objectGUID`). Without an anchor, an entry the set can't
   account for isn't provably its own. With a custom identity attribute, the
   anchor's values have no shape to tell them apart from other data in that
-  attribute. Either way, delete isn't offered.
+  attribute. Either way, delete isn't offered: the orphans get no checkbox,
+  and the note under the chips says why and points to the Directory Browser.
   - **Preview first.** Each chosen entry is re-checked live, and is only
     deleted if it's still on the target, carries the set's anchor **with a
     value shaped like the set's identity** (a UUID or GUID; a hand-made entry

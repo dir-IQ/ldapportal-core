@@ -62,6 +62,10 @@ function mountPanel(props: Record<string, unknown> = {}) {
 }
 const btn = (w: ReturnType<typeof mountPanel>, text: string) =>
   w.findAll('button').find(b => b.text().includes(text))!
+/** Tick a row's checkbox. */
+async function selectRow(w: ReturnType<typeof mountPanel>, seq: number) {
+  await w.find(`[data-testid="drift-row-${seq}"] input[type="checkbox"]`).setValue(true)
+}
 
 describe('SyncDriftPanel', () => {
   beforeEach(() => {
@@ -77,11 +81,11 @@ describe('SyncDriftPanel', () => {
 
     expect(syncApi.getDrift).toHaveBeenCalledWith('set-1', { category: undefined, q: undefined, page: 0, size: 25 })
     expect(w.text()).toContain('Verified 2026-11-05T08:00:00Z · complete scan')
-    const cards = w.findAll('[aria-pressed]').map(b => b.findAll('span').map(x => x.text()))
-    expect(cards).toEqual([['All', '3'], ['Missing on target', '1'], ['Orphaned on target', '1'], ['Content drift', '1']])
+    const chips = w.findAll('[aria-pressed]').map(b => b.text().replace(/\s+/g, ' ').trim())
+    expect(chips).toEqual(['All 3', 'Missing on target 1', 'Orphaned on target 1', 'Content drift 1'])
     expect(w.find('[data-testid="drift-row-0"]').text()).toContain('Missing')
     expect(w.find('[data-testid="drift-row-2"]').text()).toContain('title, mail, userPassword')
-    expect(w.text()).toContain('1–3 of 3')
+    expect(w.text()).toContain('of 3')
   })
 
   it('links target entries (not missing ones) and source entries to the Directory Browser', async () => {
@@ -94,7 +98,7 @@ describe('SyncDriftPanel', () => {
     expect(w.find('[data-testid="drift-row-0"] .rl').exists()).toBe(false)
   })
 
-  it('a card filters the table by kind', async () => {
+  it('a chip filters the table by kind', async () => {
     const w = mountPanel()
     await flushPromises()
     await btn(w, 'Content drift').trigger('click')
@@ -255,13 +259,15 @@ describe('SyncDriftPanel', () => {
 
       w = mountPanel({ canManage: true })
       await flushPromises()
+      expect(w.find('[data-testid="drift-bulk"]').exists()).toBe(true)
       expect(w.find('[data-testid="drift-row-0"] input[type="checkbox"]').exists()).toBe(true)
-      expect(w.find('[data-testid="drift-row-0"]').text()).toContain('Create…')
-      expect(w.find('[data-testid="drift-row-2"]').text()).toContain('Re-apply…')
-      // An orphan of an anchored set can be deleted, not repaired.
+      // An orphan of an anchored set can be selected (to delete).
       expect(w.find('[data-testid="drift-row-1"] input[type="checkbox"]').exists()).toBe(true)
-      expect(w.find('[data-testid="drift-row-1"]').text()).not.toMatch(/Create|Re-apply/)
-      expect(w.find('[data-testid="drift-row-1"]').text()).toContain('Delete…')
+      // Actions live in the bulk bar only, not on the rows.
+      for (const seq of [0, 1, 2]) {
+        expect(w.find(`[data-testid="drift-row-${seq}"]`).findAll('button').map(b => b.text()))
+          .not.toContain(expect.stringMatching(/Create|Re-apply|Delete/))
+      }
     })
 
     it('previews a row\'s repair after a live re-check, then repairs what isn\'t skipped', async () => {
@@ -269,7 +275,8 @@ describe('SyncDriftPanel', () => {
       await flushPromises()
       const success = vi.spyOn(useNotificationStore(), 'success')
 
-      await btn(w, 'Re-apply…').trigger('click')
+      await selectRow(w, 2)
+      await btn(w, 'Repair (1)').trigger('click')
       await flushPromises()
       expect(syncApi.previewDriftRepair).toHaveBeenCalledWith('set-1', [2], AT)
       const groups = (k: string) => w.find(`[data-testid="repair-group-${k}"]`).text().replace(/\s+/g, ' ')
@@ -312,7 +319,8 @@ describe('SyncDriftPanel', () => {
       const w = mountPanel({ canManage: true })
       await flushPromises()
       const warning = vi.spyOn(useNotificationStore(), 'warning')
-      await btn(w, 'Create…').trigger('click')
+      await selectRow(w, 0)
+      await btn(w, 'Repair (1)').trigger('click')
       await flushPromises()
       await btn(w, 'Repair 2').trigger('click')
       await flushPromises()
@@ -326,7 +334,8 @@ describe('SyncDriftPanel', () => {
       ] } } as never)
       const w = mountPanel({ canManage: true })
       await flushPromises()
-      await btn(w, 'Create…').trigger('click')
+      await selectRow(w, 0)
+      await btn(w, 'Repair (1)').trigger('click')
       await flushPromises()
       expect(btn(w, 'Repair 0').attributes('disabled')).toBeDefined()
     })
@@ -337,13 +346,27 @@ describe('SyncDriftPanel', () => {
       const w = mountPanel({ canManage: true, set: { ...set, sourceAnchorAttribute: null } })
       await flushPromises()
       expect(w.find('[data-testid="drift-row-1"] input[type="checkbox"]').exists()).toBe(false)
-      expect(w.find('[data-testid="drift-row-1"]').text()).not.toContain('Delete')
+      expect(w.find('[data-testid="orphan-no-delete"]').text()).toContain('without an anchor nothing proves')
+    })
+
+    it('hides the selection when nothing on the page can be acted on, and says why', async () => {
+      vi.mocked(syncApi.getDrift).mockResolvedValue({ data: page({
+        counts: { MISSING: 0, ORPHAN: 1, MISMATCH: 0 }, matched: 1,
+        entries: [{ seq: 1, category: 'ORPHAN', targetDn: 'uid=old,ou=people,dc=hr', sourceDn: null, identity: null,
+          attributes: [] }],
+      }) } as never)
+      const w = mountPanel({ canManage: true, set: { ...set, sourceAnchorAttribute: null } })
+      await flushPromises()
+      expect(w.find('thead input[type="checkbox"]').exists()).toBe(false)
+      expect(w.find('[data-testid="drift-bulk"]').exists()).toBe(false)
+      expect(w.find('[data-testid="orphan-no-delete"]').exists()).toBe(true)
     })
 
     it('never offers delete when the set keys on a custom identity attribute', async () => {
       const w = mountPanel({ canManage: true, set: { ...set, identityKey: 'uid' } })
       await flushPromises()
-      expect(w.find('[data-testid="drift-row-1"]').text()).not.toContain('Delete')
+      expect(w.find('[data-testid="drift-row-1"] input[type="checkbox"]').exists()).toBe(false)
+      expect(w.find('[data-testid="orphan-no-delete"]').text()).toContain('custom identity attribute')
     })
 
     it('closes the dialog and reloads when the server refuses a stale selection', async () => {
@@ -353,7 +376,8 @@ describe('SyncDriftPanel', () => {
       const w = mountPanel({ canManage: true })
       await flushPromises()
       const error = vi.spyOn(useNotificationStore(), 'error')
-      await btn(w, 'Delete…').trigger('click')
+      await selectRow(w, 1)
+      await btn(w, 'Delete (1)').trigger('click')
       await flushPromises()
       await w.find('#drift-delete-confirm').setValue('DELETE')
       vi.mocked(syncApi.getDrift).mockClear()
@@ -370,7 +394,8 @@ describe('SyncDriftPanel', () => {
       await flushPromises()
       const success = vi.spyOn(useNotificationStore(), 'success')
 
-      await btn(w, 'Delete…').trigger('click')
+      await selectRow(w, 1)
+      await btn(w, 'Delete (1)').trigger('click')
       await flushPromises()
       expect(syncApi.previewOrphanDelete).toHaveBeenCalledWith('set-1', [1], AT)
       expect(w.find('[data-testid="delete-group-delete"]').text()).toContain('1 to delete from the target')
@@ -398,7 +423,8 @@ describe('SyncDriftPanel', () => {
       const w = mountPanel({ canManage: true })
       await flushPromises()
       const warning = vi.spyOn(useNotificationStore(), 'warning')
-      await btn(w, 'Delete…').trigger('click')
+      await selectRow(w, 1)
+      await btn(w, 'Delete (1)').trigger('click')
       await flushPromises()
       await w.find('#drift-delete-confirm').setValue('DELETE')
       await btn(w, 'Delete 1').trigger('click')
