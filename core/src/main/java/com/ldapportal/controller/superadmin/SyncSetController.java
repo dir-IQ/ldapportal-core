@@ -378,7 +378,7 @@ public class SyncSetController {
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public com.ldapportal.dto.sync.SyncDriftRepairPreview previewDriftRepair(
             @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncDriftRepairRequest req) {
-        return service.previewDriftRepair(id, req.seqs(), req.verifiedAt());
+        return service.previewDriftRepair(id, req.seqs(), req.verifiedAt(), req.targetDns());
     }
 
     /**
@@ -390,7 +390,7 @@ public class SyncSetController {
     public com.ldapportal.dto.sync.SyncDriftRepairResult repairDrift(
             @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncDriftRepairRequest req,
             @AuthenticationPrincipal AuthPrincipal principal) {
-        return service.repairDrift(id, req.seqs(), req.verifiedAt(), principal);
+        return service.repairDrift(id, req.seqs(), req.verifiedAt(), req.targetDns(), principal);
     }
 
     /**
@@ -401,7 +401,7 @@ public class SyncSetController {
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public com.ldapportal.dto.sync.SyncOrphanDeletePreview previewOrphanDelete(
             @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncOrphanDeleteRequest req) {
-        return service.previewOrphanDelete(id, req.seqs(), req.verifiedAt());
+        return service.previewOrphanDelete(id, req.seqs(), req.verifiedAt(), req.targetDns());
     }
 
     /**
@@ -413,7 +413,7 @@ public class SyncSetController {
     public com.ldapportal.dto.sync.SyncOrphanDeleteResult deleteOrphans(
             @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncOrphanDeleteRequest req,
             @AuthenticationPrincipal AuthPrincipal principal) {
-        return service.deleteOrphans(id, req.seqs(), req.verifiedAt(), req.confirm(), principal);
+        return service.deleteOrphans(id, req.seqs(), req.verifiedAt(), req.targetDns(), req.confirm(), principal);
     }
 
     @PostMapping("/{id}/recompute")

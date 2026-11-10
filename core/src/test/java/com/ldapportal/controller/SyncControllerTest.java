@@ -455,17 +455,22 @@ class SyncControllerTest extends BaseControllerTest {
 
     @Test
     void driftRepair_previewsThenRepairs_forTheGivenItems() throws Exception {
-        given(service.previewDriftRepair(eq(SET), eq(List.of(3, 7)), argThat(at -> at.isEqual(DRIFT_AT)))).willReturn(new com.ldapportal.dto.sync.SyncDriftRepairPreview(
+        given(service.previewDriftRepair(eq(SET), eq(List.of(3, 7)), argThat(at -> at.isEqual(DRIFT_AT)),
+                eq(List.of("uid=a,dc=dst", "uid=b,dc=dst")))).willReturn(new com.ldapportal.dto.sync.SyncDriftRepairPreview(
                 List.of(new com.ldapportal.dto.sync.SyncDriftRepairPreview.Item(3,
                         com.ldapportal.dto.sync.SyncDriftRepairPreview.Action.CREATE, "uid=a,dc=dst", "uid=a,dc=src",
                         List.of(), null))));
-        given(service.repairDrift(eq(SET), eq(List.of(3, 7)), argThat(at -> at.isEqual(DRIFT_AT)), any())).willReturn(new com.ldapportal.dto.sync.SyncDriftRepairResult(
+        given(service.repairDrift(eq(SET), eq(List.of(3, 7)), argThat(at -> at.isEqual(DRIFT_AT)),
+                org.mockito.ArgumentMatchers.isNull(), any())).willReturn(new com.ldapportal.dto.sync.SyncDriftRepairResult(
                 1, 0, 0, 1, 0, 0, List.of()));
 
+        // With each item's target DN, so a newer verify can't strand the selection...
         mockMvc.perform(post(SETS + "/" + SET + "/drift/repair/preview").with(authentication(superadminAuth()))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[3,7],\"verifiedAt\":\"2026-11-05T08:00:00Z\"}"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[3,7],\"verifiedAt\":\"2026-11-05T08:00:00Z\","
+                                + "\"targetDns\":[\"uid=a,dc=dst\",\"uid=b,dc=dst\"]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].action").value("CREATE"));
+        // ...or without them, as before.
         mockMvc.perform(post(SETS + "/" + SET + "/drift/repair").with(authentication(superadminAuth()))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[3,7],\"verifiedAt\":\"2026-11-05T08:00:00Z\"}"))
                 .andExpect(status().isOk())
@@ -501,7 +506,8 @@ class SyncControllerTest extends BaseControllerTest {
 
     @Test
     void orphanDelete_passesTheConfirmation_andIsForbiddenToAdmins() throws Exception {
-        given(service.deleteOrphans(eq(SET), eq(List.of(4)), argThat(at -> at.isEqual(DRIFT_AT)), eq("DELETE"), any()))
+        given(service.deleteOrphans(eq(SET), eq(List.of(4)), argThat(at -> at.isEqual(DRIFT_AT)),
+                org.mockito.ArgumentMatchers.isNull(), eq("DELETE"), any()))
                 .willReturn(new com.ldapportal.dto.sync.SyncOrphanDeleteResult(1, 0, 0, List.of()));
 
         mockMvc.perform(post(SETS + "/" + SET + "/drift/orphans/delete").with(authentication(superadminAuth()))

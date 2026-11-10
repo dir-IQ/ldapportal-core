@@ -597,6 +597,37 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
+  it('reloads the Drift tab in place when the check a reconcile ends with completes', async () => {
+    vi.useFakeTimers()
+    try {
+      const verifyDone = (runId: string) => ({ runId, status: 'COMPLETE', phase: 'DONE', processed: 5, total: 5,
+        currentDn: null, error: null, startedAt: new Date().toISOString(), heartbeatAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString() })
+      const activity = (reconcile: unknown, verify: unknown) => vi.mocked(syncApi.getSyncSetActivity)
+        .mockResolvedValue({ data: { reconcile, verify, asOf: new Date().toISOString() } } as never)
+      activity(run({ trigger: 'SCHEDULED', status: 'RUNNING' }), verifyDone('v-old'))
+      const wrapper = open()
+      await flushPromises()
+      await openDriftTab()
+      vi.mocked(syncApi.getDrift).mockClear()
+
+      // The run finishes; its check starts only afterwards, so the dialog keeps looking.
+      activity(run({ trigger: 'SCHEDULED', status: 'COMPLETE', phase: null }), verifyDone('v-old'))
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(syncApi.getDrift).not.toHaveBeenCalled()
+
+      activity(run({ trigger: 'SCHEDULED', status: 'COMPLETE', phase: null }), verifyDone('v-new'))
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(syncApi.getDrift).toHaveBeenCalledTimes(1)
+      // Once per check: a later read of the same one doesn't reload again.
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(syncApi.getDrift).toHaveBeenCalledTimes(1)
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('refreshes the counts when a reconcile it didn\'t start finishes', async () => {
     vi.useFakeTimers()
     try {
