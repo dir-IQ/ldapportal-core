@@ -147,9 +147,15 @@ For operational reports, go to **Reports** in the sidebar:
   Recently Added / Modified, Disabled Accounts) offer the same columns as the
   **Users** page, in the same order: `dn`, then `cn`, `sn`, `givenName`,
   `displayName`, `mail`, `uid` and `title` when present (shown), then a
-  `groups` column (each user's groups, `|`-separated, limited to groups under
-  your authorized OUs), then every other attribute A–Z, off until you turn it
+  **groups** column, then every other attribute A–Z, off until you turn it
   on from the **Columns** menu. Other reports show their first ten columns.
+- The **groups** column is the same on the Users page and in the reports:
+  every group the user belongs to, directly or through a nested group,
+  limited to groups under your authorized OUs. It's worked out from the group
+  entries (`member`, `uniqueMember`, `memberUid`), so it doesn't depend on the
+  directory maintaining `memberOf`. The raw `memberOf` / `isMemberOf`
+  attributes (on OUD, `isMemberOf` lists nested groups by DN) are offered
+  too, off until you turn them on.
 - Columns are always headed by the real LDAP attribute name (`givenName`, not
   "First Name"). Password attributes are never included.
 - Tick **Operational attributes** above the table (here or on the Users page)
@@ -158,8 +164,12 @@ For operational reports, go to **Reports** in the sidebar:
   return operational attributes this way.
 - **Export CSV** carries the columns the table shows, in the order shown, on
   both the Users page and the reports — hide or reorder a column and the file
-  follows. (`dn` always comes first, and on the Users page `groups` always
-  comes last.)
+  follows. (`dn` always comes first, and on the Users page the groups columns
+  always come last.) The groups column exports as two: `groups`, the user's
+  **direct** groups, which the user import reads back as memberships, and
+  `allgroups`, direct and nested. Re-importing an export never turns a nested
+  membership into a direct one: the import skips `allgroups`, `memberOf` and
+  `isMemberOf` (unless a template maps them).
 
 ---
 

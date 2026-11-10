@@ -218,6 +218,27 @@ class BulkUserServiceGroupsTest {
     }
 
     @Test
+    void import_ofAnExport_skipsTheNestedGroupsAndReverseMembershipColumns() throws IOException {
+        // An export's read-only columns: nested groups, and memberOf/isMemberOf
+        // if they were shown. Only the direct groups column is acted on.
+        BulkImportResult result = importCsv(
+                "uid,cn,groups,allgroups,isMemberOf,memberOf\n"
+                        + "jsmith,John,admins,\"admins|company\",cn=admins,cn=admins\n",
+                ConflictHandling.SKIP);
+
+        BulkImportRowResult row = result.rows().get(0);
+        assertThat(row.status()).isEqualTo(BulkImportRowResult.Status.CREATED);
+        assertThat(outcomes(row.memberChanges())).containsExactly(Outcome.APPLIED);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> attrs = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(eq(dc), eq("uid=jsmith," + PARENT), attrs.capture(), any());
+        assertThat(attrs.getValue().keySet())
+                .noneMatch(k -> k.equalsIgnoreCase("allgroups") || k.equalsIgnoreCase("ismemberof")
+                        || k.equalsIgnoreCase("memberof") || k.equalsIgnoreCase("groups"));
+    }
+
+    @Test
     void import_queuedAndBlockedAdds_keepTheirOutcome() throws IOException {
         groups.statusFor = MembershipChangeResult.Status.QUEUED_FOR_APPROVAL;
         var queued = importCsv("uid,groups\njsmith,admins\n", ConflictHandling.SKIP).rows().get(0);
@@ -288,14 +309,17 @@ class BulkUserServiceGroupsTest {
     // ── Export ────────────────────────────────────────────────────────────────
 
     @Test
-    void export_withAGroupIndex_addsAGroupsColumnLast_andFetchesUidForMemberUidGroups() throws IOException {
+    void export_withAGroupIndex_addsDirectThenAllGroupsColumnsLast_andFetchesUidForMemberUidGroups() throws IOException {
         var index = com.ldapportal.ldap.UserGroupIndex.of(List.of(
                 new com.ldapportal.ldap.model.LdapGroup(ADMINS, Map.of("cn", List.of("admins"),
                         "member", List.of("uid=jsmith," + PARENT))),
                 new com.ldapportal.ldap.model.LdapGroup(SUPPORT, Map.of("cn", List.of("Support"),
                         "uniquemember", List.of("uid=jsmith," + PARENT))),
                 new com.ldapportal.ldap.model.LdapGroup(POSIX, Map.of("cn", List.of("devs"),
-                        "memberuid", List.of("jsmith")))));
+                        "memberuid", List.of("jsmith"))),
+                // admins is itself a member of company: a nested membership.
+                new com.ldapportal.ldap.model.LdapGroup("cn=company," + PARENT, Map.of("cn", List.of("company"),
+                        "member", List.of(ADMINS)))));
         var user = new com.ldapportal.ldap.model.LdapUser("uid=jsmith," + PARENT,
                 Map.of("mail", List.of("j@x"), "uid", List.of("jsmith")));
         org.mockito.Mockito.doAnswer(inv -> {
@@ -308,8 +332,9 @@ class BulkUserServiceGroupsTest {
         byte[] csv = service.exportCsvFromBases(dc, null, List.of(PARENT), List.of("mail"), index);
 
         String out = new String(csv, StandardCharsets.UTF_8);
-        assertThat(out).startsWith("\"dn\",\"mail\",\"groups\"\r\n");
-        assertThat(out).contains("\"j@x\",\"admins|Support|devs\"");
+        assertThat(out).startsWith("\"dn\",\"mail\",\"groups\",\"allgroups\"\r\n");
+        // groups stays direct (the import reads it back); allgroups adds the nested one.
+        assertThat(out).contains("\"j@x\",\"admins|Support|devs\",\"admins|Support|devs|company\"");
     }
 
     @Test

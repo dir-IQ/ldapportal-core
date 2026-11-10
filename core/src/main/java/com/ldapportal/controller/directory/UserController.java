@@ -94,11 +94,12 @@ public class UserController {
             @RequestParam(required = false) String filter,
             @RequestParam(required = false) String baseDn,
             @RequestParam(defaultValue = "1000") int limit,
-            @RequestParam(required = false, defaultValue = "") String attributes) {
+            @RequestParam(required = false, defaultValue = "") String attributes,
+            @RequestParam(required = false, defaultValue = "false") boolean includeGroups) {
 
         int safeLimit = limit <= 0 ? 0 : Math.min(limit, PAGE_MAX_LIMIT);
         String[] attrArray = attributes.isBlank() ? new String[0] : attributes.split(",");
-        return service.searchUsersPage(directoryId, principal, filter, baseDn, safeLimit, attrArray);
+        return service.searchUsersPage(directoryId, principal, filter, baseDn, safeLimit, attrArray, includeGroups);
     }
 
     @PostMapping

@@ -628,6 +628,8 @@ interface UserSearchPage {
   truncated?: boolean
   total?: number
   totalIsLowerBound?: boolean
+  /** Entry DN → the DNs of its direct and nested groups (asked for with includeGroups). */
+  groups?: Record<string, string[]> | null
 }
 interface SearchMeta {
   truncated: boolean
@@ -675,28 +677,6 @@ function isvaOrphaned(row: unknown): boolean {
   const v = (row as Record<string, unknown> | null)?.['isva.orphaned']
   if (Array.isArray(v)) return v.length > 0 && String(v[0]).toLowerCase() === 'true'
   return typeof v === 'string' && v.toLowerCase() === 'true'
-}
-
-/**
- * The reverse group-membership DNs for an entry, read case-insensitively.
- * Different directories surface this under different attribute names:
- * `memberOf` on AD and OpenLDAP (memberof overlay), but `isMemberOf` —
- * an operational attribute — on OUD / OpenDJ. Collect from either, since
- * only one is populated per directory, and de-duplicate. An absent
- * attribute yields an empty list.
- */
-function memberOfValues(attrs: Record<string, string[] | string | null>): string[] {
-  const out: string[] = []
-  const seen = new Set<string>()
-  for (const [k, v] of Object.entries(attrs)) {
-    const lk = k.toLowerCase()
-    if (lk !== 'memberof' && lk !== 'ismemberof') continue
-    const vals = Array.isArray(v) ? v : (typeof v === 'string' && v ? [v] : [])
-    for (const s of vals) {
-      if (typeof s === 'string' && s && !seen.has(s)) { seen.add(s); out.push(s) }
-    }
-  }
-  return out
 }
 
 // Column-level expand toggle for the Groups column: collapsed shows the
@@ -996,13 +976,15 @@ async function load(all: boolean = searchMeta.value?.all === true) {
       filter: filterText.value || undefined,
       baseDn: profileData.value?.targetUserDn || undefined,
       limit:  all ? 0 : FETCH_LIMIT,
-      // Request all user attributes ('*') plus the reverse group-membership
-      // attributes explicitly. The 'Groups' column reads these; naming them
-      // brings them back even where they're operational — `memberOf`
-      // (OpenLDAP memberof overlay) or `isMemberOf` (OUD/OpenDJ) — not just
-      // where it's a plain attribute (AD). Directories that expose neither
-      // yield an empty Groups cell.
+      // All user attributes ('*') plus the reverse group-membership
+      // attributes by name, so the optional memberOf / isMemberOf columns
+      // are there even where they're operational (OpenLDAP's memberof
+      // overlay, OUD/OpenDJ's isMemberOf).
       attributes: includeOperational.value ? '*,+,memberOf,isMemberOf' : '*,memberOf,isMemberOf',
+      // The Groups column: each user's direct and nested groups, worked out
+      // on the server from the group entries the operator can see — the same
+      // lookup the reports and the CSV export's allgroups column use.
+      includeGroups: true,
     }
     const { data } = await usersApi.searchUsersPage(dirId, params)
     const page = (data ?? {}) as UserSearchPage
@@ -1020,10 +1002,10 @@ async function load(all: boolean = searchMeta.value?.all === true) {
         const arr = Array.isArray(vals) ? vals : (vals == null ? [] : [vals])
         row[attr] = arr.join(', ')
       }
-      // Group membership for the Groups column. The raw
+      // Group membership for the Groups column, from the server. The
       // DNs feed GroupChips; the joined names back the quick-filter and
       // cell title so an operator can filter the table on a group name.
-      const gdns = memberOfValues(attrs)
+      const gdns = page.groups?.[e.dn] ?? []
       row.__groupDns = gdns
       row.__groups = gdns.map(rdnValue).join(', ')
       // Backwards-compat with the row.enabled lookup the

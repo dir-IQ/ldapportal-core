@@ -70,6 +70,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -320,6 +321,47 @@ public class LdapOperationService {
     public UserSearchPage searchUsersPage(UUID directoryId, AuthPrincipal principal,
                                           String filter, String baseDn,
                                           int limit, String[] attributes) {
+        return searchUsersPage(directoryId, principal, filter, baseDn, limit, attributes, false);
+    }
+
+    /**
+     * {@link #searchUsersPage}, optionally with each returned user's groups
+     * (direct and nested, among the groups the caller can see) worked out
+     * from the group entries: the Users page's Groups column, built exactly
+     * as the user export's {@code allgroups} column and the reports' groups
+     * column are. If the groups can't be read the page is returned without them.
+     */
+    public UserSearchPage searchUsersPage(UUID directoryId, AuthPrincipal principal,
+                                          String filter, String baseDn,
+                                          int limit, String[] attributes,
+                                          boolean includeGroups) {
+        UserSearchPage page = searchUsersPageWithoutGroups(directoryId, principal, filter, baseDn, limit, attributes);
+        if (!includeGroups || page.entries().isEmpty()) return page;
+        UserGroupIndex index;
+        try {
+            index = UserGroupIndex.build(groupService, loadDirectory(directoryId, principal),
+                    permissionService.resolveGroupSearchBaseDns(principal, directoryId));
+        } catch (RuntimeException e) {
+            log.warn("Could not read groups for the Users page's groups column: {}", e.getMessage());
+            return page;
+        }
+        Map<String, List<String>> groups = new LinkedHashMap<>();
+        for (LdapEntryResponse e : page.entries()) {
+            groups.put(e.dn(), index.allGroupDnsOf(e.dn(), firstUid(e)));
+        }
+        return page.withGroups(groups);
+    }
+
+    /** The entry's first {@code uid} value (keys are lower-cased), or null. */
+    private static String firstUid(LdapEntryResponse e) {
+        if (e.attributes() == null) return null;
+        List<String> uid = e.attributes().get("uid");
+        return uid == null || uid.isEmpty() ? null : uid.get(0);
+    }
+
+    private UserSearchPage searchUsersPageWithoutGroups(UUID directoryId, AuthPrincipal principal,
+                                                        String filter, String baseDn,
+                                                        int limit, String[] attributes) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
         String effectiveFilter = effectiveUserFilter(filter);

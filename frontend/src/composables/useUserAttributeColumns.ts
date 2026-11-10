@@ -10,8 +10,10 @@
  * Rules shared by both pages:
  *   - Secret attributes (password hashes and the like) are never offered. The
  *     list mirrors OperationalReportService.SECRET_ATTRIBUTES on the backend.
- *   - memberOf / isMemberOf aren't offered as raw columns: group membership is
- *     shown by the groups column, which both pages build.
+ *   - Group membership is shown by the groups column, which both pages take
+ *     from the backend (direct and nested groups the caller can see). The raw
+ *     memberOf / isMemberOf attributes are still offered, hidden until turned
+ *     on, like any other non-default attribute.
  *   - Headings are the attribute name with its schema casing (givenName, not
  *     givenname — the backend lower-cases keys); without a schema, the default
  *     attributes keep their known casing and anything else shows as returned.
@@ -36,9 +38,6 @@ export const SECRET_ATTRIBUTES = new Set([
   'sambantpassword', 'sambalmpassword', 'sambapasswordhistory',
   'krbprincipalkey', 'krbextradata', 'userpkcs12', 'ibm-slapdadminpw',
 ])
-
-/** Reverse group-membership attributes; the groups column stands in for them. */
-const MEMBERSHIP_ATTRIBUTES = new Set(['memberof', 'ismemberof'])
 
 /** True for a password or password-derived attribute (options like ;binary ignored). */
 export function isSecretAttribute(name: string): boolean {
@@ -84,7 +83,7 @@ export function buildUserAttributeColumns(
   const byLower = new Map<string, string>()
   for (const k of attributeKeys) {
     const lower = k.toLowerCase()
-    if (lower === 'dn' || isSecretAttribute(k) || MEMBERSHIP_ATTRIBUTES.has(lower)) continue
+    if (lower === 'dn' || isSecretAttribute(k)) continue
     if (opts.groupsKey && lower === opts.groupsKey.toLowerCase()) continue
     if (!byLower.has(lower)) byLower.set(lower, k)
   }

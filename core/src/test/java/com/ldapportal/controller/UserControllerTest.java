@@ -94,7 +94,7 @@ class UserControllerTest extends BaseControllerTest {
 
     @Test
     void searchUsersPage_returnsEntriesWithTruncationMetadata() throws Exception {
-        given(ldapService.searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(1000), any()))
+        given(ldapService.searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(1000), any(), eq(false)))
                 .willReturn(new UserSearchPage(List.of(sampleEntry()), true, 2345, false));
 
         mockMvc.perform(get(BASE_URL + "/search").with(authentication(adminAuth())))
@@ -108,26 +108,38 @@ class UserControllerTest extends BaseControllerTest {
 
     @Test
     void searchUsersPage_limitZero_asksForEveryMatch() throws Exception {
-        given(ldapService.searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(0), any()))
+        given(ldapService.searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(0), any(), eq(false)))
                 .willReturn(new UserSearchPage(List.of(), false, 0, false));
 
         mockMvc.perform(get(BASE_URL + "/search").param("limit", "0")
                         .with(authentication(adminAuth())))
                 .andExpect(status().isOk());
 
-        verify(ldapService).searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(0), any());
+        verify(ldapService).searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(0), any(), eq(false));
     }
 
     @Test
     void searchUsersPage_limitAboveCeiling_isClampedTo1000() throws Exception {
-        given(ldapService.searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(1000), any()))
+        given(ldapService.searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(1000), any(), eq(false)))
                 .willReturn(new UserSearchPage(List.of(), false, 0, false));
 
         mockMvc.perform(get(BASE_URL + "/search").param("limit", "5000")
                         .with(authentication(adminAuth())))
                 .andExpect(status().isOk());
 
-        verify(ldapService).searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(1000), any());
+        verify(ldapService).searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(1000), any(), eq(false));
+    }
+
+    @Test
+    void searchUsersPage_includeGroups_returnsEachUsersGroupDns() throws Exception {
+        given(ldapService.searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(1000), any(), eq(true)))
+                .willReturn(new UserSearchPage(List.of(sampleEntry()), false, 1, false,
+                        Map.of(ENTRY_DN, List.of("cn=devs,ou=groups,dc=example,dc=com"))));
+
+        mockMvc.perform(get(BASE_URL + "/search").param("includeGroups", "true")
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.groups['" + ENTRY_DN + "'][0]").value("cn=devs,ou=groups,dc=example,dc=com"));
     }
 
     @Test

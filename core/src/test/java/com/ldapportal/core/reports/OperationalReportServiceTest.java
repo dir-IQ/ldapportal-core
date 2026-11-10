@@ -260,12 +260,12 @@ class OperationalReportServiceTest {
 
         ReportData data = service.run(dc, "USERS_IN_BRANCH", Map.of("branchDn", BRANCH), dirId, superadmin());
 
-        assertThat(data.columns()).containsExactly("dn", "cn", "givenname", "mail", "uid", "groups");
+        assertThat(data.columns()).containsExactly("dn", "cn", "givenname", "mail", "uid", "groups", "allgroups");
         // Real attribute names only — no friendly headings, groups included.
         assertThat(data.labels()).isEmpty();
         assertThat(data.rows()).singleElement().satisfies(row -> {
             assertThat(row).containsEntry("dn", "uid=alice," + BRANCH).containsEntry("mail", "a@example.com");
-            assertThat(row).containsEntry("groups", "admins|devs");
+            assertThat(row).containsEntry("groups", "admins|devs").containsEntry("allgroups", "admins|devs");
         });
         // Read without the enricher chain, so no addon virtual columns (isva.*).
         verify(userService, never()).searchUsers(any(), anyString(), any(), anyInt(), any(String[].class));
@@ -345,7 +345,7 @@ class OperationalReportServiceTest {
 
         ReportData data = service.run(dc, "DISABLED_ACCOUNTS", Map.of(), dirId, superadmin());
 
-        assertThat(data.columns()).containsExactly("dn", "groups");
+        assertThat(data.columns()).containsExactly("dn", "groups", "allgroups");
         verifyNoInteractions(groupService);
     }
 

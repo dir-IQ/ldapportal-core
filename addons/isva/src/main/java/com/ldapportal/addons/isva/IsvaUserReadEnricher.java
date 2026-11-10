@@ -9,6 +9,7 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.model.LdapUser;
+import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchRequest;
@@ -22,6 +23,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -128,9 +130,11 @@ public class IsvaUserReadEnricher implements UserReadEnricher {
                 for (SearchResultEntry entry : result.getSearchEntries()) {
                     String secDn = entry.getAttributeValue("secDN");
                     if (secDn == null) continue;
-                    // Case-insensitive normalisation so the lookup
-                    // tolerates the LDAP convention of mixed-case DNs.
-                    byDemographicDn.put(secDn.toLowerCase(), entry);
+                    // Keyed by the normalized DN: the server matched
+                    // (secDN=...) by DN equality, so a secDN written with
+                    // other spacing, case or escaping than the user's DN
+                    // was found and must be paired, not flagged orphaned.
+                    byDemographicDn.put(normalizeDn(secDn), entry);
                 }
                 return byDemographicDn;
             } catch (LDAPException e) {
@@ -194,6 +198,20 @@ public class IsvaUserReadEnricher implements UserReadEnricher {
 
     private SearchResultEntry lookupCaseInsensitive(
             Map<String, SearchResultEntry> map, String dn) {
-        return map.get(dn == null ? null : dn.toLowerCase());
+        return map.get(dn == null ? null : normalizeDn(dn));
+    }
+
+    /**
+     * The DN in normalized form (attribute names and values lower-cased,
+     * insignificant spaces dropped, escaping canonical), so two spellings
+     * of one DN compare equal. An unparseable value falls back to trimmed
+     * lower case.
+     */
+    static String normalizeDn(String dn) {
+        try {
+            return new DN(dn).toNormalizedString();
+        } catch (LDAPException e) {
+            return dn.trim().toLowerCase(Locale.ROOT);
+        }
     }
 }

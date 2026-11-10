@@ -246,19 +246,21 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
   it('gives entry reports the Users page columns: real attribute names, the same defaults and order', async () => {
     const attrs = ['cn', 'mail', 'sn', 'givenname', 'uid', 'title', 'ou', 'l', 'employeenumber', 'userpassword']
     const { wrapper } = await runReport('USERS_IN_BRANCH',
-      { columns: ['dn', ...attrs, 'groups'], labels: {}, rows: [] })
+      { columns: ['dn', ...attrs, 'groups', 'allgroups'], labels: {}, rows: [] })
 
     const columns = tableColumnsOf(wrapper)
-    // dn → defaults present (their fixed order) → groups → the rest A–Z; secrets dropped.
+    // dn → defaults present (their fixed order) → Groups (all groups) → the
+    // rest A–Z, direct groups among them; secrets dropped.
     expect(columns.map(c => c.key)).toEqual(
-      ['dn', 'cn', 'sn', 'givenname', 'mail', 'uid', 'title', 'groups', 'employeenumber', 'l', 'ou'])
+      ['dn', 'cn', 'sn', 'givenname', 'mail', 'uid', 'title', 'allgroups', 'groups', 'employeenumber', 'l', 'ou'])
     // Headed by the attribute name, schema-cased — no friendly names.
     expect(columns.find(c => c.key === 'cn')!.label).toBe('cn')
     expect(columns.find(c => c.key === 'givenname')!.label).toBe('givenName')
     expect(columns.find(c => c.key === 'employeenumber')!.label).toBe('employeeNumber')
-    expect(columns.find(c => c.key === 'groups')!.label).toBe('groups')
+    expect(columns.find(c => c.key === 'allgroups')!.label).toBe('groups')
+    expect(columns.find(c => c.key === 'groups')!.label).toBe('direct groups')
     expect(columns.filter(c => !c.defaultHidden).map(c => c.key))
-      .toEqual(['dn', 'cn', 'sn', 'givenname', 'mail', 'uid', 'title', 'groups'])
+      .toEqual(['dn', 'cn', 'sn', 'givenname', 'mail', 'uid', 'title', 'allgroups'])
   })
 
   it('keeps other reports in the backend order, headed by the backend label or the key', async () => {
@@ -274,15 +276,28 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
 
   it('exports the visible columns, in order, by their schema-cased names', async () => {
     const { wrapper, reports } = await runReport('USERS_IN_BRANCH',
-      { columns: ['dn', 'cn', 'givenname', 'groups'], labels: {}, rows: [] })
-    wrapper.findComponent({ name: 'ResultsTable' }).vm.$emit('visible-columns-change', ['dn', 'givenname', 'groups'])
+      { columns: ['dn', 'cn', 'givenname', 'groups', 'allgroups'], labels: {}, rows: [] })
+    wrapper.findComponent({ name: 'ResultsTable' }).vm.$emit('visible-columns-change', ['dn', 'givenname', 'allgroups'])
     await flushPromises()
 
     // ResultsTable is stubbed (no toolbar), so call what its Export CSV button calls.
     await (wrapper.vm as unknown as { doExport: (f: string) => Promise<void> }).doExport('CSV')
 
+    // The Groups column exports as the import's direct groups, then all groups.
     expect(reports.runOperationalReport).toHaveBeenCalledWith('dir-1',
-      expect.objectContaining({ columns: ['dn', 'givenName', 'groups'] }), 'CSV')
+      expect.objectContaining({ columns: ['dn', 'givenName', 'groups', 'allgroups'] }), 'CSV')
+  })
+
+  it('exports direct groups once when that column is shown as well', async () => {
+    const { wrapper, reports } = await runReport('USERS_IN_BRANCH',
+      { columns: ['dn', 'groups', 'allgroups'], labels: {}, rows: [] })
+    wrapper.findComponent({ name: 'ResultsTable' }).vm.$emit('visible-columns-change', ['dn', 'groups', 'allgroups'])
+    await flushPromises()
+
+    await (wrapper.vm as unknown as { doExport: (f: string) => Promise<void> }).doExport('CSV')
+
+    expect(reports.runOperationalReport).toHaveBeenCalledWith('dir-1',
+      expect.objectContaining({ columns: ['dn', 'groups', 'allgroups'] }), 'CSV')
   })
 
   it('asks entry reports for operational attributes when the switch is on', async () => {

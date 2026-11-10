@@ -32,7 +32,7 @@ import { computed } from 'vue'
 import { rdnValue } from '@/composables/useEntryClassification'
 
 const props = withDefaults(defineProps<{
-  /** Group DNs the user belongs to (typically the memberOf attribute). */
+  /** Group DNs the user belongs to (the Users page passes its direct and nested groups). */
   dns: string[]
   /** Show every group instead of collapsing to `collapsedCount` + overflow. */
   expanded?: boolean
