@@ -121,6 +121,53 @@ class PlanExecutorTest {
     }
 
     @Test
+    void delete_leafOnly_onEntryWithChildren_abortsWithNotAllowedOnNonLeaf() throws Exception {
+        seedEntryWithPolicies("uid=dora," + USERS_OU);
+
+        assertThatThrownBy(() -> executor.execute(dc,
+                DeletePlan.singleStep(DeleteStep.of("uid=dora," + USERS_OU))))
+                .isInstanceOf(LdapOperationException.class)
+                .hasRootCauseInstanceOf(com.unboundid.ldap.sdk.LDAPException.class);
+        assertThat(inMemoryServer.entryExists("uid=dora," + USERS_OU)).isTrue();
+    }
+
+    @Test
+    void delete_subtree_removesEntryAndAllDescendants() throws Exception {
+        // IVIA-shaped: secUser with a cn=policies child that itself has a child.
+        seedEntryWithPolicies("uid=dora," + USERS_OU);
+
+        executor.execute(dc, DeletePlan.singleStep(DeleteStep.subtree("uid=dora," + USERS_OU)));
+
+        assertThat(inMemoryServer.entryExists("cn=pwd,cn=policies,uid=dora," + USERS_OU)).isFalse();
+        assertThat(inMemoryServer.entryExists("cn=policies,uid=dora," + USERS_OU)).isFalse();
+        assertThat(inMemoryServer.entryExists("uid=dora," + USERS_OU)).isFalse();
+        assertThat(inMemoryServer.entryExists(USERS_OU)).isTrue();
+    }
+
+    @Test
+    void delete_subtree_onLeaf_behavesLikePlainDelete() throws Exception {
+        inMemoryServer.add(new Entry("uid=eve," + USERS_OU,
+                new Attribute("objectClass", "inetOrgPerson"),
+                new Attribute("cn", "Eve"), new Attribute("sn", "Ee")));
+
+        executor.execute(dc, DeletePlan.singleStep(DeleteStep.subtree("uid=eve," + USERS_OU)));
+
+        assertThat(inMemoryServer.entryExists("uid=eve," + USERS_OU)).isFalse();
+    }
+
+    private void seedEntryWithPolicies(String dn) throws Exception {
+        inMemoryServer.add(new Entry(dn,
+                new Attribute("objectClass", "inetOrgPerson"),
+                new Attribute("cn", "Dora"), new Attribute("sn", "Dee")));
+        inMemoryServer.add(new Entry("cn=policies," + dn,
+                new Attribute("objectClass", "container"),
+                new Attribute("cn", "policies")));
+        inMemoryServer.add(new Entry("cn=pwd,cn=policies," + dn,
+                new Attribute("objectClass", "container"),
+                new Attribute("cn", "pwd")));
+    }
+
+    @Test
     void password_modifyStep_replacesAttribute() throws Exception {
         inMemoryServer.add(new Entry("uid=carol," + USERS_OU,
                 new Attribute("objectClass", "inetOrgPerson"),

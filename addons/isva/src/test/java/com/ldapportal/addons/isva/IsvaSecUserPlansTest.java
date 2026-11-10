@@ -319,6 +319,9 @@ class IsvaSecUserPlansTest {
     void hardDelete_isDeleteStepOnDn() {
         DeleteStep step = plans.hardDelete("secUUID=abc,o=acme,c=us");
         assertThat(step.targetDn()).isEqualTo("secUUID=abc,o=acme,c=us");
+        // Subtree: IVIA's cn=policies child must not block the delete.
+        assertThat(step.subtree()).isTrue();
+        assertThat(step.onFailure()).isEqualTo(StepFailurePolicy.ABORT);
     }
 
     /**

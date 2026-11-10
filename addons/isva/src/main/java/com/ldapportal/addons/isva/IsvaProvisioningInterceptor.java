@@ -165,9 +165,13 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
      * baseline. (Soft-disable is no longer a delete-time choice; disabling
      * a user is a separate lifecycle verb — see {@link #planUserSetEnabled}
      * — which mirror-disables the secUser instead.)
+     *
+     * <p>Uses {@link IsvaSecUserPlans#hardDelete} so the IVIA-managed
+     * children of the secUser (e.g. {@code cn=policies}) are removed
+     * along with it instead of blocking the DEL.</p>
      */
     private DeletePlan planInlineUserDelete(String dn) {
-        return DeletePlan.singleStep(DeleteStep.of(dn));
+        return DeletePlan.singleStep(secUserPlans.hardDelete(dn));
     }
 
     /**

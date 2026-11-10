@@ -515,9 +515,14 @@ public class IsvaSecUserPlans {
      * Revoke (hard) the ISVA account: DEL the paired secUser entry
      * (linked mode only — inline's hard delete removes the single
      * entry via the baseline DEL).
+     *
+     * <p>Subtree delete: IVIA hangs server-managed children off the
+     * secUser (e.g. {@code cn=policies}, holding per-user password
+     * policy). They're owned by the account and go with it; a leaf-only
+     * DEL would fail with {@code notAllowedOnNonLeaf}.</p>
      */
     public DeleteStep hardDelete(String secUserDn) {
-        return DeleteStep.of(secUserDn);
+        return DeleteStep.subtree(secUserDn);
     }
 
     /**

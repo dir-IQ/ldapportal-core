@@ -204,6 +204,8 @@ class IsvaProvisioningInterceptorTest {
         assertThat(plan.steps()).hasSize(1);
         assertThat(plan.steps().get(0)).isInstanceOf(DeleteStep.class);
         assertThat(plan.steps().get(0).targetDn()).isEqualTo("uid=alice,dc=x");
+        // IVIA hangs cn=policies (etc.) off the secUser — must go with it.
+        assertThat(((DeleteStep) plan.steps().get(0)).subtree()).isTrue();
     }
 
     @Test
@@ -442,6 +444,10 @@ class IsvaProvisioningInterceptorTest {
         assertThat(plan.steps().get(1).targetDn()).isEqualTo("uid=alice,dc=x");
         assertThat(plan.steps()).allMatch(s ->
                 s instanceof com.ldapportal.core.provisioning.DeleteStep);
+        // secUser DEL removes IVIA-managed children (cn=policies); the
+        // demographic DEL stays leaf-only.
+        assertThat(((DeleteStep) plan.steps().get(0)).subtree()).isTrue();
+        assertThat(((DeleteStep) plan.steps().get(1)).subtree()).isFalse();
     }
 
     @Test
