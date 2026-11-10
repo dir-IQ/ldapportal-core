@@ -81,6 +81,7 @@ public class SyncConfigService {
     private final com.ldapportal.repository.SyncReconcileRunRepository reconcileRunRepo;
     private final com.ldapportal.ldap.sync.SyncVerifyProgressTracker verifyProgress;
     private final com.ldapportal.ldap.sync.SyncDriftStore driftStore;
+    private final com.ldapportal.ldap.sync.SyncHeldStore heldStore;
     private final com.ldapportal.ldap.sync.SyncVerifySnapshot verifySnapshot;
 
     /**
@@ -627,7 +628,65 @@ public class SyncConfigService {
                         r.item().targetDn(), r.item().sourceDn(), r.item().identity(), r.item().attributes()))
                 .toList();
         return new com.ldapportal.dto.sync.SyncDriftPage(set.getLastVerifiedAt(), set.getVerifyIncompleteAt(),
-                detailsRecorded, counts, matched, pageNo, pageSize, entries);
+                detailsRecorded, counts, matched, pageNo, pageSize, entries, heldStore.countsByStatus(syncSetId));
+    }
+
+    /**
+     * Every held reference the set's last complete content verify found (only
+     * the latest is kept), a page at a time: optionally one {@code status} and
+     * matching {@code q}. Not drift: the target keeps its own value of each.
+     */
+    public com.ldapportal.dto.sync.SyncHeldPage heldReferences(UUID syncSetId,
+                                                             com.ldapportal.entity.enums.SyncHeldStatus status,
+                                                             String q, int page, int size) {
+        SyncSet set = requireSet(syncSetId);
+        int pageSize = Math.max(1, Math.min(MAX_DRIFT_PAGE, size));
+        int pageNo = Math.max(0, page);
+        var counts = heldStore.countsByStatus(syncSetId);
+        long stored = counts.values().stream().mapToLong(Long::longValue).sum();
+        // A held count from a verify made before every reference was kept, with nothing stored yet.
+        boolean detailsRecorded = set.getLastVerifiedAt() != null && (stored > 0 || nz(set.getVerifyHeldCount()) == 0);
+        long matched = heldStore.count(syncSetId, status, q);
+        var entries = heldStore.page(syncSetId, status, q, pageNo * pageSize, pageSize).stream()
+                .map(r -> new com.ldapportal.dto.sync.SyncHeldPage.Entry(r.seq(), r.ref().entryDn(),
+                        r.ref().sourceDn(), r.ref().identity(), r.ref().attribute(), r.ref().reference(),
+                        r.ref().status()))
+                .toList();
+        return new com.ldapportal.dto.sync.SyncHeldPage(set.getLastVerifiedAt(), detailsRecorded, counts, matched,
+                pageNo, pageSize, entries);
+    }
+
+    /**
+     * Every stored held reference as CSV
+     * ({@code status,sourceDn,attribute,reference,entryDn,identity}), one row per
+     * held value, in verify order: filter on {@code status = DANGLING} for the
+     * references to fix on the source. Cells are neutralised as in
+     * {@link #writeDriftCsv}.
+     */
+    public void writeHeldCsv(UUID syncSetId, java.io.Writer out) {
+        requireSet(syncSetId);
+        List<String> headers = List.of("status", "sourceDn", "attribute", "reference", "entryDn", "identity");
+        try {
+            com.ldapportal.util.CsvUtils.writeHeader(out, headers);
+            heldStore.forEach(syncSetId, r -> {
+                var ref = r.ref();
+                Map<String, String> row = new java.util.HashMap<>();
+                row.put("status", ref.status().name());
+                row.put("sourceDn", safeCell(ref.sourceDn()));
+                row.put("attribute", safeCell(ref.attribute()));
+                row.put("reference", safeCell(ref.reference()));
+                row.put("entryDn", safeCell(ref.entryDn()));
+                row.put("identity", safeCell(ref.identity()));
+                try {
+                    com.ldapportal.util.CsvUtils.writeRow(out, headers, row);
+                } catch (java.io.IOException ex) {
+                    throw new java.io.UncheckedIOException(ex);
+                }
+            });
+            out.flush();
+        } catch (java.io.IOException ex) {
+            throw new java.io.UncheckedIOException(ex);
+        }
     }
 
     private static long nz(Integer n) {

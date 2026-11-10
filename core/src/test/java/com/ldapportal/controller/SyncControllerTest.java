@@ -402,6 +402,58 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void heldReferences_returnsThePage_forTheStatusAndSearch() throws Exception {
+        var counts = new java.util.EnumMap<com.ldapportal.entity.enums.SyncHeldStatus, Long>(
+                java.util.Map.of(com.ldapportal.entity.enums.SyncHeldStatus.DANGLING, 1L,
+                        com.ldapportal.entity.enums.SyncHeldStatus.UNSYNCED, 4L,
+                        com.ldapportal.entity.enums.SyncHeldStatus.UNCHECKED, 0L));
+        given(service.heldReferences(SET, com.ldapportal.entity.enums.SyncHeldStatus.DANGLING, "ghost", 0, 25))
+                .willReturn(new com.ldapportal.dto.sync.SyncHeldPage(OffsetDateTime.now(), true, counts, 1, 0, 25,
+                        List.of(new com.ldapportal.dto.sync.SyncHeldPage.Entry(3, "cn=eng,dc=dst", "cn=eng,dc=src",
+                                "eng", "member", "uid=ghost,dc=src",
+                                com.ldapportal.entity.enums.SyncHeldStatus.DANGLING))));
+
+        mockMvc.perform(get(SETS + "/" + SET + "/drift/held").param("status", "dangling").param("q", "ghost")
+                        .param("size", "25").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.counts.UNSYNCED").value(4))
+                .andExpect(jsonPath("$.entries[0].sourceDn").value("cn=eng,dc=src"))
+                .andExpect(jsonPath("$.entries[0].reference").value("uid=ghost,dc=src"))
+                .andExpect(jsonPath("$.entries[0].status").value("DANGLING"));
+    }
+
+    @Test
+    void heldReferences_unknownStatus_is400() throws Exception {
+        mockMvc.perform(get(SETS + "/" + SET + "/drift/held").param("status", "BOGUS")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void heldReferences_adminWithoutSuperadmin_isForbidden() throws Exception {
+        mockMvc.perform(get(SETS + "/" + SET + "/drift/held").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get(SETS + "/" + SET + "/drift/held.csv").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void heldReferencesCsv_isAnAttachment() throws Exception {
+        org.mockito.Mockito.doAnswer(inv -> {
+            java.io.Writer w = inv.getArgument(1);
+            w.write("\"status\"\r\n");
+            w.flush();
+            return null;
+        }).when(service).writeHeldCsv(eq(SET), any());
+
+        mockMvc.perform(get(SETS + "/" + SET + "/drift/held.csv").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("sync-held-references-" + SET + ".csv")))
+                .andExpect(content().string("\"status\"\r\n"));
+    }
+
+    @Test
     void driftRepair_previewsThenRepairs_forTheGivenItems() throws Exception {
         given(service.previewDriftRepair(eq(SET), eq(List.of(3, 7)), argThat(at -> at.isEqual(DRIFT_AT)))).willReturn(new com.ldapportal.dto.sync.SyncDriftRepairPreview(
                 List.of(new com.ldapportal.dto.sync.SyncDriftRepairPreview.Item(3,

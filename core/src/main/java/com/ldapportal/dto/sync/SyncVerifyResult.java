@@ -94,9 +94,21 @@ public record SyncVerifyResult(
      * of them name an entry that doesn't exist on the source at all: a source
      * data problem, not something a reconcile can fix. Up to
      * {@code SyncContentVerifier.HELD_CHECK_LIMIT} referenced DNs are looked up;
-     * {@code unchecked} says some weren't.
+     * {@code unchecked} says some weren't. {@code items} is every held value,
+     * stored for the Drift tab ({@code SyncHeldStore}) rather than sent with the
+     * result; {@code samples} are the first few, for the response.
      */
-    public record HeldReferences(int entries, int dangling, boolean unchecked, List<HeldSample> samples) {
+    public record HeldReferences(int entries, int dangling, boolean unchecked, List<HeldSample> samples,
+                                 @com.fasterxml.jackson.annotation.JsonIgnore List<SyncHeldReference> items) {
+
+        public HeldReferences {
+            items = items == null ? List.of() : items;
+        }
+
+        /** Counts and samples only, without the full list. */
+        public HeldReferences(int entries, int dangling, boolean unchecked, List<HeldSample> samples) {
+            this(entries, dangling, unchecked, samples, List.of());
+        }
     }
 
     /** One held value: the member's target DN, the attribute, the source DN it names, and whether that's missing. */

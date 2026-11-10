@@ -48,6 +48,11 @@ const driftPage = vi.hoisted(() => (over: Record<string, unknown> = {}) => ({
 
 vi.mock('@/api/sync', () => ({
   getDrift: vi.fn(() => Promise.resolve({ data: driftPage() })),
+  getHeldReferences: vi.fn(() => Promise.resolve({ data: {
+    verifiedAt: '2026-11-05T08:00:00Z', detailsRecorded: true, counts: { DANGLING: 1, UNSYNCED: 1, UNCHECKED: 0 },
+    matched: 1, page: 0, size: 25, entries: [{ seq: 0, entryDn: 'cn=a,dc=dst', sourceDn: 'cn=a,dc=src', identity: 'a',
+      attribute: 'secDN', reference: 'uid=ghost,dc=src', status: 'DANGLING' }],
+  } })),
   downloadDriftCsv: vi.fn(() => Promise.resolve({ data: new Blob() })),
   listMemberships: vi.fn(() => Promise.resolve(page([membership]))),
   startReconcile: vi.fn(() => Promise.resolve({ data: { started: true } })),
@@ -512,26 +517,22 @@ describe('MembershipInventoryModal', () => {
     w.unmount()
   })
 
-  it('Verify now lists held references, telling dangling ones from unsynced ones', async () => {
-    vi.mocked(syncApi.verifyContents).mockResolvedValueOnce({ data: {
-      sourceMembers: 2, targetEntries: 2, inSync: 2, missingOnTarget: 0, orphanOnTarget: 0, contentMismatches: 0,
-      sampleMissing: [], sampleOrphans: [], sampleMismatches: [], sourceComplete: true, targetComplete: true,
-      note: null, orphansAnchored: true,
-      heldReferences: { entries: 2, dangling: 1, unchecked: false, samples: [
-        { entryDn: 'cn=a,dc=dst', attribute: 'secDN', reference: 'uid=ghost,dc=src', dangling: true },
-        { entryDn: 'cn=b,dc=dst', attribute: 'member', reference: 'uid=new,dc=src', dangling: false },
-      ] },
-    } } as never)
+  it('Verify now stores every held reference; the drift tab counts them and lists the dangling ones', async () => {
     const wrapper = open()
     await flushPromises()
     await openDriftTab()
+    // The check stores them; the tab reloads its stored page, now with held counts.
+    vi.mocked(syncApi.getDrift).mockResolvedValue({ data: driftPage({ held: { DANGLING: 1, UNSYNCED: 1 } }) } as never)
     byText('Verify now')!.click()
     await flushPromises()
     const held = document.querySelector('[data-testid="held-references"]')!.textContent!.replace(/\s+/g, ' ')
-    expect(held).toContain('Held references: 2 entries have a reference the sync holds back')
-    expect(held).toContain('1 of them names an entry that doesn’t exist on the source')
-    expect(held).toContain('cn=a,dc=dst: secDN → uid=ghost,dc=src (doesn’t exist)')
-    expect(held).toContain('cn=b,dc=dst: member → uid=new,dc=src (not synced yet)')
+    expect(held).toContain('Held references (not drift): 2 values name an entry the sync hasn’t placed')
+    expect(held).toContain('1 names an entry that doesn’t exist on the source')
+
+    Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="held-references"] button'))[0].click()
+    await flushPromises()
+    expect(syncApi.getHeldReferences).toHaveBeenCalledWith('set-1', expect.objectContaining({ status: 'DANGLING' }))
+    expect(document.querySelector('[data-testid="held-row-0"]')!.textContent).toContain('uid=ghost,dc=src')
     wrapper.unmount()
   })
 

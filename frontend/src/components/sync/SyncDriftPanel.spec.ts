@@ -23,6 +23,14 @@ const page = vi.hoisted(() => (over: Record<string, unknown> = {}) => ({
 vi.mock('@/api/sync', () => ({
   getDrift: vi.fn(() => Promise.resolve({ data: page() })),
   downloadDriftCsv: vi.fn(() => Promise.resolve({ data: new Blob(['x']) })),
+  getHeldReferences: vi.fn(() => Promise.resolve({ data: {
+    verifiedAt: '2026-11-05T08:00:00Z', detailsRecorded: true, counts: { DANGLING: 1, UNSYNCED: 30, UNCHECKED: 0 },
+    matched: 1, page: 0, size: 25, entries: [
+      { seq: 4, entryDn: 'cn=eng,ou=groups,dc=hr', sourceDn: 'cn=eng,ou=groups,dc=corp', identity: 'eng',
+        attribute: 'member', reference: 'uid=ghost,ou=staff,dc=corp', status: 'DANGLING' },
+    ],
+  } })),
+  downloadHeldCsv: vi.fn(() => Promise.resolve({ data: new Blob(['h']) })),
   previewOrphanDelete: vi.fn(() => Promise.resolve({ data: { items: [
     { seq: 1, action: 'DELETE', targetDn: 'uid=old,ou=people,dc=hr', reason: null },
     { seq: 7, action: 'SKIP', targetDn: 'uid=kept,ou=people,dc=hr', reason: 'This set now manages it.' },
@@ -248,6 +256,67 @@ describe('SyncDriftPanel', () => {
     const w = mountPanel({ canDiff: false })
     await flushPromises()
     expect(w.text()).not.toContain('Compare in Directory Diff')
+  })
+
+  describe('held references', () => {
+    const withHeld = () => vi.mocked(syncApi.getDrift).mockResolvedValue(
+      { data: page({ held: { DANGLING: 1, UNSYNCED: 30, UNCHECKED: 0 } }) } as never)
+
+    it('counts them apart from drift, with a chip per status that has any', async () => {
+      withHeld()
+      const w = mountPanel()
+      await flushPromises()
+      const chips = w.findAll('[aria-pressed]').map(b => b.text().replace(/\s+/g, ' ').trim())
+      expect(chips).toEqual(['All 3', 'Missing on target 1', 'Orphaned on target 1', 'Content drift 1',
+        'Held: doesn’t exist on source 1', 'Held: not synced yet 30'])
+      expect(w.find('[data-testid="held-references"]').text().replace(/\s+/g, ' '))
+        .toContain('31 values name an entry the sync hasn’t placed')
+    })
+
+    it('a held chip lists every held reference of that status, with the source entry to fix', async () => {
+      withHeld()
+      const w = mountPanel({ canManage: true })
+      await flushPromises()
+      await btn(w, 'Held: doesn’t exist on source').trigger('click')
+      await flushPromises()
+
+      expect(syncApi.getHeldReferences).toHaveBeenCalledWith('set-1',
+        { status: 'DANGLING', q: undefined, page: 0, size: 25 })
+      const row = w.find('[data-testid="held-row-4"]')
+      expect(row.text()).toContain('Doesn’t exist on source')
+      expect(row.text()).toContain('member')
+      expect(row.text()).toContain('uid=ghost,ou=staff,dc=corp')
+      expect(JSON.parse(row.find('.rl').attributes('data-to')!)).toEqual(
+        { path: '/superadmin/directory-browser', query: { dir: 'dir-src', dn: 'cn=eng,ou=groups,dc=corp' } })
+      // Not drift: nothing to select or repair.
+      expect(w.find('[data-testid="drift-bulk"]').exists()).toBe(false)
+      expect(w.find('[data-testid="drift-row-0"]').exists()).toBe(false)
+      expect(w.text()).toContain('of 1')
+    })
+
+    it('the summary links straight to the ones to fix, and Export CSV exports the held list', async () => {
+      withHeld()
+      const w = mountPanel()
+      await flushPromises()
+      await w.find('[data-testid="held-references"] button').trigger('click')
+      await flushPromises()
+      expect(btn(w, 'Held: doesn’t exist on source').attributes('aria-pressed')).toBe('true')
+
+      await btn(w, 'Export CSV').trigger('click')
+      await flushPromises()
+      expect(syncApi.downloadHeldCsv).toHaveBeenCalledWith('set-1')
+      expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), 'sync-held-references-People-HR.csv')
+    })
+
+    it('offers the list even when nothing drifts', async () => {
+      vi.mocked(syncApi.getDrift).mockResolvedValue({ data: page({
+        counts: { MISSING: 0, ORPHAN: 0, MISMATCH: 0 }, matched: 0, entries: [], held: { UNSYNCED: 2 },
+      }) } as never)
+      const w = mountPanel()
+      await flushPromises()
+      expect(w.find('[data-testid="drift-none"]').exists()).toBe(true)
+      expect(btn(w, 'Held: not synced yet')).toBeTruthy()
+    })
   })
 
   describe('repair', () => {
