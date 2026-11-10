@@ -9,111 +9,122 @@
 -->
 <template>
   <div class="space-y-3" data-testid="drift-panel">
-    <div class="flex items-start justify-between gap-2 flex-wrap">
-      <div class="text-sm space-y-0.5">
-        <p v-if="data?.verifiedAt" class="text-gray-700">
-          Verified <RelativeTime :value="data.verifiedAt" /> · complete scan
-        </p>
-        <p v-else-if="data" class="text-gray-700">This set hasn’t had a complete content check yet.</p>
-        <p v-if="laterIncomplete" class="text-amber-700" data-testid="drift-incomplete">
-          A later check (<RelativeTime :value="data!.incompleteAt!" />) couldn’t read both directories, so these are
-          the results of the last complete one.
-        </p>
-        <p v-if="live" class="text-gray-600 text-xs">
-          Just now: source <span class="tabular-nums">{{ live.sourceMembers }}</span> members ·
-          target <span class="tabular-nums">{{ live.targetEntries }}</span> entries ·
-          <span class="tabular-nums text-emerald-700">{{ live.inSync }}</span> in sync
-          <template v-if="live.leavingSet">
-            · <span data-testid="leaving-set"
-                    title="Target entries that left the source scope but this set still tracks: a delete held for review, or one the next reconcile makes. Not counted as orphans."><span
-              class="tabular-nums">{{ live.leavingSet }}</span> leaving the set (held for delete or awaiting the next
-              reconcile)</span>
-          </template>
-          <template v-if="!live.sourceComplete || !live.targetComplete">
-            · <span class="text-amber-700">a directory read failed, so this check wasn’t saved</span>
-          </template>
-        </p>
-        <p v-if="live?.note" class="text-amber-700">{{ live.note }}</p>
+    <!-- What the last complete content check found, laid out like the Reconciliation tab's "Last reconcile". -->
+    <div class="rounded border border-gray-200 px-3 py-2 text-sm space-y-1.5">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <span class="text-base font-semibold text-gray-800">Last content check</span>
+        <div class="flex items-center gap-2">
+          <RouterLink v-if="canDiff" :to="{ path: '/superadmin/directory-diff', query: { verifySet: set.id } }"
+                      class="btn-neutral btn-compact"
+                      title="Compare the set's source and target entry by entry in Directory Diff, independently of the sync's own comparison: every attribute's values side by side, with a live re-read per entry">
+            Compare in Directory Diff
+          </RouterLink>
+          <button v-if="data?.verifiedAt && totalDrift > 0" type="button" class="btn-neutral btn-compact"
+                  :disabled="exporting" @click="exportCsv">
+            {{ exporting ? 'Exporting…' : 'Export CSV' }}
+          </button>
+          <button type="button" class="btn-secondary btn-compact" :disabled="verifying"
+                  title="Check only, never writes: reads both directories and compares them directly, without trusting the sync's records, and lists every entry missing on the target, orphaned on the target, or with content drift"
+                  @click="emit('verify')">
+            {{ verifying ? 'Verifying…' : 'Verify now' }}
+          </button>
+        </div>
       </div>
-      <div class="flex items-center gap-2">
-        <RouterLink v-if="canDiff" :to="{ path: '/superadmin/directory-diff', query: { verifySet: set.id } }"
-                    class="btn-secondary btn-compact"
-                    title="Compare the set's source and target entry by entry in Directory Diff, independently of the sync's own comparison: every attribute's values side by side, with a live re-read per entry">
-          Compare in Directory Diff
-        </RouterLink>
-        <button type="button" class="btn-secondary btn-compact" :disabled="verifying"
-                title="Check only, never writes: reads both directories and compares them directly, without trusting the sync's records, and lists every entry missing on the target, orphaned on the target, or with content drift"
-                @click="emit('verify')">
-          {{ verifying ? 'Verifying…' : 'Verify now' }}
-        </button>
-      </div>
-    </div>
 
-    <p v-if="data?.verifiedAt && !data.detailsRecorded" class="text-xs text-amber-700" data-testid="drift-no-details">
-      These counts come from a check made before the details were kept. Verify now to list the entries.
-    </p>
-
-    <!-- Category cards: each filters the table. -->
-    <div v-if="data?.verifiedAt" class="flex flex-wrap gap-2" role="group" aria-label="Filter by kind of drift">
-      <button v-for="c in cards" :key="c.key" type="button"
-              class="min-w-32 rounded-lg border px-3 py-2 text-left"
-              :class="category === c.value ? 'border-blue-500 ring-2 ring-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:bg-gray-50'"
-              :aria-pressed="category === c.value" @click="setCategory(c.value)">
-        <span class="block text-xs text-gray-600">{{ c.label }}</span>
-        <span class="block text-lg font-semibold tabular-nums" :class="c.n ? c.tone : 'text-gray-400'">{{ c.n }}</span>
-      </button>
-    </div>
-
-    <p v-if="data?.verifiedAt && counts.ORPHAN" class="text-xs text-gray-500" data-testid="orphan-scope">
-      {{ set.sourceAnchorAttribute
-        ? 'Orphans are entries carrying the set’s source anchor that no source entry accounts for; entries without it, or that another set places there, aren’t counted.'
-        : 'This set writes no source anchor, so every entry under the target base that matches its filter counts, including ones another set or nothing manages.' }}
-    </p>
-
-    <!-- Held references: from this session's check, else the last complete one's counts. -->
-    <div v-if="live?.heldReferences?.entries" data-testid="held-references" class="text-sm text-gray-600">
-      <p>
-        Held references: <span class="font-medium tabular-nums">{{ live.heldReferences.entries }}</span>
-        {{ live.heldReferences.entries === 1 ? 'entry has' : 'entries have' }} a reference the sync holds back
-        (not counted as drift).
-        <template v-if="live.heldReferences.dangling">
-          <span class="text-amber-700">{{ live.heldReferences.dangling }} of them
-            {{ live.heldReferences.dangling === 1 ? 'names' : 'name' }} an entry that doesn’t exist on the
-            source</span>: fix those on the source; a reconcile can’t.
-        </template>
-        The rest name entries not synced yet, and fill in once those are.
-        <template v-if="live.heldReferences.unchecked"> Not every referenced entry was looked up.</template>
+      <p v-if="data?.verifiedAt" class="text-gray-600">
+        Verified <RelativeTime :value="data.verifiedAt" /> · complete scan
       </p>
-      <ul class="font-mono text-xs text-gray-500 list-disc pl-4">
-        <li v-for="h in live.heldReferences.samples" :key="h.entryDn + h.attribute + h.reference">
-          {{ h.entryDn }}: {{ h.attribute }} → {{ h.reference }}
-          <span class="font-sans" :class="h.dangling ? 'text-amber-700' : 'text-gray-500'">
-            ({{ h.dangling ? 'doesn’t exist' : 'not synced yet' }})
-          </span>
-        </li>
-      </ul>
+      <p v-else-if="data" class="text-gray-500">This set hasn’t had a complete content check yet.</p>
+      <p v-if="laterIncomplete" class="text-amber-700" data-testid="drift-incomplete">
+        A later check (<RelativeTime :value="data!.incompleteAt!" />) couldn’t read both directories, so these are
+        the results of the last complete one.
+      </p>
+      <p v-if="live" class="text-gray-600">
+        Just now: source <span class="font-medium tabular-nums">{{ live.sourceMembers }}</span> members ·
+        target <span class="font-medium tabular-nums">{{ live.targetEntries }}</span> entries ·
+        <span class="font-medium tabular-nums text-emerald-700">{{ live.inSync }}</span> in sync
+        <template v-if="live.leavingSet">
+          · <span data-testid="leaving-set"
+                  title="Target entries that left the source scope but this set still tracks: a delete held for review, or one the next reconcile makes. Not counted as orphans."><span
+            class="font-medium tabular-nums">{{ live.leavingSet }}</span> leaving the set (held for delete or awaiting the
+            next reconcile)</span>
+        </template>
+        <template v-if="!live.sourceComplete || !live.targetComplete">
+          · <span class="text-amber-700">a directory read failed, so this check wasn’t saved</span>
+        </template>
+      </p>
+      <p v-if="live?.note" class="text-amber-700">{{ live.note }}</p>
+      <p v-if="data?.verifiedAt && !data.detailsRecorded" class="text-amber-700" data-testid="drift-no-details">
+        These counts come from a check made before the details were kept. Verify now to list the entries.
+      </p>
+      <p v-if="data?.verifiedAt && data.detailsRecorded && totalDrift === 0" class="text-emerald-700"
+         data-testid="drift-none">
+        ✓ Source and target agree: no drift at the last check.
+      </p>
+
+      <!-- Held references: from this session's check, else the last complete one's counts. -->
+      <div v-if="live?.heldReferences?.entries" data-testid="held-references" class="text-gray-600">
+        <p>
+          Held references: <span class="font-medium tabular-nums">{{ live.heldReferences.entries }}</span>
+          {{ live.heldReferences.entries === 1 ? 'entry has' : 'entries have' }} a reference the sync holds back
+          (not counted as drift).
+          <template v-if="live.heldReferences.dangling">
+            <span class="text-amber-700">{{ live.heldReferences.dangling }} of them
+              {{ live.heldReferences.dangling === 1 ? 'names' : 'name' }} an entry that doesn’t exist on the
+              source</span>: fix those on the source; a reconcile can’t.
+          </template>
+          The rest name entries not synced yet, and fill in once those are.
+          <template v-if="live.heldReferences.unchecked"> Not every referenced entry was looked up.</template>
+        </p>
+        <ul class="font-mono text-xs text-gray-500 list-disc pl-4">
+          <li v-for="h in live.heldReferences.samples" :key="h.entryDn + h.attribute + h.reference">
+            {{ h.entryDn }}: {{ h.attribute }} → {{ h.reference }}
+            <span class="font-sans" :class="h.dangling ? 'text-amber-700' : 'text-gray-500'">
+              ({{ h.dangling ? 'doesn’t exist' : 'not synced yet' }})
+            </span>
+          </li>
+        </ul>
+      </div>
+      <p v-else-if="set.verify?.held" class="text-gray-600" data-testid="held-snapshot">
+        At the last content check, {{ set.verify.held }}
+        {{ set.verify.held === 1 ? 'entry had' : 'entries had' }} a held reference (a value naming an entry the sync
+        hasn’t placed)<template v-if="set.verify.dangling">; <span class="text-amber-700">{{ set.verify.dangling }}
+          {{ set.verify.dangling === 1 ? 'names' : 'name' }} an entry that doesn’t exist on the source</span></template>.
+        Verify now lists them.
+      </p>
     </div>
-    <p v-else-if="set.verify?.held" class="text-xs text-gray-600" data-testid="held-snapshot">
-      At the last content check, {{ set.verify.held }}
-      {{ set.verify.held === 1 ? 'entry had' : 'entries had' }} a held reference (a value naming an entry the sync
-      hasn’t placed)<template v-if="set.verify.dangling">; <span class="text-amber-700">{{ set.verify.dangling }}
-        {{ set.verify.dangling === 1 ? 'names' : 'name' }} an entry that doesn’t exist on the source</span></template>.
-      Verify now lists them.
-    </p>
 
     <template v-if="data?.verifiedAt && totalDrift > 0">
-      <div class="flex items-center gap-2">
-        <input v-model="search" class="input input-sm flex-1" placeholder="Filter by DN, attribute or value…"
-               aria-label="Filter drift" />
-        <button type="button" class="btn-secondary btn-compact" :disabled="exporting" @click="exportCsv">
-          {{ exporting ? 'Exporting…' : 'Export CSV' }}
+      <!-- Kind filter chips with counts, as the Reconciliation tab's state chips. -->
+      <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by kind of drift">
+        <button v-for="c in chips" :key="c.key" type="button"
+                class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full"
+                :class="[c.chip, category === c.value ? 'ring-2 ring-offset-1 ring-blue-500' : '']"
+                :aria-pressed="category === c.value" :title="c.hint" @click="setCategory(c.value)">
+          <span v-if="c.dot" class="w-1.5 h-1.5 rounded-full" :class="c.dot" aria-hidden="true"></span>
+          {{ c.label }} <span class="tabular-nums">{{ c.n }}</span>
         </button>
       </div>
 
-      <!-- Repair: missing and drifted entries, through the sync engine, after a live re-check and a preview. -->
+      <p v-if="counts.ORPHAN" class="text-xs text-gray-500" data-testid="orphan-scope">
+        {{ set.sourceAnchorAttribute
+          ? 'Orphans are entries carrying the set’s source anchor that no source entry accounts for; entries without it, or that another set places there, aren’t counted.'
+          : 'This set writes no source anchor, so every entry under the target base that matches its filter counts, including ones another set or nothing manages.' }}
+        <template v-if="canManage && orphanDeleteBlocked">
+          <span data-testid="orphan-no-delete">{{ orphanDeleteBlocked }}</span>
+        </template>
+      </p>
+
+      <input v-model="search" class="input input-sm w-full" placeholder="Filter by DN, attribute or value…"
+             aria-label="Filter drift" />
+
+      <!--
+        Bulk actions on the selected rows (this page only): Repair takes the
+        missing and drifted ones, Delete the orphans this set can prove are its own.
+      -->
       <div v-if="canManage && selectableOnPage.length" class="flex items-center gap-2 flex-wrap" data-testid="drift-bulk">
         <span class="text-xs text-gray-600 tabular-nums mr-1">
-          {{ selected.size ? `${selected.size} selected` : 'Select entries to repair or delete them' }}
+          {{ selected.size ? `${selected.size} selected` : 'Select rows to act on them' }}
         </span>
         <button type="button" class="btn-secondary btn-compact" :disabled="!selectedRepairable.length"
                 title="Re-check the selected missing and drifted entries live, then show what a repair would create or re-apply before anything is written"
@@ -130,35 +141,36 @@
         </button>
       </div>
 
-      <div class="overflow-x-auto border border-gray-200 rounded-lg">
-        <table class="min-w-full text-sm">
-          <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wider">
+      <div class="overflow-x-auto rounded-lg border border-gray-200">
+        <table class="min-w-full divide-y divide-gray-200 text-sm">
+          <thead class="bg-gray-50">
             <tr>
-              <th v-if="canManage" scope="col" class="w-8 pl-3">
-                <input type="checkbox" class="rounded border-gray-300" :checked="allSelected"
-                       :disabled="!selectableOnPage.length" aria-label="Select every entry on this page that can be repaired or deleted"
+              <th v-if="showSelect" scope="col" class="px-3 py-3 w-10">
+                <input type="checkbox" class="rounded text-blue-600 focus:ring-blue-500" :checked="allSelected"
+                       :indeterminate="selected.size > 0 && !allSelected"
+                       aria-label="Select every entry on this page that can be repaired or deleted"
                        @change="toggleAll(($event.target as HTMLInputElement).checked)" />
               </th>
               <th scope="col" class="w-8"><span class="sr-only">Details</span></th>
-              <th scope="col" class="px-3 py-2 text-left">Kind</th>
-              <th scope="col" class="px-3 py-2 text-left">Target DN</th>
-              <th scope="col" class="px-3 py-2 text-left">Detail</th>
-              <th v-if="canManage" scope="col" class="px-3 py-2"><span class="sr-only">Actions</span></th>
+              <th v-for="h in ['Kind', 'Target DN', 'Detail']" :key="h" scope="col"
+                  class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">{{ h }}</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-gray-100">
-            <tr v-if="loading && !entries.length"><td :colspan="colCount" class="px-3 py-4 text-center text-gray-500">Loading…</td></tr>
+          <tbody class="bg-white divide-y divide-gray-100">
+            <tr v-if="loading && !entries.length">
+              <td :colspan="colCount" class="px-4 py-8 text-center text-gray-500">Loading…</td>
+            </tr>
             <tr v-else-if="!entries.length">
-              <td :colspan="colCount" class="px-3 py-4 text-center text-gray-500">No drift matches.</td>
+              <td :colspan="colCount" class="px-4 py-8 text-center text-gray-500">No drift matches.</td>
             </tr>
             <template v-for="e in entries" :key="e.seq">
-              <tr :data-testid="`drift-row-${e.seq}`">
-                <td v-if="canManage" class="pl-3 align-top py-2">
-                  <input v-if="selectable(e)" type="checkbox" class="rounded border-gray-300"
+              <tr :data-testid="`drift-row-${e.seq}`" :class="selected.has(e.seq) ? 'bg-blue-50' : ''">
+                <td v-if="showSelect" class="px-3 py-3 w-10 align-top">
+                  <input v-if="selectable(e)" type="checkbox" class="rounded text-blue-600 focus:ring-blue-500"
                          :checked="selected.has(e.seq)" :aria-label="`Select ${e.targetDn}`"
                          @change="toggleSelected(e.seq)" />
                 </td>
-                <td class="pl-2 align-top py-2">
+                <td class="pl-2 py-3 align-top">
                   <button v-if="expandable(e)" type="button" class="text-gray-500 hover:text-gray-700 px-1"
                           :aria-expanded="expanded.has(e.seq)"
                           :aria-label="`${expanded.has(e.seq) ? 'Hide' : 'Show'} details for ${e.targetDn}`"
@@ -166,31 +178,19 @@
                     <span aria-hidden="true">{{ expanded.has(e.seq) ? '▾' : '▸' }}</span>
                   </button>
                 </td>
-                <td class="px-3 py-2 align-top whitespace-nowrap">
+                <td class="px-4 py-3 align-top whitespace-nowrap">
                   <span :class="KIND[e.category].badge">{{ KIND[e.category].label }}</span>
                 </td>
-                <td class="px-3 py-2 align-top font-mono text-xs break-all">
+                <td class="px-4 py-3 align-top text-[13px] font-mono break-all">
                   <RouterLink v-if="targetDirectoryId && e.category !== 'MISSING'" :to="browserLink(targetDirectoryId, e.targetDn)"
                               class="text-blue-700 hover:underline">{{ e.targetDn }}</RouterLink>
-                  <span v-else>{{ e.targetDn }}</span>
+                  <span v-else class="text-gray-700">{{ e.targetDn }}</span>
                 </td>
-                <td class="px-3 py-2 align-top text-xs text-gray-600">{{ detail(e) }}</td>
-                <td v-if="canManage" class="px-3 py-2 align-top text-right whitespace-nowrap">
-                  <button v-if="repairable(e)" type="button" class="btn-secondary btn-compact"
-                          :title="e.category === 'MISSING' ? 'Create the entry on the target from its source, after a live re-check and a preview' : 'Bring the target entry back to its source, after a live re-check and a preview'"
-                          @click="openRepair([e.seq])">
-                    {{ e.category === 'MISSING' ? 'Create' : 'Re-apply' }}…
-                  </button>
-                  <button v-else-if="deletable(e)" type="button" class="btn-danger btn-compact"
-                          title="Delete this orphaned entry from the target, after a live re-check, a preview and a typed confirmation"
-                          @click="openDelete([e.seq])">
-                    Delete…
-                  </button>
-                </td>
+                <td class="px-4 py-3 align-top text-[13px] text-gray-600">{{ detail(e) }}</td>
               </tr>
               <tr v-if="expanded.has(e.seq)" :data-testid="`drift-detail-${e.seq}`" class="bg-gray-50">
-                <td :colspan="canManage ? 2 : 1"></td>
-                <td :colspan="canManage ? 4 : 3" class="px-3 py-2 space-y-2">
+                <td :colspan="showSelect ? 2 : 1"></td>
+                <td colspan="3" class="px-4 py-2 space-y-2">
                   <table v-if="e.attributes.length" class="text-xs w-full">
                     <thead class="text-gray-500">
                       <tr>
@@ -232,7 +232,7 @@
         </table>
       </div>
 
-      <div class="flex items-center justify-between gap-2 flex-wrap text-xs text-gray-600">
+      <div class="flex items-center justify-between gap-2 flex-wrap text-xs text-gray-600 pt-1 border-t border-gray-100">
         <label class="flex items-center gap-1.5">
           Rows
           <select v-model.number="size" class="input input-sm py-0.5 w-20" aria-label="Drift rows per page">
@@ -241,7 +241,7 @@
             <option :value="100">100</option>
             <option :value="200">200</option>
           </select>
-          <span class="text-gray-500">{{ rangeLabel }}</span>
+          <span class="text-gray-500">of {{ data?.matched ?? 0 }}</span>
         </label>
         <div class="flex items-center gap-2">
           <button type="button" class="btn-neutral btn-compact" :disabled="page <= 0" @click="page--">Prev</button>
@@ -250,9 +250,6 @@
         </div>
       </div>
     </template>
-    <p v-else-if="data?.verifiedAt && data.detailsRecorded" class="text-sm text-emerald-700" data-testid="drift-none">
-      ✓ Source and target agree: no drift at the last check.
-    </p>
 
     <AppModal v-model="showRepair" title="Repair drift" size="lg">
       <div class="space-y-3 text-sm" data-testid="repair-preview">
@@ -383,23 +380,24 @@ const counts = computed<Record<SyncDriftCategory, number>>(() =>
 const totalDrift = computed<number>(() => counts.value.MISSING + counts.value.ORPHAN + counts.value.MISMATCH)
 const entries = computed<SyncDriftEntry[]>(() => data.value?.entries ?? [])
 const pageCount = computed<number>(() => Math.max(1, Math.ceil((data.value?.matched ?? 0) / size.value)))
-const rangeLabel = computed<string>(() => {
-  const n = data.value?.matched ?? 0
-  if (!n) return 'none'
-  const from = page.value * size.value + 1
-  return `${from}–${Math.min(n, from + size.value - 1)} of ${n}`
-})
 const laterIncomplete = computed<boolean>(() => {
   const d = data.value
   return !!d?.incompleteAt && (!d.verifiedAt || d.incompleteAt > d.verifiedAt)
 })
 
-interface Card { key: string; label: string; value: CategoryFilter; n: number; tone: string }
-const cards = computed<Card[]>(() => [
-  { key: 'all', label: 'All', value: '', n: totalDrift.value, tone: 'text-gray-900' },
-  { key: 'missing', label: 'Missing on target', value: 'MISSING', n: counts.value.MISSING, tone: 'text-rose-700' },
-  { key: 'orphan', label: 'Orphaned on target', value: 'ORPHAN', n: counts.value.ORPHAN, tone: 'text-amber-700' },
-  { key: 'mismatch', label: 'Content drift', value: 'MISMATCH', n: counts.value.MISMATCH, tone: 'text-amber-700' },
+interface Chip { key: string; label: string; value: CategoryFilter; n: number; chip: string; dot: string; hint: string }
+const chips = computed<Chip[]>(() => [
+  { key: 'all', label: 'All', value: '', n: totalDrift.value, chip: 'bg-gray-100 text-gray-700', dot: '',
+    hint: 'Every drift item the last complete check found.' },
+  { key: 'missing', label: 'Missing on target', value: 'MISSING', n: counts.value.MISSING,
+    chip: 'bg-red-50 text-red-700', dot: 'bg-red-600',
+    hint: 'In the set on the source, but not on the target: new in the source, or deleted on the target.' },
+  { key: 'orphan', label: 'Orphaned on target', value: 'ORPHAN', n: counts.value.ORPHAN,
+    chip: 'bg-amber-50 text-amber-800', dot: 'bg-amber-500',
+    hint: 'On the target, but no source entry in the set accounts for it.' },
+  { key: 'mismatch', label: 'Content drift', value: 'MISMATCH', n: counts.value.MISMATCH,
+    chip: 'bg-yellow-50 text-yellow-800', dot: 'bg-yellow-500',
+    hint: 'On both sides, but the target\'s attributes differ from what the source projects.' },
 ])
 
 function setCategory(c: CategoryFilter): void {
@@ -438,7 +436,26 @@ const selectedOrphans = computed<number[]>(() =>
   entries.value.filter(e => deletable(e) && selected.value.has(e.seq)).map(e => e.seq))
 const allSelected = computed<boolean>(() =>
   selectableOnPage.value.length > 0 && selectableOnPage.value.every(e => selected.value.has(e.seq)))
-const colCount = computed<number>(() => (props.canManage ? 6 : 4))
+/** The selection column shows only when something on the page can be acted on. */
+const showSelect = computed<boolean>(() => !!props.canManage && selectableOnPage.value.length > 0)
+const colCount = computed<number>(() => (showSelect.value ? 5 : 4))
+
+/**
+ * Why orphans can't be deleted from this tab, or '' when they can: the set must
+ * write a source anchor, and key on its directory's own identity, for an anchor
+ * value to prove an entry is this set's.
+ */
+const orphanDeleteBlocked = computed<string>(() => {
+  if (!props.set.sourceAnchorAttribute) {
+    return 'So orphans can’t be deleted here: without an anchor nothing proves they’re this set’s. Delete any '
+      + 'that shouldn’t be there in the Directory Browser.'
+  }
+  if (props.set.identityKey) {
+    return 'Orphans can’t be deleted here: this set keys on a custom identity attribute, whose anchor values can’t '
+      + 'prove an entry is this set’s. Delete any that shouldn’t be there in the Directory Browser.'
+  }
+  return ''
+})
 
 function toggleSelected(seq: number): void {
   const next = new Set(selected.value)
