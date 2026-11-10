@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background, the Drift tab laid out like the Reconciliation tab with bulk-only actions, every held reference listed and exportable from the Drift tab; 2026-11-10).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background, the Drift tab laid out like the Reconciliation tab with bulk-only actions, every held reference listed and exportable from the Drift tab, entries viewed in place from the Drift tab; 2026-11-10).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -656,8 +656,8 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   previous list and says so). The Drift tab is laid out like the
   Reconciliation tab: a **Last content check** summary (with **Verify now**,
   **Export CSV** and **Compare in Directory Diff**), then the list: filter by
-  kind with the count chips, search by DN, attribute or value, page through them, open an
-  entry in the Directory Browser, and expand a content drift to see each
+  kind with the count chips, search by DN, attribute or value, page through them, view an
+  entry (below), and expand a content drift to see each
   differing attribute's **source (expected)** and **target (actual)** values
   (password attributes are flagged but their values never shown; a long value
   list shows its first 50). **Export CSV** downloads them all
@@ -665,6 +665,21 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   differing attribute). The list comes from `GET …/sets/{id}/drift` and
   `…/drift.csv`. Counts from a check made before the list was kept show with
   a prompt to verify again.
+- **Viewing entries without leaving the inventory.** A DN in the Drift tab
+  (an item's target or source entry, a held reference's source entry, or the
+  entry a held value names) opens a read-only viewer over the inventory
+  instead of a page that replaces it. It reads each side live from its
+  directory and shows them attribute by attribute, side by side: for a drift
+  item the source and the target, with the attributes the content check found
+  differing flagged and listed first (*Only flagged attributes* narrows to
+  them); for a held reference the held attribute is flagged. A side with no
+  entry says so (*Not on the target: that's the drift* for a missing one).
+  Password material is never shown, and long value lists show their first 50.
+  Rows pair attributes by name, so a mapped or transformed attribute can
+  differ between the columns without being drift. **Open in Directory
+  Browser ↗** opens a side in a new tab for editing; **Compare in Directory
+  Diff ↗** also opens a new tab. Closing the viewer (or Escape) leaves the
+  inventory as it was.
 - **Repairing drift** (Drift tab; needs *Manage directory sync*). A **missing**
   entry can be **created** and a **content drift** **re-applied** from its
   source: tick the rows and choose **Repair (n)…** in the bar above the table

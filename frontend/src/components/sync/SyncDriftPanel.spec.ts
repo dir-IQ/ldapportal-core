@@ -63,7 +63,13 @@ function mountPanel(props: Record<string, unknown> = {}) {
       sourceDirectoryId: 'dir-src', targetDirectoryId: 'dir-hr', ...props } as never,
     global: { stubs: {
       AppModal: { props: ['modelValue', 'title'], template: '<div v-if="modelValue" class="modal"><slot /><slot name="footer" /></div>' },
-      RouterLink: { props: ['to'], template: '<a class="rl" :data-to="JSON.stringify(to)"><slot /></a>' },
+      SyncEntryViewer: {
+        props: ['show', 'title', 'sides', 'flaggedAttributes', 'flagLabel'],
+        emits: ['close'],
+        template: '<div v-if="show" class="viewer" :data-sides="JSON.stringify(sides)" '
+          + ':data-flagged="JSON.stringify(flaggedAttributes ?? null)"><span class="viewer-title">{{ title }}</span>'
+          + '<button class="viewer-close" @click="$emit(\'close\')">x</button></div>',
+      },
       RelativeTime: { props: ['value'], template: '<span>{{ value }}</span>' },
     } },
   })
@@ -96,14 +102,46 @@ describe('SyncDriftPanel', () => {
     expect(w.text()).toContain('of 3')
   })
 
-  it('links target entries (not missing ones) and source entries to the Directory Browser', async () => {
+  /** What the entry viewer was opened with. */
+  const viewer = (w: ReturnType<typeof mountPanel>) => {
+    const v = w.find('.viewer')
+    return v.exists()
+      ? { title: v.find('.viewer-title').text(), sides: JSON.parse(v.attributes('data-sides')!), flagged: JSON.parse(v.attributes('data-flagged')!) }
+      : null
+  }
+
+  it('shows an entry over the inventory instead of navigating away', async () => {
     const w = mountPanel()
     await flushPromises()
+    expect(w.find('a[href*="directory-browser"]').exists()).toBe(false)
 
-    const orphanLink = w.find('[data-testid="drift-row-1"] .rl')
-    expect(JSON.parse(orphanLink.attributes('data-to')!)).toEqual(
-      { path: '/superadmin/directory-browser', query: { dir: 'dir-hr', dn: 'uid=old,ou=people,dc=hr' } })
-    expect(w.find('[data-testid="drift-row-0"] .rl').exists()).toBe(false)
+    // Content drift: both sides, with the differing attributes flagged.
+    await w.find('[data-testid="drift-row-2"] button[title^="Show the entry"]').trigger('click')
+    expect(viewer(w)).toEqual({
+      title: 'Content drift: uid=js,ou=people,dc=hr',
+      sides: [
+        { key: 'source', label: 'Source', directoryId: 'dir-src', dn: 'uid=js,ou=staff,dc=corp',
+          missingText: 'No longer on the source.' },
+        { key: 'target', label: 'Target', directoryId: 'dir-hr', dn: 'uid=js,ou=people,dc=hr',
+          missingText: 'No longer on the target.' },
+      ],
+      flagged: ['title', 'mail', 'userPassword'],
+    })
+    await w.find('.viewer-close').trigger('click')
+    expect(viewer(w)).toBeNull()
+
+    // Missing: the target side says that's the drift. An orphan has no source side.
+    await w.find('[data-testid="drift-row-0"] button[title^="Show the entry"]').trigger('click')
+    expect(viewer(w)!.sides[1].missingText).toBe('Not on the target: that’s the drift.')
+    await w.find('[data-testid="drift-row-1"] button[title^="Show the entry"]').trigger('click')
+    expect(viewer(w)!.sides.map((s: { key: string }) => s.key)).toEqual(['target'])
+  })
+
+  it('shows DNs as plain text when the directories aren\'t known', async () => {
+    const w = mountPanel({ sourceDirectoryId: null, targetDirectoryId: null })
+    await flushPromises()
+    expect(w.find('[data-testid="drift-row-1"] button[title^="Show the entry"]').exists()).toBe(false)
+    expect(w.find('[data-testid="drift-row-1"]').text()).toContain('uid=old,ou=people,dc=hr')
   })
 
   it('a chip filters the table by kind', async () => {
@@ -286,8 +324,11 @@ describe('SyncDriftPanel', () => {
       expect(row.text()).toContain('Doesn’t exist on source')
       expect(row.text()).toContain('member')
       expect(row.text()).toContain('uid=ghost,ou=staff,dc=corp')
-      expect(JSON.parse(row.find('.rl').attributes('data-to')!)).toEqual(
-        { path: '/superadmin/directory-browser', query: { dir: 'dir-src', dn: 'cn=eng,ou=groups,dc=corp' } })
+      // The source entry to fix opens in place, both sides, with the held attribute flagged.
+      await row.find('button').trigger('click')
+      expect(viewer(w)!.sides.map((s: { dn: string }) => s.dn))
+        .toEqual(['cn=eng,ou=groups,dc=corp', 'cn=eng,ou=groups,dc=hr'])
+      expect(viewer(w)!.flagged).toEqual(['member'])
       // Not drift: nothing to select or repair.
       expect(w.find('[data-testid="drift-bulk"]').exists()).toBe(false)
       expect(w.find('[data-testid="drift-row-0"]').exists()).toBe(false)
