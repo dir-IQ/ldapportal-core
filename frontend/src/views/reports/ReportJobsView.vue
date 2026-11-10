@@ -728,7 +728,10 @@ onBeforeUnmount(() => document.removeEventListener('click', onAuditActionClickOu
 /** Columns shown up front; the rest start hidden but can be turned on from the Columns menu. */
 const VISIBLE_COLUMN_LIMIT = 10
 /** Each listed user's groups, added last by the backend; always shown, outside the ten-column limit. */
-const GROUPS_COLUMN = 'groups'
+/** Each listed user's direct and nested groups (backend `allgroups`): the Groups column. */
+const GROUPS_COLUMN = 'allgroups'
+/** Their direct groups only (backend `groups`, the column the user import reads): optional. */
+const DIRECT_GROUPS_COLUMN = 'groups'
 
 function columnLabel(col: string): string {
   return resultLabels.value[col] ?? col
@@ -780,6 +783,7 @@ const tableColumns = computed<ColumnDef[]>(() => {
     return buildUserAttributeColumns(resultColumns.value, {
       groupsKey: GROUPS_COLUMN,
       schemaNames: schemaNames.value,
+      labelOverride: k => (k === DIRECT_GROUPS_COLUMN ? 'direct groups' : undefined),
     })
   }
   let shown = 0
@@ -797,10 +801,18 @@ const tableColumns = computed<ColumnDef[]>(() => {
  * by its real attribute name (schema-cased, so the file's header matches the
  * table's). Derived columns go by their key, which the backend knows them by.
  */
-const exportColumns = computed<string[]>(() =>
-  visibleColumnKeys.value.map(k =>
-    (k === 'dn' || k === GROUPS_COLUMN || resultLabels.value[k] !== undefined)
-      ? k : attributeDisplayName(k, schemaNames.value)))
+const exportColumns = computed<string[]>(() => {
+  const keys = visibleColumnKeys.value
+  return keys.flatMap((k) => {
+    // The Groups column exports as the direct groups (which the user import
+    // reads back) followed by all groups, unless direct groups are shown too.
+    if (k === GROUPS_COLUMN) {
+      return keys.includes(DIRECT_GROUPS_COLUMN) ? [k] : [DIRECT_GROUPS_COLUMN, k]
+    }
+    return (k === 'dn' || k === DIRECT_GROUPS_COLUMN || resultLabels.value[k] !== undefined)
+      ? [k] : [attributeDisplayName(k, schemaNames.value)]
+  })
+})
 
 // Smart column type detection
 function isDateColumn(col: string, val: unknown): boolean {

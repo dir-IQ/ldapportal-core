@@ -242,20 +242,24 @@ public class OperationalReportService {
         return new ReportData(new ArrayList<>(columns), new ArrayList<>(rows), labels);
     }
 
-    /** Column key of the groups column added to reports that list users — the user export's. */
+    /** Column key of the direct-groups column added to reports that list users — the user export's. */
     static final String GROUPS_COLUMN = UserGroupIndex.COLUMN;
 
+    /** Column key of the direct-and-nested groups column added alongside it — the user export's. */
+    static final String ALL_GROUPS_COLUMN = UserGroupIndex.ALL_COLUMN;
+
     /**
-     * Adds a last {@value #GROUPS_COLUMN} column naming each listed user's
-     * groups, worked out from the group entries under the caller's group
-     * search bases ({@link ReportScope#groupBases()}), so only groups they can
-     * see are named. Built exactly as the user
-     * CSV export builds its groups column ({@link UserGroupIndex}: same labels,
-     * same {@code |}-joined cell), so the two agree. The UI shows it by
-     * default; a CSV export carries it.
+     * Adds two last columns naming each listed user's groups:
+     * {@value #GROUPS_COLUMN} (direct memberships) and
+     * {@value #ALL_GROUPS_COLUMN} (direct and nested). Worked out from the
+     * group entries under the caller's group search bases
+     * ({@link ReportScope#groupBases()}), so only groups they can see are
+     * named. Built exactly as the user CSV export builds its columns
+     * ({@link UserGroupIndex}: same labels, same {@code |}-joined cells), so
+     * the two agree.
      */
     private ReportData withGroups(DirectoryConnection dc, ReportScope scope, ReportData data) {
-        List<String> columns = UserGroupIndex.withColumn(data.columns());
+        List<String> columns = UserGroupIndex.withColumns(data.columns());
         Map<String, String> labels = data.labels();
         if (data.rows().isEmpty()) {
             return new ReportData(columns, data.rows(), labels);
@@ -272,7 +276,9 @@ public class OperationalReportService {
         for (Map<String, String> row : data.rows()) {
             Map<String, String> out = new LinkedHashMap<>(row);
             String dn = row.get("dn");
-            out.put(GROUPS_COLUMN, dn == null ? "" : index.cell(dn, firstValue(row.get("uid"))));
+            String uid = firstValue(row.get("uid"));
+            out.put(GROUPS_COLUMN, dn == null ? "" : index.cell(dn, uid));
+            out.put(ALL_GROUPS_COLUMN, dn == null ? "" : index.allCell(dn, uid));
             rows.add(out);
         }
         return new ReportData(columns, rows, labels);

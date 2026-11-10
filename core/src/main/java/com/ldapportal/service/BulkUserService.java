@@ -604,9 +604,11 @@ public class BulkUserService {
     }
 
     /**
-     * Export variant that, with a non-null {@code groups} index, adds a last
-     * {@value CsvColumnMap#GROUPS_COLUMN} column listing each user's groups
-     * ({@code |}-separated, the format the import's groups column reads).
+     * Export variant that, with a non-null {@code groups} index, adds two last
+     * columns: {@value CsvColumnMap#GROUPS_COLUMN}, each user's direct groups
+     * ({@code |}-separated, the format the import's groups column reads), and
+     * {@value CsvColumnMap#ALL_GROUPS_COLUMN}, their direct and nested groups
+     * (read-only: the import ignores it).
      */
     public byte[] exportCsvFromBases(DirectoryConnection dc,
                              String filter,
@@ -1081,6 +1083,7 @@ public class BulkUserService {
             // The DN-source column carries the DN, not an attribute value.
             if (dnFromColumn && isColumn(csvCol, dnSourceColumn)) continue;
             if (colToAttr.isGroupMemberships(csvCol)) continue; // memberships, not an attribute
+            if (colToAttr.isReadOnlyExportColumn(csvCol)) continue; // e.g. allgroups: can't be written back
             String ldapAttr = colToAttr.attributeFor(csvCol);
             if (ldapAttr == null) continue; // ignored, or unmapped under a template
 
@@ -1273,7 +1276,7 @@ public class BulkUserService {
      * that happens to be called {@code groups} gives way to it.
      */
     private static List<String> withGroupsColumn(List<String> columns, UserGroupIndex groups) {
-        return groups == null ? columns : UserGroupIndex.withColumn(columns);
+        return groups == null ? columns : UserGroupIndex.withColumns(columns);
     }
 
     /**
@@ -1288,6 +1291,8 @@ public class BulkUserService {
                 row.put("dn", user.getDn());
             } else if (groups != null && CsvColumnMap.GROUPS_COLUMN.equals(col)) {
                 row.put(col, groups.cell(user.getDn(), user.getFirstValue("uid")));
+            } else if (groups != null && CsvColumnMap.ALL_GROUPS_COLUMN.equals(col)) {
+                row.put(col, groups.allCell(user.getDn(), user.getFirstValue("uid")));
             } else {
                 List<String> vals = user.getValues(col);
                 row.put(col, CsvUtils.joinMultiValue(vals));
