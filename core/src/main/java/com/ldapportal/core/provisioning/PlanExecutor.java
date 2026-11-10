@@ -11,6 +11,10 @@ import com.unboundid.ldap.sdk.LDAPInterface;
 import com.unboundid.ldap.sdk.LDAPResult;
 import com.unboundid.ldap.sdk.ModifyRequest;
 import com.unboundid.ldap.sdk.ResultCode;
+import com.unboundid.ldap.sdk.SearchRequest;
+import com.unboundid.ldap.sdk.SearchResult;
+import com.unboundid.ldap.sdk.SearchResultEntry;
+import com.unboundid.ldap.sdk.SearchScope;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -144,10 +148,33 @@ public class PlanExecutor {
                     conn.add(new AddRequest(add.targetDn(), add.attributes()));
             case ModifyStep mod ->
                     conn.modify(new ModifyRequest(mod.targetDn(), mod.mods()));
-            case DeleteStep del ->
-                    conn.delete(del.targetDn());
+            case DeleteStep del -> {
+                if (del.subtree()) {
+                    deleteChildren(conn, del.targetDn());
+                }
+                yield conn.delete(del.targetDn());
+            }
         };
         checkResult(result, describe(step), step.targetDn());
+    }
+
+    /**
+     * Client-side subtree delete: remove every entry beneath {@code dn},
+     * deepest first, leaving {@code dn} itself for the caller. Done by
+     * one-level searches rather than the Tree Delete request control so
+     * it works on every directory we target (OpenLDAP doesn't implement
+     * that control). Subtrees deleted this way are small — server-managed
+     * decorations such as IVIA's {@code cn=policies} — so no paging.
+     */
+    private void deleteChildren(LDAPInterface conn, String dn) throws LDAPException {
+        SearchRequest req = new SearchRequest(dn, SearchScope.ONE,
+                "(objectClass=*)", SearchRequest.NO_ATTRIBUTES);
+        SearchResult children = conn.search(req);
+        for (SearchResultEntry child : children.getSearchEntries()) {
+            deleteChildren(conn, child.getDN());
+            LDAPResult result = conn.delete(child.getDN());
+            checkResult(result, "DELETE (subordinate)", child.getDN());
+        }
     }
 
     private void handleFailure(LDAPInterface conn,
