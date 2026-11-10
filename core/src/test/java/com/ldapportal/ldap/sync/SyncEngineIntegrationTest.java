@@ -79,7 +79,8 @@ class SyncEngineIntegrationTest {
     @Autowired private DirectoryConnectionRepository directoryRepo;
     @Autowired private SyncLinkRepository linkRepo;
     @Autowired private SyncSetRepository setRepo;
-    @Autowired private MembershipRepository membershipRepo;
+    // A spy (real behavior) so a test can fix the order the sweep reads rows in.
+    @MockitoSpyBean private MembershipRepository membershipRepo;
     @Autowired private RecomputeRequestRepository requestRepo;
     // A spy (real behavior) so a test can act in the middle of a reconcile.
     @MockitoSpyBean private RecomputeEngine engine;
@@ -547,6 +548,97 @@ class SyncEngineIntegrationTest {
         assertThat(target.getEntry("uid=carol," + DST_USERS)).isNull();
         assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
         assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).hasSize(1);
+    }
+
+    // ── Entries with subordinates: deleted children first, one entry at a time ───
+
+    private static final String SRC_ORG = "ou=org," + SRC_BASE;
+    private static final String DST_ORG = "ou=Org," + DST_BASE;
+
+    /** A set over ou=org whose entries nest: org units and the people in them. */
+    private SyncSet nestedSet() throws Exception {
+        source.add(new Entry(SRC_ORG, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "org")));
+        target.add(new Entry(DST_ORG, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "Org")));
+        source.add(new Entry("ou=team," + SRC_ORG, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "team")));
+        source.add(new Entry("uid=tess,ou=team," + SRC_ORG,
+                new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                new Attribute("uid", "tess"), new Attribute("cn", "tess"), new Attribute("sn", "tess")));
+        return setRepo.save(syncSet("org", SRC_ORG, DST_ORG,
+                "(&(|(ou=team)(objectClass=inetOrgPerson))(!(description=skip)))", null));
+    }
+
+    private Membership orgRow(SyncSet set, String targetDn) {
+        return membershipRepo.findAllBySyncSetId(set.getId()).stream()
+                .filter(m -> targetDn.equalsIgnoreCase(m.getTargetDn())).findFirst()
+                .orElseThrow(() -> new AssertionError("no row at " + targetDn));
+    }
+
+    @Test
+    void reconcile_deletesASubtreeTheSourceRemoved_childrenFirst_inOneRun() throws Exception {
+        SyncSet orgSet = nestedSet();
+        reconciler.reconcile(orgSet.getId());
+        assertThat(target.getEntry("ou=team," + DST_ORG)).isNotNull();
+        assertThat(target.getEntry("uid=tess,ou=team," + DST_ORG)).isNotNull();
+
+        // The whole subtree goes on the source, unnoticed until the reconcile.
+        source.delete("uid=tess,ou=team," + SRC_ORG);
+        source.delete("ou=team," + SRC_ORG);
+        // The worst case for the sweep: the store hands back the parent before its child.
+        // (The not-seen query, rebuilt: a spied repository can't call its own query method.)
+        org.mockito.Mockito.doAnswer(inv -> {
+            java.util.UUID setId = inv.getArgument(0);
+            long epoch = inv.getArgument(1);
+            return membershipRepo.findAllBySyncSetId(setId).stream()
+                    .filter(m -> m.getLastScanEpoch() == null || m.getLastScanEpoch() < epoch)
+                    .sorted(java.util.Comparator.comparingInt(m -> SyncDnUtil.depth(m.getTargetDn())))
+                    .toList();
+        }).when(membershipRepo).findNotSeen(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong());
+        reconciler.reconcile(orgSet.getId());
+
+        // One run: the child before its parent, so the parent's delete isn't refused as non-leaf.
+        assertThat(target.getEntry("uid=tess,ou=team," + DST_ORG)).isNull();
+        assertThat(target.getEntry("ou=team," + DST_ORG)).isNull();
+        assertThat(membershipRepo.findAllBySyncSetId(orgSet.getId())).isEmpty();
+    }
+
+    @Test
+    void delete_ofAnEntryWithUnmanagedChildren_failsAndSaysTheSyncWontDeleteThem() throws Exception {
+        SyncSet orgSet = nestedSet();
+        source.delete("uid=tess,ou=team," + SRC_ORG);
+        reconciler.reconcile(orgSet.getId());
+        // Something made directly on the target, under the synced unit.
+        target.add(new Entry("cn=local,ou=team," + DST_ORG, new Attribute("objectClass", "top", "device"),
+                new Attribute("cn", "local")));
+
+        source.delete("ou=team," + SRC_ORG);
+        reconciler.reconcile(orgSet.getId());
+
+        assertThat(target.getEntry("ou=team," + DST_ORG)).isNotNull(); // never a subtree delete
+        assertThat(target.getEntry("cn=local,ou=team," + DST_ORG)).isNotNull();
+        Membership team = orgRow(orgSet, "ou=team," + DST_ORG);
+        assertThat(team.getState()).isEqualTo(MembershipState.FAILED);
+        assertThat(team.getFailReason()).startsWith(RecomputeEngine.NONLEAF_PREFIX)
+                .contains("no sync set manages").contains("Stop tracking");
+    }
+
+    @Test
+    void delete_ofAParentWhoseSyncedChildStays_saysSoInItsReason() throws Exception {
+        SyncSet orgSet = nestedSet();
+        reconciler.reconcile(orgSet.getId());
+
+        // The unit leaves the set; the person in it stays.
+        source.modify("ou=team," + SRC_ORG, new Modification(ModificationType.ADD, "description", "skip"));
+        reconciler.reconcile(orgSet.getId());
+
+        assertThat(target.getEntry("uid=tess,ou=team," + DST_ORG)).isNotNull();
+        Membership team = orgRow(orgSet, "ou=team," + DST_ORG);
+        assertThat(team.getState()).isEqualTo(MembershipState.FAILED);
+        assertThat(team.getFailReason()).startsWith(RecomputeEngine.NONLEAF_PREFIX)
+                .contains("1 synced entry is still beneath it");
+        assertThat(team.getFailReason().length()).isLessThanOrEqualTo(255);
     }
 
     // ── Per-identity fault isolation: one poison entry doesn't block another ─────

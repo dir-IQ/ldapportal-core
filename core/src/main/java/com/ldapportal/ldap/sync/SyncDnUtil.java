@@ -32,6 +32,29 @@ public final class SyncDnUtil {
      * and spacing don't matter. Unparseable values fall back to a
      * case-insensitive comparison; two nulls are equal.
      */
+    /**
+     * How many RDNs {@code dn} has (its depth), or -1 for null or blank. A DN
+     * that doesn't parse is counted by its unescaped commas.
+     */
+    public static int depth(String dn) {
+        if (dn == null || dn.isBlank()) {
+            return -1;
+        }
+        try {
+            return new com.unboundid.ldap.sdk.DN(dn).getRDNs().length;
+        } catch (com.unboundid.ldap.sdk.LDAPException ex) {
+            return dn.split("(?<!\\\\),").length;
+        }
+    }
+
+    /**
+     * Deepest DN first (entries without one last): the order to delete in,
+     * since an entry's children must go before it. Stable for equal depths.
+     */
+    public static <T> java.util.Comparator<T> deepestFirst(java.util.function.Function<T, String> dnOf) {
+        return java.util.Comparator.comparingInt((T t) -> depth(dnOf.apply(t))).reversed();
+    }
+
     public static boolean sameDn(String a, String b) {
         if (a == null || b == null) {
             return a == b;

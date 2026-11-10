@@ -56,6 +56,16 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
     List<Membership> findAllByTargetDnIgnoreCase(@Param("targetDn") String targetDn);
 
     /**
+     * How many of these sets' rows place an entry beneath a target DN:
+     * {@code suffix} is {@code %,<the DN, lower-cased, LIKE-escaped with \>}.
+     * Says whether a non-leaf entry's children are the sync's.
+     */
+    @Query("select count(m) from Membership m where m.syncSetId in :setIds "
+            + "and lower(m.targetDn) like :suffix escape '\\'")
+    long countByTargetDnUnder(@Param("setIds") java.util.Collection<java.util.UUID> setIds,
+                              @Param("suffix") String suffix);
+
+    /**
      * Retire the other rows of one set that still claim {@code targetDn}: a
      * target entry has exactly one owner per set, so when {@code identity} takes
      * a target DN (ADD, adoption, or rename) any other row pointing there is

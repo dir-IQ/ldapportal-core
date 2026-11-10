@@ -985,7 +985,9 @@ public class SyncConfigService {
             throw new IllegalArgumentException("Type " + com.ldapportal.dto.sync.SyncOrphanDeleteRequest.CONFIRM_WORD
                     + " to confirm deleting entries from the target.");
         }
-        List<Chosen> chosen = choose(syncSetId, set, seqs, verifiedAt, targetDns);
+        // Deepest first, so a chosen parent goes after its chosen children.
+        List<Chosen> chosen = new ArrayList<>(choose(syncSetId, set, seqs, verifiedAt, targetDns));
+        chosen.sort(com.ldapportal.ldap.sync.SyncDnUtil.deepestFirst(Chosen::targetDn));
         SyncAuditLabels labels = SyncAuditLabels.of(set, linkRepo, directoryRepo);
         List<com.ldapportal.dto.sync.SyncOrphanDeleteResult.Item> items = new ArrayList<>();
         List<com.ldapportal.ldap.sync.SyncDriftStore.Row> gone = new ArrayList<>();

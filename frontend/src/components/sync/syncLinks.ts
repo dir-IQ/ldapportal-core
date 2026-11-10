@@ -26,3 +26,14 @@ export const SECRET_ATTRIBUTES = new Set([
 export function isSecret(name: string): boolean {
   return SECRET_ATTRIBUTES.has(name.split(';')[0].toLowerCase())
 }
+
+/** How many RDNs a DN has (commas not escaped with a backslash); 0 for none. */
+export function dnDepth(dn: string | null | undefined): number {
+  if (!dn || !dn.trim()) return 0
+  return dn.split(/(?<!\\),/).length
+}
+
+/** A copy of `items`, deepest DN first: the order to delete in, since an entry's children must go before it. */
+export function deepestFirst<T>(items: T[], dnOf: (item: T) => string | null | undefined): T[] {
+  return [...items].sort((a, b) => dnDepth(dnOf(b)) - dnDepth(dnOf(a)))
+}

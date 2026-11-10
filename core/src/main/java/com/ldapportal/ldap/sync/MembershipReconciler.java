@@ -198,7 +198,12 @@ public class MembershipReconciler {
             }
             if (plan.complete) {
                 history.phase(run, SyncReconcilePhase.SWEEPING);
-                for (Membership row : membershipRepo.findNotSeen(syncSetId, epoch)) {
+                // Deepest first: a subtree that left the source is deleted children
+                // before parents in this run. In any other order a parent's delete
+                // fails as non-leaf and waits for the next reconcile.
+                List<Membership> notSeen = new java.util.ArrayList<>(membershipRepo.findNotSeen(syncSetId, epoch));
+                notSeen.sort(SyncDnUtil.deepestFirst(Membership::getTargetDn));
+                for (Membership row : notSeen) {
                     lease.beat();
                     history.current(run, row.getTargetDn() != null ? row.getTargetDn() : row.getSourceDn());
                     try {

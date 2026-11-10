@@ -269,6 +269,20 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
+  it('deletes selected held deletes children first, so a parent isn\'t refused for its children', async () => {
+    withRows(
+      { identity: 'p', reviewKind: 'PENDING_DELETE', targetDn: 'ou=team,ou=Users,dc=dst' },
+      { identity: 'c', reviewKind: 'PENDING_DELETE', targetDn: 'uid=a,ou=team,ou=Users,dc=dst' },
+    )
+    const wrapper = open()
+    await flushPromises()
+    await selectAll()
+    byExactText('Delete target (2)')!.click()
+    await flushPromises()
+    expect(vi.mocked(syncApi.approveDelete).mock.calls.map(c => c[1])).toEqual(['c', 'p'])
+    wrapper.unmount()
+  })
+
   it('deletes several held deletes in one go and sums up the outcomes', async () => {
     withRows({ reviewKind: 'PENDING_DELETE' }, { reviewKind: 'PENDING_DELETE' }, { reviewKind: 'PENDING_DELETE' })
     vi.mocked(syncApi.approveDelete)

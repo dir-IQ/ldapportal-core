@@ -281,7 +281,8 @@ public class RecomputeEngine {
         }
         ApplyOutcome del = live.delete(target, targetDn);
         if (!LdapResultInterpreter.deleteConverged(del.code())) {
-            return new SyncDeleteApproval(SyncPreviewAction.ERROR, target.getId(), targetDn, describe("delete", del));
+            return new SyncDeleteApproval(SyncPreviewAction.ERROR, target.getId(), targetDn,
+                    deleteFailure(set, target, targetDn, del, false));
         }
         log.info("Sync set {}: operator-approved delete of orphaned target {}", syncSetId, targetDn);
         return new SyncDeleteApproval(SyncPreviewAction.DELETE, target.getId(), targetDn, null);
@@ -357,7 +358,7 @@ public class RecomputeEngine {
         }
         ApplyOutcome del = live.delete(target, targetDn);
         if (!LdapResultInterpreter.deleteConverged(del.code())) {
-            String reason = describe("delete", del);
+            String reason = deleteFailure(set, target, targetDn, del, true);
             live.failed(set, identity, current.getSourceDn(), targetDn, current.getContentHash(), reason);
             return new SyncDeleteApproval(SyncPreviewAction.ERROR, target.getId(), targetDn, reason);
         }
@@ -542,7 +543,7 @@ public class RecomputeEngine {
                 return true;
             }
             fx.failed(set, identity, current.getSourceDn(), current.getTargetDn(),
-                    current.getContentHash(), describe("delete", del));
+                    current.getContentHash(), deleteFailure(set, target, current.getTargetDn(), del, true));
             return false;
         }
 
@@ -1359,13 +1360,7 @@ public class RecomputeEngine {
         if (targetDn == null) {
             return List.of();
         }
-        java.util.Set<UUID> setsOnTarget = new java.util.HashSet<>();
-        for (SyncLink l : syncLinkRepo.findAllByTargetDirId(target.getId())) {
-            for (SyncSet s : syncSetRepo.findAllByLinkId(l.getId())) {
-                setsOnTarget.add(s.getId());
-            }
-        }
-        setsOnTarget.add(set.getId());
+        java.util.Set<UUID> setsOnTarget = setsOnTarget(set, target);
         List<Membership> owners = new java.util.ArrayList<>();
         for (Membership m : membershipRepo.findAllByTargetDnIgnoreCase(targetDn)) {
             boolean self = m.getSyncSetId().equals(set.getId()) && m.getIdentity().equals(identity);
@@ -1374,6 +1369,60 @@ public class RecomputeEngine {
             }
         }
         return owners;
+    }
+
+    /** Every sync set writing to {@code target} (through any link), and {@code set} itself. */
+    private java.util.Set<UUID> setsOnTarget(SyncSet set, DirectoryConnection target) {
+        java.util.Set<UUID> ids = new java.util.HashSet<>();
+        for (SyncLink l : syncLinkRepo.findAllByTargetDirId(target.getId())) {
+            for (SyncSet s : syncSetRepo.findAllByLinkId(l.getId())) {
+                ids.add(s.getId());
+            }
+        }
+        ids.add(set.getId());
+        return ids;
+    }
+
+    /**
+     * Why a delete failed, for the row's reason or the operator. A non-leaf
+     * entry (the sync deletes one entry at a time, never a subtree) says
+     * whether the entries beneath it are the sync's: if they are, it goes once
+     * they're deleted (a reconcile deletes children first), unless they stay
+     * in a set; if not, the sync never will, so the operator has to act.
+     *
+     * @param tracked whether the entry has a row this set tracks (so Stop tracking applies)
+     */
+    String deleteFailure(SyncSet set, DirectoryConnection target, String targetDn, ApplyOutcome del,
+                         boolean tracked) {
+        if (del.code() != ResultCode.NOT_ALLOWED_ON_NONLEAF || targetDn == null || targetDn.isBlank()) {
+            return describe("delete", del);
+        }
+        long managed;
+        try {
+            managed = membershipRepo.countByTargetDnUnder(setsOnTarget(set, target), underDnPattern(targetDn));
+        } catch (RuntimeException ex) {
+            log.debug("Sync set {}: couldn't count the managed entries under {}: {}", set.getId(), targetDn,
+                    ex.toString());
+            return describe("delete", del);
+        }
+        String keep = tracked ? ", or Stop tracking this entry to keep it." : " first.";
+        if (managed > 0) {
+            return NONLEAF_PREFIX + managed + (managed == 1 ? " synced entry is" : " synced entries are")
+                    + " still beneath it on the target. It's retried each reconcile and goes once they're deleted;"
+                    + " if they stay in a sync set, take them out too" + keep;
+        }
+        return NONLEAF_PREFIX + "it has entries beneath it on the target that no sync set manages, so the sync"
+                + " won't delete them. Delete them on the target" + keep;
+    }
+
+    /** How a non-leaf delete's reason starts. */
+    static final String NONLEAF_PREFIX = "delete failed: NOT_ALLOWED_ON_NONLEAF — ";
+
+    /** A LIKE pattern (escape {@code \}) for target DNs beneath {@code dn}, lower-cased. */
+    static String underDnPattern(String dn) {
+        String lower = dn.trim().toLowerCase(java.util.Locale.ROOT)
+                .replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        return "%," + lower;
     }
 
     /** A transient (unsaved) membership used to adopt an existing target entry. */
