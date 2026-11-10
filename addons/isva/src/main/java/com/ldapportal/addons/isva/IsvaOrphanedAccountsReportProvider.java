@@ -5,6 +5,8 @@ import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.core.reports.OperationalReportProvider;
 import com.ldapportal.core.reports.ReportData;
 import com.ldapportal.entity.DirectoryConnection;
+import com.unboundid.ldap.sdk.DN;
+import com.unboundid.ldap.sdk.LDAPException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -70,8 +72,7 @@ public class IsvaOrphanedAccountsReportProvider implements OperationalReportProv
             // Admin-view scope: when set, only surface orphans whose target
             // demographic DN falls within the scope. "No secDN" orphans
             // can't be scoped, so they're always included.
-            if (scopeBaseDn != null && secDn != null
-                    && !secDn.toLowerCase(Locale.ROOT).endsWith(scopeBaseDn.toLowerCase(Locale.ROOT))) {
+            if (scopeBaseDn != null && secDn != null && !isWithin(secDn, scopeBaseDn)) {
                 continue;
             }
             Map<String, String> row = new LinkedHashMap<>();
@@ -87,6 +88,22 @@ public class IsvaOrphanedAccountsReportProvider implements OperationalReportProv
         log.info("Orphaned IVIA accounts report on directory {}: {} orphan(s) found",
                 dir.getDisplayName(), rows.size());
         return new ReportData(columns, rows);
+    }
+
+    /**
+     * Whether {@code dn} is {@code base} or lies under it, compared as DNs so
+     * a secDN written with other spacing, case or escaping than the scope
+     * still counts. Either value failing to parse falls back to a
+     * case-insensitive comparison on an RDN boundary.
+     */
+    static boolean isWithin(String dn, String base) {
+        try {
+            return new DN(dn).isDescendantOf(new DN(base), true);
+        } catch (LDAPException e) {
+            String d = dn.trim().toLowerCase(Locale.ROOT);
+            String b = base.trim().toLowerCase(Locale.ROOT);
+            return d.equals(b) || d.endsWith("," + b);
+        }
     }
 
     private static String nullToEmpty(String s) {
