@@ -43,6 +43,18 @@ final class CsvColumnMap {
     /** Header that means group memberships when there are no mappings for it. */
     static final String GROUPS_COLUMN = com.ldapportal.ldap.UserGroupIndex.COLUMN;
 
+    /** Header of the export's direct-and-nested groups column. */
+    static final String ALL_GROUPS_COLUMN = com.ldapportal.ldap.UserGroupIndex.ALL_COLUMN;
+
+    /**
+     * Headers an export can carry that can't be written back: the nested
+     * groups column, and the directory-maintained reverse-membership
+     * attributes. Without mappings for them they're skipped, so an export can
+     * be re-imported as is; a template can still map them deliberately.
+     */
+    private static final Set<String> READ_ONLY_COLUMNS = Set.of(
+            ALL_GROUPS_COLUMN, "memberof", "ismemberof");
+
     /** csvColumn → ldapAttribute; a {@code null} value means "ignored". */
     private final Map<String, String> exact;
     private final Map<String, String> byLowerName;
@@ -90,6 +102,15 @@ final class CsvColumnMap {
         String lower = csvColumn.toLowerCase(Locale.ROOT);
         if (knownLower.contains(lower)) return byLowerName.get(lower);
         return passthroughUnmapped ? csvColumn : null;
+    }
+
+    /**
+     * Whether this column is a read-only one from an export (see
+     * {@link #READ_ONLY_COLUMNS}) that the mappings don't mention, so it's
+     * skipped rather than written as an attribute.
+     */
+    boolean isReadOnlyExportColumn(String csvColumn) {
+        return !isKnown(csvColumn) && READ_ONLY_COLUMNS.contains(csvColumn.trim().toLowerCase(Locale.ROOT));
     }
 
     /**

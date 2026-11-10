@@ -199,12 +199,25 @@ describe('UserListView feature gating', () => {
     expect(t.join(' ')).toContain('Export CSV')
   })
 
-  it('requests memberOf and isMemberOf so the Groups column populates across directory types', async () => {
+  it('requests memberOf and isMemberOf (optional columns) and the server-built groups', async () => {
     await mountWith(ALL)
     expect(usersApi.searchUsersPage).toHaveBeenCalledWith(
       'd1',
-      expect.objectContaining({ attributes: '*,memberOf,isMemberOf' }),
+      expect.objectContaining({ attributes: '*,memberOf,isMemberOf', includeGroups: true }),
     )
+  })
+
+  it('fills the Groups column from the server, not from memberOf / isMemberOf', async () => {
+    vi.mocked(usersApi.searchUsersPage).mockResolvedValueOnce({ data: {
+      entries: [{ dn: 'uid=a,dc=x', attributes: { cn: ['A'], ismemberof: ['cn=stale,dc=x'] } }],
+      truncated: false, total: 1,
+      groups: { 'uid=a,dc=x': ['cn=devs,ou=g,dc=x', 'cn=engineering,ou=g,dc=x'] },
+    } } as never)
+    const wrapper = await mountWith(ALL)
+
+    const rows = wrapper.findComponent({ name: 'ResultsTable' }).props('rows') as Array<Record<string, unknown>>
+    expect(rows[0].__groupDns).toEqual(['cn=devs,ou=g,dc=x', 'cn=engineering,ou=g,dc=x'])
+    expect(rows[0].__groups).toBe('devs, engineering')
   })
 
   it('also requests operational attributes when the switch is on', async () => {
@@ -218,7 +231,7 @@ describe('UserListView feature gating', () => {
     }
   })
 
-  it('heads columns by the schema-cased attribute name and never offers secrets or raw memberOf', async () => {
+  it('heads columns by the schema-cased attribute name, never offers secrets, and offers memberOf hidden', async () => {
     vi.mocked(usersApi.searchUsersPage).mockResolvedValueOnce({ data: {
       entries: [{ dn: 'uid=a,dc=x', attributes: {
         cn: ['A'], employeenumber: ['7'], userpassword: ['{SSHA}x'], memberof: ['cn=g,dc=x'],
@@ -232,7 +245,8 @@ describe('UserListView feature gating', () => {
     expect(cols.find(c => c.key === '__groups')).toMatchObject({ label: 'groups' })
     // Shown by default, so the CSV export carries it unless turned off.
     expect(cols.find(c => c.key === '__groups')).not.toHaveProperty('defaultHidden', true)
-    expect(cols.some(c => c.key === 'userpassword' || c.key === 'memberof')).toBe(false)
+    expect(cols.some(c => c.key === 'userpassword')).toBe(false)
+    expect(cols.find(c => c.key === 'memberof')).toMatchObject({ defaultHidden: true })
   })
 
   it('exports the visible columns in display order, with groups when shown', async () => {
