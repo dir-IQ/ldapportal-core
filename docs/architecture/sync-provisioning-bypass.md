@@ -28,9 +28,11 @@ goes through the provisioning SPI. Because sync bypasses that SPI:
   intended guard for the "one IVIA-enabled directory syncing to another"
   scenario.
 - A consequence is that sync-provisioned users land on the target as
-  **`isva.orphaned`** demographics (demographic present, no paired secUser).
-  That state is surfaced by the IVIA badges, the user edit modal, and the
-  *Orphaned IVIA Accounts* operational report. Provisioning their secUsers, if
+  users **without an IVIA account** (demographic present, no paired secUser;
+  `isva.hasaccount=false`). That state is surfaced by the Users page's
+  *No IVIA account* chip, the user edit modal, and the *Users Without an IVIA
+  Account* operational report. (The *Orphaned IVIA Accounts* report is the
+  reverse: secUsers whose demographic entry is gone.) Provisioning their secUsers, if
   desired, is a separate, deliberate step (e.g. the IVIA Account tab's *Grant*).
 
 The `ProvisioningContext.suppressVendorOverlay` flag (used by LDIF import to

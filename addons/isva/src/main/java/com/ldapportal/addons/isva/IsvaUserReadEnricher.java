@@ -33,12 +33,10 @@ import java.util.Optional;
  * prefixed attributes from the secUser. The UI joins demographic
  * + secUser into a single user view via these prefixed keys.
  *
- * <p>No-op for:
- * <ul>
- *   <li>Directories without an active ISVA config row.</li>
- *   <li>Directories configured for inline topology (the secUser
- *       overlay already lives on the user entry; nothing to join).</li>
- * </ul></p>
+ * <p>No-op for directories without an active ISVA config row. In
+ * inline topology there's nothing to join (the secUser overlay already
+ * lives on the user entry); the enricher only adds the
+ * {@value #HAS_ACCOUNT} flag there.</p>
  *
  * <p>For directories configured for linked topology, this
  * enricher issues <b>one LDAP search per result page</b>
@@ -48,9 +46,14 @@ import java.util.Optional;
  * cost 100. The cap is the page-size configured on the directory
  * connection.</p>
  *
- * <p>Users whose secUser lookup returns nothing are tagged
- * {@code isva.orphaned=true} so the UI can surface a "needs
- * repair" indicator without doing its own lookup.</p>
+ * <p>Every user it can classify is tagged {@value #HAS_ACCOUNT}
+ * ({@code "true"} / {@code "false"}): whether the user has an IVIA
+ * account. Linked mode: a paired secUser was found. Inline mode: the
+ * entry carries the {@code secUser} objectClass, judged only when the
+ * entry was read with its {@code objectClass} (otherwise the flag is left
+ * off rather than guessed). Same rule as {@code IsvaAccountStatusProbe}.
+ * The UI's "No IVIA account" chip and the users-without-an-account
+ * report read it.</p>
  */
 @Component
 @RequiredArgsConstructor
@@ -65,6 +68,9 @@ public class IsvaUserReadEnricher implements UserReadEnricher {
             "secValidUntil", "secPwdLastChanged", "secDN"
     };
 
+    /** Whether the user has an IVIA account: {@code "true"} or {@code "false"}. */
+    public static final String HAS_ACCOUNT = "isva.hasaccount";
+
     private final VendorIntegrationIsvaConfigRepository configRepo;
     private final LdapConnectionFactory connectionFactory;
 
@@ -73,10 +79,13 @@ public class IsvaUserReadEnricher implements UserReadEnricher {
         if (users.isEmpty()) {
             return users;
         }
+        VendorIntegrationIsvaConfig active = activeConfigOrNull(dir);
+        if (active != null && active.getTopologyMode() == IsvaTopologyMode.INLINE) {
+            return flagInline(users);
+        }
         VendorIntegrationIsvaConfig cfg = activeLinkedConfigOrNull(dir);
         if (cfg == null) {
-            // No-op for non-ISVA directories AND for inline-mode ISVA
-            // (where the sec* attrs already live on the user entry).
+            // Non-ISVA directory (or a linked config without a container).
             return users;
         }
 
@@ -155,29 +164,65 @@ public class IsvaUserReadEnricher implements UserReadEnricher {
                 attrs.put("isva." + attrName.toLowerCase(), List.of(value));
             }
         }
-        attrs.put("isva.orphaned", List.of("false"));
+        attrs.put(HAS_ACCOUNT, List.of("true"));
         attrs.put("isva.secuserdn", List.of(secUser.getDN()));
         return new LdapUser(demographic.getDn(), attrs);
     }
 
     private LdapUser markOrphaned(LdapUser demographic) {
         Map<String, List<String>> attrs = new HashMap<>(demographic.getAttributes());
-        attrs.put("isva.orphaned", List.of("true"));
-        log.debug("Orphaned demographic (no paired secUser): {}", demographic.getDn());
+        attrs.put(HAS_ACCOUNT, List.of("false"));
+        log.debug("Demographic without a paired secUser: {}", demographic.getDn());
         return new LdapUser(demographic.getDn(), attrs);
+    }
+
+    /**
+     * Inline mode: flag each user by whether its entry carries the
+     * {@code secUser} objectClass. A user read without {@code objectClass}
+     * can't be judged and is left as is.
+     */
+    private static List<LdapUser> flagInline(List<LdapUser> users) {
+        List<LdapUser> result = new ArrayList<>(users.size());
+        for (LdapUser user : users) {
+            if (!user.hasAttribute("objectclass")) {
+                result.add(user);
+                continue;
+            }
+            boolean hasAccount = user.getValues("objectclass").stream()
+                    .anyMatch(oc -> oc.equalsIgnoreCase("secUser"));
+            Map<String, List<String>> attrs = new HashMap<>(user.getAttributes());
+            attrs.put(HAS_ACCOUNT, List.of(Boolean.toString(hasAccount)));
+            result.add(new LdapUser(user.getDn(), attrs));
+        }
+        return result;
     }
 
     // ── helpers ─────────────────────────────────────────────────────
 
-    private VendorIntegrationIsvaConfig activeLinkedConfigOrNull(DirectoryConnection dir) {
+    /**
+     * Whether this directory has an active IVIA configuration this enricher
+     * can classify users for (it sets {@value #HAS_ACCOUNT}): inline, or
+     * linked with a secUser container.
+     */
+    public boolean flagsAccounts(DirectoryConnection dir) {
+        VendorIntegrationIsvaConfig cfg = activeConfigOrNull(dir);
+        if (cfg == null) return false;
+        return cfg.getTopologyMode() == IsvaTopologyMode.INLINE || activeLinkedConfigOrNull(dir) != null;
+    }
+
+    private VendorIntegrationIsvaConfig activeConfigOrNull(DirectoryConnection dir) {
         if (dir == null || dir.getId() == null) {
             return null;
         }
         Optional<VendorIntegrationIsvaConfig> maybe = configRepo.findById(dir.getId());
-        if (maybe.isEmpty() || !maybe.get().isEnabled()) {
+        return maybe.isPresent() && maybe.get().isEnabled() ? maybe.get() : null;
+    }
+
+    private VendorIntegrationIsvaConfig activeLinkedConfigOrNull(DirectoryConnection dir) {
+        VendorIntegrationIsvaConfig cfg = activeConfigOrNull(dir);
+        if (cfg == null) {
             return null;
         }
-        VendorIntegrationIsvaConfig cfg = maybe.get();
         // Only linked mode needs read-side enrichment — inline mode's
         // sec* attrs already live on the user entry, so the standard
         // read path returns them without help.

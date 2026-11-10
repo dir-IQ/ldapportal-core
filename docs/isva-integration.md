@@ -307,7 +307,7 @@ After saving the config:
 In LINKED-mode directories, user reads are enriched with attributes
 from the paired `secUser` entry (the "joined read" feature). Those
 attributes always surface under the **reserved `isva.*` namespace**
-— `isva.secLogin`, `isva.secAuthority`, `isva.orphaned`, etc. —
+— `isva.secLogin`, `isva.secAuthority`, `isva.hasaccount`, etc. —
 regardless of which attributes the provisioning profile's
 `attributeConfigs` lists as visible. This is intentional: the
 profile attribute config drives the *create form* and the *list-
@@ -319,6 +319,22 @@ If you don't want `isva.*` keys surfacing through a particular
 viewing surface, filter them at the UI / consumer layer — the
 `isva.` prefix is unique to the ISVA addon and never collides with
 native LDAP attributes.
+
+## Users without an IVIA account, and orphaned IVIA accounts
+
+Two opposite states, kept apart in the UI:
+
+- **Users without an IVIA account** — a directory user with no IVIA account
+  (linked mode: no `secUser` whose `secDN` names them; inline mode: no
+  `secUser` objectClass on the entry). Often normal: not every directory user
+  is an IVIA user. Every user read carries `isva.hasaccount` (`true` /
+  `false`) in both topologies, shown as the `ivia.hasaccount` column (off
+  until turned on) and as a grey **No IVIA account** chip on the Users page.
+  The **Users Without an IVIA Account** report lists them (scoped to an
+  admin's OUs, exportable and schedulable like any report).
+- **Orphaned IVIA accounts** — a `secUser` whose `secDN` names no entry (or
+  that has no `secDN`): a broken reference. Linked mode only. Listed by the
+  **Orphaned IVIA Accounts** report and the integrity checker's secDN check.
 
 ## Troubleshooting
 
