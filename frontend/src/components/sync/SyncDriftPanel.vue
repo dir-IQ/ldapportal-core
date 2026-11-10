@@ -14,11 +14,12 @@
       <div class="flex items-center justify-between gap-2 flex-wrap">
         <span class="text-base font-semibold text-gray-800">Last content check</span>
         <div class="flex items-center gap-2">
-          <RouterLink v-if="canDiff" :to="{ path: '/superadmin/directory-diff', query: { verifySet: set.id } }"
-                      class="btn-neutral btn-compact"
-                      title="Compare the set's source and target entry by entry in Directory Diff, independently of the sync's own comparison: every attribute's values side by side, with a live re-read per entry">
-            Compare in Directory Diff
-          </RouterLink>
+          <!-- A new tab, so the inventory stays open. -->
+          <a v-if="canDiff" :href="appHref('/superadmin/directory-diff', { verifySet: set.id })" target="_blank"
+             rel="noopener" class="btn-neutral btn-compact"
+             title="Compare the set's source and target entry by entry in Directory Diff (opens a new tab), independently of the sync's own comparison: every attribute's values side by side, with a live re-read per entry">
+            Compare in Directory Diff <span aria-hidden="true">↗</span>
+          </a>
           <button v-if="data?.verifiedAt && (totalDrift > 0 || heldTotal > 0)" type="button"
                   class="btn-neutral btn-compact" :disabled="exporting"
                   :title="heldView ? 'Download every held reference as CSV' : 'Download every drift item as CSV'"
@@ -152,14 +153,17 @@
                   <span :class="HELD[h.status].badge">{{ HELD[h.status].label }}</span>
                 </td>
                 <td class="px-4 py-3 align-top text-[13px] font-mono break-all">
-                  <RouterLink v-if="sourceDirectoryId && h.sourceDn" :to="browserLink(sourceDirectoryId, h.sourceDn)"
-                              class="text-blue-700 hover:underline" :title="`On the target: ${h.entryDn}`">{{ h.sourceDn }}</RouterLink>
+                  <button v-if="sourceDirectoryId || targetDirectoryId" type="button"
+                          class="text-left text-blue-700 hover:underline break-all"
+                          :title="`Show the source and target entries (on the target: ${h.entryDn})`"
+                          @click="viewHeld(h)">{{ h.sourceDn ?? h.entryDn }}</button>
                   <span v-else class="text-gray-700" :title="`On the target: ${h.entryDn}`">{{ h.sourceDn ?? h.entryDn }}</span>
                 </td>
                 <td class="px-4 py-3 align-top text-[13px] font-mono text-gray-700">{{ h.attribute }}</td>
                 <td class="px-4 py-3 align-top text-[13px] font-mono break-all">
-                  <RouterLink v-if="sourceDirectoryId && h.status === 'UNSYNCED'" :to="browserLink(sourceDirectoryId, h.reference)"
-                              class="text-blue-700 hover:underline">{{ h.reference }}</RouterLink>
+                  <button v-if="sourceDirectoryId && h.status === 'UNSYNCED'" type="button"
+                          class="text-left text-blue-700 hover:underline break-all"
+                          title="Show the entry this value names, on the source" @click="viewReference(h)">{{ h.reference }}</button>
                   <span v-else class="text-gray-700">{{ h.reference }}</span>
                 </td>
               </tr>
@@ -233,8 +237,9 @@
                   <span :class="KIND[e.category].badge">{{ KIND[e.category].label }}</span>
                 </td>
                 <td class="px-4 py-3 align-top text-[13px] font-mono break-all">
-                  <RouterLink v-if="targetDirectoryId && e.category !== 'MISSING'" :to="browserLink(targetDirectoryId, e.targetDn)"
-                              class="text-blue-700 hover:underline">{{ e.targetDn }}</RouterLink>
+                  <button v-if="targetDirectoryId || sourceDirectoryId" type="button"
+                          class="text-left text-blue-700 hover:underline break-all"
+                          title="Show the entry on both sides, without leaving the inventory" @click="viewDrift(e)">{{ e.targetDn }}</button>
                   <span v-else class="text-gray-700">{{ e.targetDn }}</span>
                 </td>
                 <td class="px-4 py-3 align-top text-[13px] text-gray-600">{{ detail(e) }}</td>
@@ -271,8 +276,8 @@
                   </p>
                   <p v-if="e.sourceDn" class="text-xs text-gray-600">
                     Source:
-                    <RouterLink v-if="sourceDirectoryId" :to="browserLink(sourceDirectoryId, e.sourceDn)"
-                                class="font-mono text-blue-700 hover:underline">{{ e.sourceDn }}</RouterLink>
+                    <button v-if="sourceDirectoryId" type="button" class="font-mono text-left text-blue-700 hover:underline break-all"
+                            title="Show the entry on both sides, without leaving the inventory" @click="viewDrift(e)">{{ e.sourceDn }}</button>
                     <span v-else class="font-mono">{{ e.sourceDn }}</span>
                     <template v-if="e.identity"> · identity <span class="font-mono">{{ e.identity }}</span></template>
                   </p>
@@ -374,6 +379,10 @@
       </template>
     </AppModal>
 
+    <SyncEntryViewer :show="!!viewing" :title="viewing?.title ?? ''" :sides="viewing?.sides ?? []"
+                     :flagged-attributes="viewing?.flagged" :flag-label="viewing?.flagLabel"
+                     @close="viewing = null" />
+
     <p class="text-xs text-gray-500">
       Drift is a live comparison of the source and target, independent of what the reconciliation history says was
       applied. It’s checked after every reconcile and whenever you verify.
@@ -385,6 +394,8 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import RelativeTime from '@/components/RelativeTime.vue'
 import AppModal from '@/components/AppModal.vue'
+import SyncEntryViewer, { type EntrySide } from './SyncEntryViewer.vue'
+import { appHref } from './syncLinks'
 import { useNotificationStore } from '@/stores/notifications'
 import { downloadBlob } from '@/composables/useApi'
 import {
@@ -748,8 +759,50 @@ function detail(e: SyncDriftEntry): string {
   return props.set.sourceAnchorAttribute ? 'Carries this set’s anchor; no source member' : 'No source member'
 }
 
-function browserLink(dir: string, dn: string) {
-  return { path: '/superadmin/directory-browser', query: { dir, dn } }
+// ── Viewing entries in place ────────────────────────────────────────────────
+// A DN opens the entry (or both sides of it) over the inventory, never a page
+// that replaces it; the viewer links on to the Directory Browser in a new tab.
+
+interface Viewing { title: string; sides: EntrySide[]; flagged?: string[]; flagLabel?: string }
+const viewing = ref<Viewing | null>(null)
+
+/** Both sides of a drift item: the source member (if any) and the target entry. */
+function viewDrift(e: SyncDriftEntry): void {
+  const sides: EntrySide[] = []
+  if (e.sourceDn) {
+    sides.push({ key: 'source', label: 'Source', directoryId: props.sourceDirectoryId ?? null, dn: e.sourceDn,
+      missingText: 'No longer on the source.' })
+  }
+  sides.push({ key: 'target', label: 'Target', directoryId: props.targetDirectoryId ?? null, dn: e.targetDn,
+    missingText: e.category === 'MISSING' ? 'Not on the target: that’s the drift.' : 'No longer on the target.' })
+  viewing.value = {
+    title: `${KIND[e.category].label}: ${e.targetDn}`, sides,
+    flagged: e.attributes.map(a => a.attribute),
+  }
+}
+
+/** The member holding a held reference, on both sides, with the held attribute flagged. */
+function viewHeld(h: SyncHeldEntry): void {
+  viewing.value = {
+    title: `Held reference: ${h.attribute}`,
+    sides: [
+      { key: 'source', label: 'Source', directoryId: props.sourceDirectoryId ?? null, dn: h.sourceDn,
+        missingText: 'No longer on the source.' },
+      { key: 'target', label: 'Target', directoryId: props.targetDirectoryId ?? null, dn: h.entryDn,
+        missingText: 'Not on the target.' },
+    ],
+    flagged: [h.attribute],
+    flagLabel: 'The held attribute: the target keeps its own value until the entry it names is synced.',
+  }
+}
+
+/** The entry a held value names, on the source (it isn't synced, so there's no target side). */
+function viewReference(h: SyncHeldEntry): void {
+  viewing.value = {
+    title: `Named by ${h.attribute}`,
+    sides: [{ key: 'source', label: 'Source', directoryId: props.sourceDirectoryId ?? null, dn: h.reference,
+      missingText: 'Doesn’t exist on the source.' }],
+  }
 }
 
 function errMsg(e: unknown): string {

@@ -112,29 +112,24 @@ describe('MembershipInventoryModal', () => {
     document.body.innerHTML = ''
   })
 
-  it('links to Directory Diff, filled in from this set, for superadmins who may run diffs', async () => {
+  it('links to Directory Diff in a new tab, filled in from this set, for superadmins who may run diffs', async () => {
     const auth = useAuthStore()
-    const mountWith = async () => {
-      const w = mount(MembershipInventoryModal, {
-        attachTo: document.body,
-        props: { show: true, set, sourceName: 'Source', targetName: 'Target' },
-        global: { stubs: { RouterLink: { props: ['to'], template: '<a class="diff-link" :data-to="JSON.stringify(to)"><slot /></a>' } } },
-      })
-      await flushPromises()
-      return w
-    }
-    let w = await mountWith()
+    const diffLink = () => Array.from(document.querySelectorAll<HTMLAnchorElement>('a'))
+      .find(a => a.textContent?.includes('Compare in Directory Diff'))
+    let w = open()
+    await flushPromises()
     await openDriftTab()
-    expect(document.querySelector('.diff-link')).toBeNull()
+    expect(diffLink()).toBeUndefined()
     w.unmount()
 
     auth.principal = { superadminPermissions: ['superadmin.manage_directory_diff'] } as never
-    w = await mountWith()
+    w = open()
+    await flushPromises()
     await openDriftTab()
-    const link = document.querySelector('.diff-link')!
-    expect(link.textContent).toContain('Compare in Directory Diff')
-    expect(JSON.parse(link.getAttribute('data-to')!)).toEqual(
-      { path: '/superadmin/directory-diff', query: { verifySet: set.id } })
+    const link = diffLink()!
+    // A new tab: following it never closes the inventory.
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('href')).toBe(`/superadmin/directory-diff?verifySet=${set.id}`)
     w.unmount()
   })
 
