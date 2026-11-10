@@ -199,6 +199,7 @@ import AppModal from '@/components/AppModal.vue'
 import DataTable from '@/components/DataTable.vue'
 import ReconcileRunHistory from '@/components/sync/ReconcileRunHistory.vue'
 import SyncDriftPanel from '@/components/sync/SyncDriftPanel.vue'
+import { deepestFirst } from '@/components/sync/syncLinks'
 import SyncActivityProgress from '@/components/sync/SyncActivityProgress.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
 import { useNotificationStore } from '@/stores/notifications'
@@ -917,7 +918,8 @@ function unchangedMessage(row: Membership, label: string): string {
 /** Approve the held deletes among the selection: deletes their target entries now. */
 async function bulkApproveDelete() {
   const setId = props.set?.id
-  const batch = heldDeletes.value
+  // Deepest first: a selected parent's delete would fail while its selected children are still there.
+  const batch = deepestFirst(heldDeletes.value, (r) => r.targetDn)
   if (!setId || !batch.length) return
   const n = batch.length
   const others = selectedRows.value.length - n

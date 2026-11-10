@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background, the Drift tab laid out like the Reconciliation tab with bulk-only actions, every held reference listed and exportable from the Drift tab, drift repairs and deletes that survive a newer content check, entries viewed in place from the Drift tab; 2026-11-10).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background, the Drift tab laid out like the Reconciliation tab with bulk-only actions, every held reference listed and exportable from the Drift tab, drift repairs and deletes that survive a newer content check, entries viewed in place from the Drift tab, subtree deletes children-first with a reason saying what blocks a non-leaf delete; 2026-11-10).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -354,7 +354,9 @@ races retry up to 4 times.
 ### Reconcile (anti-entropy)
 `MembershipReconciler.reconcile(set)` enumerates the source scope, recomputes
 each in-scope identity, then sweeps index rows it didn't see and recomputes
-those (each re-read to confirm absence before any delete). The not-seen sweep
+those (each re-read to confirm absence before any delete), **deepest target
+DN first**, so a subtree that left the source is deleted children before
+parents in the same run. The not-seen sweep
 **only runs after a complete enumeration** — a partial scan never mass-deletes.
 The enumeration is paged (the source directory's *paging size*), so a scope
 larger than the server's size limit still reconciles completely; one entry
@@ -564,6 +566,29 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
 `apply failed: OBJECT_CLASS_VIOLATION — missing required attribute 'sn'`,
 `apply failed: INSUFFICIENT_ACCESS_RIGHTS — …`.
 
+**Entries with entries beneath them.** The sync deletes one entry at a time,
+never a subtree (no subtree-delete control), so it can't remove an entry the
+sync doesn't manage. Deletes go children first: a reconcile's sweep sorts by
+DN depth, and so do bulk deletes from the inventory (**Delete target** on
+several held deletes) and the Drift tab (**Delete** on several orphans). A
+target entry that still has children fails its delete with a reason that
+says which case it is:
+
+- `delete failed: NOT_ALLOWED_ON_NONLEAF — n synced entries are still beneath
+  it on the target…`: the children are tracked by a sync set writing to that
+  target. If they're leaving too, it's retried each reconcile and goes once
+  they're deleted. If they stay (e.g. a filter change excluded the parent but
+  not its children), take them out of the set as well, or **Stop tracking**
+  the parent to keep it unmanaged.
+- `delete failed: NOT_ALLOWED_ON_NONLEAF — it has entries beneath it on the
+  target that no sync set manages…`: something created directly on the
+  target, or nothing the sync tracks, is under it, and the sync will never
+  delete it. Delete those entries on the target, or **Stop tracking** the
+  parent.
+
+A held delete approved, or an orphan deleted from the Drift tab, fails the
+same way with the same reason (an orphan has no row to stop tracking).
+
 ---
 
 ## 7. Monitoring
@@ -741,7 +766,10 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   - **Typed confirmation.** Type `DELETE` to enable **Delete n**; the server
     refuses a delete without it too.
   - **One entry, not a subtree.** An entry with children fails its delete and
-    is reported; nothing beneath it is removed.
+    is reported, saying whether the entries beneath it are synced; nothing
+    beneath it is removed. Several chosen orphans are deleted deepest first,
+    so a chosen parent goes after its chosen children (see §6, *FAILED
+    reasons*).
   - **Audited** under your name (`entry.delete`, detail
     `operation: orphan-delete`). Deleted entries, and ones already gone, leave
     the Drift tab and the set's counts. Endpoints:
