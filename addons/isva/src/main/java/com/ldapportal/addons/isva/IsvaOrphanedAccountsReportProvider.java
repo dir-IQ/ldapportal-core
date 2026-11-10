@@ -18,8 +18,8 @@ import java.util.Map;
 /**
  * Operational report: <b>orphaned IVIA accounts</b> — secUser entries in the
  * management DIT whose {@code secDN} points at a demographic entry that no
- * longer exists (or is missing entirely). This is the reverse of the read-time
- * {@code isva.orphaned} flag, which marks <em>demographic</em> entries lacking a
+ * longer exists (or is missing entirely). This is the reverse of
+ * {@link IsvaUsersWithoutAccountReportProvider}, which lists <em>demographic</em> entries lacking a
  * paired secUser.
  *
  * <p>Plugs into core's operational-report framework via

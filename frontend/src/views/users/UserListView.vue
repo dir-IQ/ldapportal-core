@@ -98,19 +98,20 @@
             :text="value as string"
             class="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
           />
-          <!-- IVIA orphan chip — surfaces the enricher's
-               isva.orphaned=true tag so admins can spot linked-mode
-               accounts whose paired secUser entry is missing without
-               opening each user. Renders only when the addon is on
-               and the row carries the flag (community / non-addon
-               directories never get the attribute). shrink-0 +
-               whitespace-nowrap keep the chip intact (no wrap/clip) and
-               let the DN text truncate to make room for it instead. -->
+          <!-- "No IVIA account" chip — surfaces the enricher's
+               isva.hasaccount=false flag (linked mode: no paired secUser;
+               inline mode: no secUser objectClass) so admins can spot users
+               without an IVIA account without opening each one. Neutral,
+               not a warning: plenty of directory users aren't IVIA users.
+               Renders only when the addon is on and the row carries the
+               flag (community / non-addon directories never get it).
+               shrink-0 + whitespace-nowrap keep the chip intact and let the
+               DN text truncate to make room for it instead. -->
           <span
-            v-if="auth.isIsvaIntegrationEnabled && isvaOrphaned(row)"
-            class="badge-yellow text-[10px] shrink-0 whitespace-nowrap"
-            :title="`No paired ${IVIA_ABBR} secUser entry found — run Integrity reconcile to repair`"
-          >{{ IVIA_ABBR }} orphan</span>
+            v-if="auth.isIsvaIntegrationEnabled && lacksIviaAccount(row)"
+            class="badge-gray text-[10px] shrink-0 whitespace-nowrap"
+            :title="`No ${IVIA_ABBR} account. If this user should have ${IVIA_ABBR} access, grant it from the ${IVIA_ABBR} Account tab or run Integrity reconcile.`"
+          >No {{ IVIA_ABBR }} account</span>
         </span>
       </template>
       <template #cell-enabled="{ value }">
@@ -667,16 +668,15 @@ const can = computed(() => ({
 }))
 
 /**
- * True iff the row carries the IsvaUserReadEnricher's
- * isva.orphaned=true tag. The enricher emits the attribute as a
- * lowercase string ('true' / 'false'); non-IVIA / non-linked-mode
- * rows have no attribute at all. Defensive against the value being
- * an array (LDAP attrs are always lists at the wire level).
+ * True iff the row carries the IsvaUserReadEnricher's isva.hasaccount=false
+ * flag. The enricher emits it as a lowercase string ('true' / 'false'); rows
+ * it couldn't classify, and non-IVIA directories, have no attribute at all.
+ * Defensive against the value being an array (LDAP attrs are lists on the wire).
  */
-function isvaOrphaned(row: unknown): boolean {
-  const v = (row as Record<string, unknown> | null)?.['isva.orphaned']
-  if (Array.isArray(v)) return v.length > 0 && String(v[0]).toLowerCase() === 'true'
-  return typeof v === 'string' && v.toLowerCase() === 'true'
+function lacksIviaAccount(row: unknown): boolean {
+  const v = (row as Record<string, unknown> | null)?.['isva.hasaccount']
+  if (Array.isArray(v)) return v.length > 0 && String(v[0]).toLowerCase() === 'false'
+  return typeof v === 'string' && v.toLowerCase() === 'false'
 }
 
 // Column-level expand toggle for the Groups column: collapsed shows the

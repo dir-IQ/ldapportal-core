@@ -467,6 +467,7 @@ import AppModal from '@/components/AppModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import DnPicker from '@/components/DnPicker.vue'
 import ResultsTable, { type ColumnDef } from '@/components/ResultsTable.vue'
+import { IVIA_ABBR } from '@/constants/productNames'
 
 interface ReportTypeDef {
   value: string
@@ -562,9 +563,11 @@ const groupPickerBaseDn = computed<string>(() =>
 )
 
 // Report types. INTEGRITY_CHECK is a frontend-only pseudo-type (handled via a
-// separate endpoint). ORPHANED_IVIA_ACCOUNTS is contributed by the IVIA addon
-// (an OperationalReportProvider in core) and only offered when the addon's
-// entitlement is active; the backend still validates per-directory applicability.
+// separate endpoint). ORPHANED_IVIA_ACCOUNTS (secUsers whose user entry is
+// gone) and USERS_WITHOUT_IVIA_ACCOUNT (users with no secUser — the reverse)
+// are contributed by the IVIA addon (OperationalReportProviders in core) and
+// only offered when the addon's entitlement is active; the backend still
+// validates per-directory applicability.
 const reportTypes = computed<ReportTypeDef[]>(() => {
   const types: ReportTypeDef[] = [
     { value: 'USERS_IN_GROUP',       label: 'Users in Group',         param: 'groupDn',  paramLabel: 'Group DN',  paramPlaceholder: 'cn=admins,dc=example,dc=com', lookback: false },
@@ -579,7 +582,8 @@ const reportTypes = computed<ReportTypeDef[]>(() => {
     { value: 'MISSING_DATA',         label: 'Missing Data',           param: 'branchDn', paramLabel: 'Branch DN', paramPlaceholder: 'ou=people,dc=example,dc=com', lookback: false, attributes: true },
   ]
   if (auth.isIsvaIntegrationEnabled) {
-    types.push({ value: 'ORPHANED_IVIA_ACCOUNTS', label: 'Orphaned IVIA Accounts', param: null, lookback: false })
+    types.push({ value: 'ORPHANED_IVIA_ACCOUNTS', label: `Orphaned ${IVIA_ABBR} Accounts`, param: null, lookback: false })
+    types.push({ value: 'USERS_WITHOUT_IVIA_ACCOUNT', label: `Users Without an ${IVIA_ABBR} Account`, param: null, lookback: false })
   }
   // Integrity Check runs against the whole DIT via the superadmin-only
   // Directory Browser endpoint (POST /api/v1/superadmin/.../browse/integrity-check,

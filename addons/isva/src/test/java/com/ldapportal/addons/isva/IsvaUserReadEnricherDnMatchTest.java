@@ -145,7 +145,7 @@ class IsvaUserReadEnricherDnMatchTest {
         addSecUser("jsmith", "uid=jsmith, ou=people, dc=example, dc=com");
 
         LdapUser user = enriched("uid=jsmith," + PEOPLE);
-        assertThat(user.getFirstValue("isva.orphaned")).isEqualTo("false");
+        assertThat(user.getFirstValue(IsvaUserReadEnricher.HAS_ACCOUNT)).isEqualTo("true");
         // The joined columns are filled too: a falsely orphaned user had none.
         assertThat(user.getFirstValue("isva.secuserdn")).isEqualToIgnoringCase("secUUID=jsmith," + MGMT);
         assertThat(user.getFirstValue("isva.seclogin")).isEqualTo("jsmith");
@@ -156,7 +156,7 @@ class IsvaUserReadEnricherDnMatchTest {
         addSecUser("adoe", "UID=adoe , OU=People,DC=Example,DC=Com");
 
         LdapUser user = enriched("uid=adoe," + PEOPLE);
-        assertThat(user.getFirstValue("isva.orphaned")).isEqualTo("false");
+        assertThat(user.getFirstValue(IsvaUserReadEnricher.HAS_ACCOUNT)).isEqualTo("true");
         assertThat(user.getFirstValue("isva.secuserdn")).isEqualToIgnoringCase("secUUID=adoe," + MGMT);
     }
 
@@ -165,7 +165,7 @@ class IsvaUserReadEnricherDnMatchTest {
         addSecUser("someoneelse", "uid=someoneelse," + PEOPLE);
 
         LdapUser user = enriched("uid=nobody," + PEOPLE);
-        assertThat(user.getFirstValue("isva.orphaned")).isEqualTo("true");
+        assertThat(user.getFirstValue(IsvaUserReadEnricher.HAS_ACCOUNT)).isEqualTo("false");
         // A real orphan has no secUser, so nothing to show in the joined columns.
         assertThat(user.getFirstValue("isva.secuserdn")).isNull();
     }

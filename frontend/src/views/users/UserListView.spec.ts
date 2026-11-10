@@ -8,11 +8,11 @@
  * playbook (offering a view-only View instead of Edit), and a full set
  * shows them.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
-const state = vi.hoisted(() => ({ features: [] as string[], playbooksEnabled: true }))
+const state = vi.hoisted(() => ({ features: [] as string[], playbooksEnabled: true, isvaEnabled: false }))
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { dirId: 'd1' } }) }))
 vi.mock('@/stores/notifications', () => ({
@@ -21,7 +21,7 @@ vi.mock('@/stores/notifications', () => ({
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
     hasFeature: (v: string) => state.features.includes(v),
-    isIsvaIntegrationEnabled: false,
+    get isIsvaIntegrationEnabled() { return state.isvaEnabled },
     get isPlaybooksEnabled() { return state.playbooksEnabled },
   }),
 }))
@@ -70,7 +70,7 @@ const stubs = {
   ResultsTable: {
     name: 'ResultsTable',
     props: ['rows', 'columns', 'selectedKeys', 'rowKey', 'tableKey', 'selectable', 'emptyText'],
-    template: `<div><slot name="toolbar" /><template v-for="r in rows" :key="r.dn"><slot name="cell-actions" :row="r" /></template></div>`,
+    template: `<div><slot name="toolbar" /><template v-for="r in rows" :key="r.dn"><span class="dn-cell"><slot name="cell-dn" :row="r" :value="r.dn" /></span><slot name="cell-actions" :row="r" /></template></div>`,
   },
   // Surface non-hidden items as buttons + the primary slot, so we can assert
   // exactly which row actions the gating leaves visible.
@@ -682,5 +682,30 @@ describe('UserListView size limit and Load all', () => {
     const notice = wrapper.find('[data-testid="users-truncated"]')
     expect(notice.text().replace(/\s+/g, ' ')).toContain('First 2,000 of more than 5,000 entries returned.')
     expect(wrapper.find('[data-testid="users-load-all"]').exists()).toBe(false)
+  })
+})
+
+describe('UserListView — No IVIA account chip', () => {
+  afterEach(() => { state.isvaEnabled = false })
+
+  async function chipTexts(flag: string | undefined, isvaEnabled = true) {
+    state.isvaEnabled = isvaEnabled
+    const attributes: Record<string, string[]> = { cn: ['A'] }
+    if (flag !== undefined) attributes['isva.hasaccount'] = [flag]
+    vi.mocked(usersApi.searchUsersPage).mockResolvedValueOnce({ data: {
+      entries: [{ dn: 'uid=a,dc=x', attributes }], truncated: false, total: 1,
+    } } as never)
+    const wrapper = await mountWith(ALL)
+    return wrapper.findAll('.dn-cell span.badge-gray').map(b => b.text())
+  }
+
+  it('shows "No IVIA account" for a user flagged isva.hasaccount=false', async () => {
+    expect(await chipTexts('false')).toEqual(['No IVIA account'])
+  })
+
+  it('shows nothing for a user with an account, an unclassified user, or with the addon off', async () => {
+    expect(await chipTexts('true')).toEqual([])
+    expect(await chipTexts(undefined)).toEqual([])
+    expect(await chipTexts('false', false)).toEqual([])
   })
 })

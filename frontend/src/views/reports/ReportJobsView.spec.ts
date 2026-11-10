@@ -103,6 +103,23 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     hoisted.profiles = []
   })
 
+  it('offers both IVIA reports, named from the product constant, only with the addon on', async () => {
+    const optionsOf = (w: ReturnType<typeof mountView>) =>
+      w.find('#rj-report-type').findAll('option').map(o => [o.attributes('value'), o.text()])
+
+    let wrapper = mountView()
+    await flushPromises()
+    expect(optionsOf(wrapper).map(([v]) => v)).not.toContain('USERS_WITHOUT_IVIA_ACCOUNT')
+
+    hoisted.isIsvaIntegrationEnabled = true
+    wrapper = mountView()
+    await flushPromises()
+    expect(optionsOf(wrapper)).toEqual(expect.arrayContaining([
+      ['ORPHANED_IVIA_ACCOUNTS', 'Orphaned IVIA Accounts'],
+      ['USERS_WITHOUT_IVIA_ACCOUNT', 'Users Without an IVIA Account'],
+    ]))
+  })
+
   it('shows the Scheduled Jobs button when the REPORTS_SCHEDULE feature is granted', async () => {
     hoisted.hasFeature = vi.fn((k: string) => k === 'reports.schedule')
     const wrapper = mountView()

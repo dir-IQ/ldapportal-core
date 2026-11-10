@@ -104,9 +104,10 @@ class IsvaUserReadEnricherTest {
     }
 
     @Test
-    void inlineMode_passesThrough_unchanged() {
-        // Inline-mode directories already carry sec* on the user
-        // entry — no joined-read needed; enricher is a no-op.
+    void inlineMode_withoutObjectClass_passesThrough_unchanged() {
+        // Inline-mode directories already carry sec* on the user entry, so
+        // there's no joined read; without objectClass the account flag
+        // can't be judged either, so the entry is left as is.
         VendorIntegrationIsvaConfig cfg = enabledConfig(IsvaTopologyMode.INLINE);
         when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
 
@@ -116,6 +117,45 @@ class IsvaUserReadEnricherTest {
         List<LdapUser> got = enricher.enrichBatch(dir, List.of(alice));
 
         assertThat(got).containsExactly(alice);
+    }
+
+    @Test
+    void inlineMode_flagsEachUserBySecUserObjectClass_withoutAnLdapHit() {
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(
+                enabledConfig(IsvaTopologyMode.INLINE)));
+        LdapUser granted = new LdapUser("uid=g," + PEOPLE_OU,
+                Map.of("objectclass", List.of("inetOrgPerson", "SecUser")));
+        LdapUser notGranted = new LdapUser("uid=n," + PEOPLE_OU,
+                Map.of("objectclass", List.of("inetOrgPerson")));
+
+        List<LdapUser> got = enricher.enrichBatch(dir, List.of(granted, notGranted));
+
+        assertThat(got.get(0).getFirstValue(IsvaUserReadEnricher.HAS_ACCOUNT)).isEqualTo("true");
+        assertThat(got.get(1).getFirstValue(IsvaUserReadEnricher.HAS_ACCOUNT)).isEqualTo("false");
+        // No joined attributes in inline mode.
+        assertThat(got.get(0).getFirstValue("isva.secuserdn")).isNull();
+    }
+
+    @Test
+    void flagsAccounts_forInlineAndUsableLinkedConfigsOnly() {
+        assertThat(enricher.flagsAccounts(dir)).isFalse();   // no config row
+
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(enabledConfig(IsvaTopologyMode.INLINE)));
+        assertThat(enricher.flagsAccounts(dir)).isTrue();
+
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(enabledConfig(IsvaTopologyMode.LINKED)));
+        assertThat(enricher.flagsAccounts(dir)).isTrue();
+
+        VendorIntegrationIsvaConfig noContainer = enabledConfig(IsvaTopologyMode.LINKED);
+        noContainer.setManagementDitBaseDn(null);
+        noContainer.setUserContainerDn(null);
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(noContainer));
+        assertThat(enricher.flagsAccounts(dir)).isFalse();
+
+        VendorIntegrationIsvaConfig disabled = enabledConfig(IsvaTopologyMode.INLINE);
+        disabled.setEnabled(false);
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(disabled));
+        assertThat(enricher.flagsAccounts(dir)).isFalse();
     }
 
     @Test
@@ -160,15 +200,15 @@ class IsvaUserReadEnricherTest {
         assertThat(enriched.getFirstValue("isva.seclogin")).isEqualTo("alice");
         assertThat(enriched.getFirstValue("isva.secacctvalid")).isEqualTo("TRUE");
         assertThat(enriched.getFirstValue("isva.secauthority")).isEqualTo("Default");
-        // Orphan flag set to false (not orphaned).
-        assertThat(enriched.getFirstValue("isva.orphaned")).isEqualTo("false");
+        // Has an IVIA account.
+        assertThat(enriched.getFirstValue(IsvaUserReadEnricher.HAS_ACCOUNT)).isEqualTo("true");
         // secUserDn surfaced for the UI's joined-view affordances.
         assertThat(enriched.getFirstValue("isva.secuserdn"))
                 .isEqualToIgnoringCase(secUserDn);
     }
 
     @Test
-    void linkedMode_orphanedDemographic_marksOrphanedTrue() throws Exception {
+    void linkedMode_demographicWithoutSecUser_flaggedAsHavingNoAccount() throws Exception {
         // Demographic entry exists, no paired secUser. Enricher
         // tags it instead of dropping the row.
         String demographicDn = "uid=orphan," + PEOPLE_OU;
@@ -183,7 +223,7 @@ class IsvaUserReadEnricherTest {
 
         List<LdapUser> got = enricher.enrichBatch(dir, List.of(orphan));
 
-        assertThat(got.get(0).getFirstValue("isva.orphaned")).isEqualTo("true");
+        assertThat(got.get(0).getFirstValue(IsvaUserReadEnricher.HAS_ACCOUNT)).isEqualTo("false");
         // Demographic attrs still present.
         assertThat(got.get(0).getFirstValue("uid")).isEqualTo("orphan");
         // No sec* attrs surfaced — there were none to surface.
@@ -228,11 +268,11 @@ class IsvaUserReadEnricherTest {
         // Order preserved.
         assertThat(got).extracting(LdapUser::getDn)
                 .containsExactly(aliceDn, bobDn, carolDn);
-        // alice + carol joined; bob marked orphaned.
-        assertThat(got.get(0).getFirstValue("isva.orphaned")).isEqualTo("false");
+        // alice + carol joined; bob has no account.
+        assertThat(got.get(0).getFirstValue(IsvaUserReadEnricher.HAS_ACCOUNT)).isEqualTo("true");
         assertThat(got.get(0).getFirstValue("isva.seclogin")).isEqualTo("alice");
-        assertThat(got.get(1).getFirstValue("isva.orphaned")).isEqualTo("true");
-        assertThat(got.get(2).getFirstValue("isva.orphaned")).isEqualTo("false");
+        assertThat(got.get(1).getFirstValue(IsvaUserReadEnricher.HAS_ACCOUNT)).isEqualTo("false");
+        assertThat(got.get(2).getFirstValue(IsvaUserReadEnricher.HAS_ACCOUNT)).isEqualTo("true");
         assertThat(got.get(2).getFirstValue("isva.seclogin")).isEqualTo("carol");
     }
 
@@ -257,7 +297,7 @@ class IsvaUserReadEnricherTest {
         List<LdapUser> got = enricher.enrichBatch(dir, List.of(
                 new LdapUser(demographicDn, attrs("uid", "Mixed"))));
 
-        assertThat(got.get(0).getFirstValue("isva.orphaned")).isEqualTo("false");
+        assertThat(got.get(0).getFirstValue(IsvaUserReadEnricher.HAS_ACCOUNT)).isEqualTo("true");
         assertThat(got.get(0).getFirstValue("isva.seclogin")).isEqualTo("mixed");
     }
 
