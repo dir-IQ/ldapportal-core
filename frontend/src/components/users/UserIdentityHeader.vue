@@ -3,6 +3,7 @@
 import { computed } from 'vue'
 import CopyButton from '@/components/CopyButton.vue'
 import type { IsvaAccountStatus } from '@/api/isvaAccount'
+import { IVIA_ABBR } from '@/constants/productNames'
 
 // Identity-level header rendered above the UserForm tab strip. Shared
 // across the Attributes / Groups / IVIA Account tabs — identity
@@ -79,15 +80,15 @@ const showEnabledBadge = computed<boolean>(
   () => props.enabled !== null && props.enabled !== undefined,
 )
 
-/** "IVIA linked / orphaned / suspended" — only rendered when an IVIA
+/** "IVIA linked / No IVIA account / IVIA suspended" — only rendered when an IVIA
  *  status snapshot is available (addon + directory IVIA enabled). */
 type IviaBadge = { label: string; klass: string; dot: string }
 const iviaBadge = computed<IviaBadge | null>(() => {
   const s = props.ivia
   if (!s) return null
-  if (s.orphaned) return { label: 'IVIA orphaned', klass: 'badge-yellow', dot: 'bg-yellow-500' }
-  if (!s.acctValid) return { label: 'IVIA suspended', klass: 'badge-red', dot: 'bg-red-500' }
-  return { label: 'IVIA linked', klass: 'badge-blue', dot: 'bg-blue-500' }
+  if (s.orphaned) return { label: `No ${IVIA_ABBR} account`, klass: 'badge-yellow', dot: 'bg-yellow-500' }
+  if (!s.acctValid) return { label: `${IVIA_ABBR} suspended`, klass: 'badge-red', dot: 'bg-red-500' }
+  return { label: `${IVIA_ABBR} linked`, klass: 'badge-blue', dot: 'bg-blue-500' }
 })
 </script>
 
