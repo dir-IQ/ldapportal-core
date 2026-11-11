@@ -1607,12 +1607,13 @@ function toggleApprover(accountId: string) {
         <span :class="value ? 'text-green-600' : 'text-gray-500'">{{ value ? 'Enabled' : 'Disabled' }}</span>
       </template>
       <template #actions="{ row }">
+        <!-- Edit stays inline; Clone and Delete live in the ⋮ menu
+             (inline-threshold=1). Copy form / Export remain available
+             from the Edit modal's "Other" section. -->
         <ActionMenu :items="[
           { label: 'Clone',  onClick: () => openClone(row as ProfileRow), hidden: !canManage },
-          { label: 'Copy form to…', onClick: () => openCopyForm(row as ProfileRow), hidden: !canManage },
-          { label: 'Export', onClick: () => doExport(row as ProfileRow), hidden: !canManage },
           { label: 'Delete', onClick: () => confirmDelete(row as ProfileRow), danger: true, hidden: !canManage },
-        ]">
+        ]" :inline-threshold="1">
           <template #primary>
             <button v-if="canManage" @click="openEdit(row as ProfileRow)" class="btn-secondary btn-compact">Edit</button>
           </template>

@@ -150,4 +150,23 @@ describe('SuperadminProfilesView — Other tab', () => {
     }
     expect(w.text()).toContain('Save the profile first')
   })
+
+  it('row menu offers only Clone and Delete, folded behind the kebab', async () => {
+    // Copy form / Export moved off the row; they live on this Other tab.
+    const ActionMenu = {
+      name: 'ActionMenu',
+      props: ['items', 'inlineThreshold'],
+      template: '<div><slot name="primary" /></div>',
+    }
+    const w = mount(SuperadminProfilesView, {
+      global: { stubs: { ...stubs, ActionMenu }, directives: { 'dialog-a11y': {} } },
+    })
+    await flushPromises()
+    const menu = w.findComponent({ name: 'ActionMenu' })
+    const labels = (menu.props('items') as Array<{ label: string; hidden?: boolean }>)
+      .filter(i => !i.hidden).map(i => i.label)
+    expect(labels).toEqual(['Clone', 'Delete'])
+    // Only the Edit primary button stays inline.
+    expect(menu.props('inlineThreshold')).toBe(1)
+  })
 })
