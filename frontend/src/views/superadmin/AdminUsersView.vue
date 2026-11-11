@@ -341,6 +341,7 @@ import {
 import { featurePermissionLabel } from '@/constants/featurePermissions'
 import { listAllProfiles } from '@/api/profiles'
 import DataTable from '@/components/DataTable.vue'
+import type { DataTableColumn } from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import AppModal from '@/components/AppModal.vue'
 import FormField from '@/components/FormField.vue'
@@ -622,13 +623,17 @@ watch(() => form.value.role, (role) => {
   if (role === 'SUPERADMIN' && !editing.value) form.value.authType = 'LOCAL'
 })
 
-const cols = [
-  { key: 'displayName', label: 'Name / Username' },
-  { key: 'email',       label: 'Email' },
-  { key: 'role',        label: 'Role' },
-  { key: 'authType',    label: 'Auth type' },
-  { key: 'active',      label: 'Status' },
-  { key: 'lastLoginAt', label: 'Last login' },
+const cols: DataTableColumn[] = [
+  // The cell shows displayName, falling back to username — sort the same way.
+  { key: 'displayName', label: 'Name / Username', sortable: true,
+    sortValue: (r: AdminRow) => r.displayName || r.username },
+  { key: 'email',       label: 'Email',     sortable: true },
+  { key: 'role',        label: 'Role',      sortable: true },
+  { key: 'authType',    label: 'Auth type', sortable: true },
+  { key: 'active',      label: 'Status',    sortable: true },
+  // ISO-8601 timestamps sort chronologically as strings; never-logged-in
+  // (null) sorts last in either direction.
+  { key: 'lastLoginAt', label: 'Last login', sortable: true },
 ]
 
 function emptyForm(): AdminForm {

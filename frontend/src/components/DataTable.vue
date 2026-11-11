@@ -19,7 +19,22 @@
             :key="col.key"
             scope="col"
             class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider"
-          >{{ col.label }}</th>
+            :aria-sort="col.sortable ? ariaSortFor(col.key) : undefined"
+          >
+            <!-- Opt-in sorting: a real <button> so the header is reachable
+                 and operable from the keyboard; aria-sort on the <th>
+                 announces the current direction. -->
+            <button
+              v-if="col.sortable"
+              type="button"
+              class="inline-flex items-center gap-0.5 uppercase tracking-wider font-semibold hover:text-gray-700"
+              @click="toggleSort(col.key)"
+            >
+              {{ col.label }}
+              <span v-if="sortKey === col.key" aria-hidden="true">{{ sortAsc ? '▲' : '▼' }}</span>
+            </button>
+            <template v-else>{{ col.label }}</template>
+          </th>
           <th v-if="$slots.actions" scope="col" class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
         </tr>
       </thead>
@@ -34,7 +49,7 @@
             <EmptyState :icon="emptyIcon" :title="emptyText" />
           </td>
         </tr>
-        <template v-else v-for="(row, i) in rows" :key="rowKey ? row[rowKey] : i">
+        <template v-else v-for="(row, i) in displayRows" :key="rowKey ? row[rowKey] : i">
           <tr
             class="hover:bg-gray-50 transition-colors cursor-pointer"
             :class="{
@@ -79,6 +94,7 @@
 <script setup lang="ts" generic="T extends Record<string, any>">
 import { ref, computed } from 'vue'
 import EmptyState from '@/components/EmptyState.vue'
+import { sortRows } from '@/composables/useTablePreferences'
 
 /** A single column. `key`/`label` are required; consumers may carry
  * extra metadata (e.g. `alwaysVisible`, `defaultWidth`) used by their
@@ -86,6 +102,12 @@ import EmptyState from '@/components/EmptyState.vue'
 export interface DataTableColumn {
   key: string
   label: string
+  /** Opt in to click-to-sort on this column's header (client-side,
+   *  over the rows passed in). Off by default. */
+  sortable?: boolean
+  /** Value to sort by when it differs from `row[key]` — e.g. a cell
+   *  that renders a fallback field. Defaults to `row[key]`. */
+  sortValue?: (row: any) => unknown
   [extra: string]: unknown
 }
 
@@ -117,6 +139,35 @@ const emit = defineEmits<{
   'update:selectedKeys': [Set<unknown>]
   'row-click': [T]
 }>()
+
+// ── Sorting (opt-in per column via `sortable: true`) ─────────────────
+const sortKey = ref('')
+const sortAsc = ref(true)
+
+function toggleSort(key: string): void {
+  if (sortKey.value === key) {
+    sortAsc.value = !sortAsc.value
+  } else {
+    sortKey.value = key
+    sortAsc.value = true
+  }
+  focusedIndex.value = -1
+}
+
+function ariaSortFor(key: string): 'ascending' | 'descending' | 'none' {
+  if (sortKey.value !== key) return 'none'
+  return sortAsc.value ? 'ascending' : 'descending'
+}
+
+/** Rows in display order: as passed in, or sorted by the active column
+ *  (nulls last, numbers numerically, everything else locale-aware). */
+const displayRows = computed<T[]>(() => {
+  const col = props.columns.find(c => c.key === sortKey.value && c.sortable)
+  if (!col) return props.rows
+  const valueOf = col.sortValue ?? ((r: T) => r[col.key])
+  const decorated = props.rows.map(row => ({ v: valueOf(row), row }))
+  return sortRows(decorated, 'v', sortAsc.value).map(d => d.row)
+})
 
 const focusedIndex = ref(-1)
 // True only while keyboard navigation is the active interaction mode,
@@ -155,7 +206,7 @@ function toggleAll(): void {
 
 function moveDown(): void {
   usingKeyboard.value = true
-  if (focusedIndex.value < props.rows.length - 1) focusedIndex.value++
+  if (focusedIndex.value < displayRows.value.length - 1) focusedIndex.value++
 }
 
 function moveUp(): void {
@@ -165,15 +216,15 @@ function moveUp(): void {
 
 function selectFocused(): void {
   usingKeyboard.value = true
-  if (focusedIndex.value >= 0 && focusedIndex.value < props.rows.length) {
-    emit('row-click', props.rows[focusedIndex.value])
+  if (focusedIndex.value >= 0 && focusedIndex.value < displayRows.value.length) {
+    emit('row-click', displayRows.value[focusedIndex.value])
   }
 }
 
 function toggleFocusedSelection(): void {
   usingKeyboard.value = true
   if (!props.selectable || focusedIndex.value < 0) return
-  toggleRow(props.rows[focusedIndex.value])
+  toggleRow(displayRows.value[focusedIndex.value])
 }
 
 /** Drop the focus ring when the table loses focus (e.g. click-away). */
