@@ -178,6 +178,9 @@ describe('action visibility', () => {
     expect(buttons.some((t) => t.includes('Grant'))).toBe(true)
     expect(buttons.some((t) => t === 'Restore')).toBe(false)
     expect(buttons.some((t) => t === 'Suspend')).toBe(false)
+     // Same "No IVIA account" wording as the user-list chip — never "Orphaned".
+    expect(w.text()).toContain('No IVIA account')
+    expect(w.text()).not.toContain('Orphaned')
   })
 
   it('read-only: status shown, every action hidden', async () => {

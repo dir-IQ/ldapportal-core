@@ -285,7 +285,7 @@ function handleError(err: unknown): void {
     case 'ivia_orphan':
       inlineHelp.value = {
         klass: 'alert-amber',
-        title: 'No IVIA account exists for this identity',
+        title: `No ${IVIA_ABBR} account exists for this identity`,
         body: 'Run Integrity reconcile to repair, or Grant a new account.',
       }
       break
@@ -325,7 +325,7 @@ const stateBadges = computed(() => {
   const s = status.value
   if (!s) return []
   if (s.orphaned) {
-    return [{ label: 'Orphaned', klass: 'badge-yellow', dot: 'bg-yellow-500' }]
+    return [{ label: `No ${IVIA_ABBR} account`, klass: 'badge-yellow', dot: 'bg-yellow-500' }]
   }
   const badges = [{ label: 'Linked', klass: 'badge-green', dot: 'bg-green-500' }]
   badges.push(
