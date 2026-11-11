@@ -101,15 +101,15 @@
           <!-- "No IVIA account" chip — surfaces the enricher's
                isva.hasaccount=false flag (linked mode: no paired secUser;
                inline mode: no secUser objectClass) so admins can spot users
-               without an IVIA account without opening each one. Neutral,
-               not a warning: plenty of directory users aren't IVIA users.
+               without an IVIA account without opening each one. Yellow to
+               match the "No IVIA account" badge in the user edit modal.
                Renders only when the addon is on and the row carries the
                flag (community / non-addon directories never get it).
                shrink-0 + whitespace-nowrap keep the chip intact and let the
                DN text truncate to make room for it instead. -->
           <span
             v-if="auth.isIsvaIntegrationEnabled && lacksIviaAccount(row)"
-            class="badge-gray text-[10px] shrink-0 whitespace-nowrap"
+            class="badge-yellow text-[10px] shrink-0 whitespace-nowrap"
             :title="`No ${IVIA_ABBR} account. If this user should have ${IVIA_ABBR} access, grant it from the ${IVIA_ABBR} Account tab or run Integrity reconcile.`"
           >No {{ IVIA_ABBR }} account</span>
         </span>

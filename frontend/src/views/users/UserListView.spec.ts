@@ -696,7 +696,7 @@ describe('UserListView — No IVIA account chip', () => {
       entries: [{ dn: 'uid=a,dc=x', attributes }], truncated: false, total: 1,
     } } as never)
     const wrapper = await mountWith(ALL)
-    return wrapper.findAll('.dn-cell span.badge-gray').map(b => b.text())
+    return wrapper.findAll('.dn-cell span.badge-yellow').map(b => b.text())
   }
 
   it('shows "No IVIA account" for a user flagged isva.hasaccount=false', async () => {

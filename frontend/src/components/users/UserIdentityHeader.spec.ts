@@ -109,7 +109,7 @@ describe('badges', () => {
     expect(w.text()).toContain('IVIA suspended')
   })
 
-  it('ivia.orphaned → "IVIA orphaned" yellow badge', () => {
+  it('ivia.orphaned → "No IVIA account" yellow badge', () => {
     const w = mount(UserIdentityHeader, {
       props: {
         dn: DN,
@@ -117,7 +117,8 @@ describe('badges', () => {
         ivia: status({ linked: false, orphaned: true, acctValid: false }),
       },
     })
-    expect(w.text()).toContain('IVIA orphaned')
+    expect(w.text()).toContain('No IVIA account')
+    expect(w.text()).not.toContain('orphaned')
     expect(w.html()).toContain('badge-yellow')
   })
 })
