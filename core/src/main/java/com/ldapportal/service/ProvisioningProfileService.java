@@ -1758,6 +1758,19 @@ public class ProvisioningProfileService {
     @Transactional
     public int removeUserFromProfileGroups(UUID directoryId, UUID profileId,
                                             String userDn, AuthPrincipal principal, String source) {
+        return removeUserFromProfileGroups(directoryId, profileId, userDn, null, principal, source);
+    }
+
+    /**
+     * Variant for a caller that already knows the user's {@code uid}, needed
+     * to remove them from {@code memberUid} (posixGroup) groups. The delete
+     * path reads it before deleting the entry, since afterwards it can't be
+     * read; when null it is read from the entry on demand, and if that fails
+     * the memberUid groups are skipped (logged like any other skipped group).
+     */
+    @Transactional
+    public int removeUserFromProfileGroups(UUID directoryId, UUID profileId, String userDn,
+                                            String uid, AuthPrincipal principal, String source) {
         ProvisioningProfile profile = requireProfileInDirectory(directoryId, profileId);
         DirectoryConnection dc = requireDirectory(directoryId);
 
@@ -1767,9 +1780,14 @@ public class ProvisioningProfileService {
                 computeEffectiveGroups(profile, ownGroups);
 
         int removed = 0;
+        Map<String, String> uids = new HashMap<>();
+        if (uid != null && !uid.isBlank()) {
+            uids.put(userDn.toLowerCase(Locale.ROOT), uid);
+        }
         for (ProfileResponse.GroupAssignmentEntry g : effective) {
             try {
-                ldapGroupService.removeMember(dc, g.groupDn(), g.memberAttribute(), userDn);
+                ldapGroupService.removeMember(dc, g.groupDn(), g.memberAttribute(),
+                        memberValue(dc, g.memberAttribute(), userDn, uids));
                 auditService.record(principal, directoryId,
                         AuditAction.GROUP_MEMBER_REMOVE, g.groupDn(),
                         Map.of("attribute", g.memberAttribute(),
@@ -1831,9 +1849,11 @@ public class ProvisioningProfileService {
 
         int added = 0;
         List<String> warnings = new ArrayList<>();
+        Map<String, String> uids = new HashMap<>();
         for (ProfileResponse.GroupAssignmentEntry g : effective) {
             try {
-                ldapGroupService.addMember(dc, g.groupDn(), g.memberAttribute(), userDn);
+                ldapGroupService.addMember(dc, g.groupDn(), g.memberAttribute(),
+                        memberValue(dc, g.memberAttribute(), userDn, uids));
                 auditService.record(principal, directoryId,
                         AuditAction.GROUP_MEMBER_ADD, g.groupDn(),
                         Map.of("attribute", g.memberAttribute(),

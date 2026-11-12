@@ -1441,4 +1441,28 @@ class LdapOperationServiceTest {
         p.setDnTemplate(null);
         assertThat(LdapOperationService.defaultImportKeyAttribute(p)).isEqualTo("uid");
     }
+
+    @Test
+    void deleteUser_readsTheUidBeforeDeleting_andPassesItToProfileGroupCleanup() {
+        // Afterwards the entry is gone, and the profile's posixGroups list the
+        // user by uid — a uid left behind grants those groups to its next owner.
+        String dn = "uid=jsmith,ou=people,dc=example,dc=com";
+        UUID profileId = UUID.randomUUID();
+        AuthPrincipal admin = adminPrincipal();
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
+        ProvisioningProfile profile = new ProvisioningProfile();
+        profile.setId(profileId);
+        when(ps.resolveProfileForDn(dirId, dn)).thenReturn(Optional.of(profile));
+        when(userService.getUser(dc, dn, "uid"))
+                .thenReturn(new com.ldapportal.ldap.model.LdapUser(dn, Map.of("uid", List.of("jsmith"))));
+
+        serviceWithProfile(ps).deleteUser(dirId, admin, dn);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(userService, ps);
+        order.verify(userService).getUser(dc, dn, "uid");
+        order.verify(userService).deleteUser(dc, dn, profileId);
+        order.verify(ps).removeUserFromProfileGroups(dirId, profileId, dn, "jsmith", admin, "profile_delete");
+    }
 }
