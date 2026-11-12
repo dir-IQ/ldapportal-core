@@ -258,21 +258,18 @@
                     <tbody>
                       <tr v-for="a in e.attributes" :key="a.attribute" class="align-top">
                         <td class="pr-3 py-1 font-mono">{{ a.attribute }}</td>
-                        <td class="pr-3 py-1 font-mono break-all">
-                          <template v-if="a.hidden"><span class="italic text-gray-500">(hidden)</span></template>
-                          <template v-else-if="!a.expected.length"><span class="italic text-gray-500">(none)</span></template>
-                          <div v-for="(v, i) in a.expected" v-else :key="i">{{ v }}</div>
-                        </td>
-                        <td class="py-1 font-mono break-all">
-                          <template v-if="a.hidden"><span class="italic text-gray-500">(hidden)</span></template>
-                          <template v-else-if="!a.actual.length"><span class="italic text-gray-500">(none)</span></template>
-                          <div v-for="(v, i) in a.actual" v-else :key="i">{{ v }}</div>
-                        </td>
+                        <td class="pr-3 py-1 font-mono break-all"><DriftValues :attr="a" side="expected" /></td>
+                        <td class="py-1 font-mono break-all"><DriftValues :attr="a" side="actual" /></td>
                       </tr>
                     </tbody>
                   </table>
-                  <p v-if="e.attributes.some(a => a.truncated)" class="text-xs text-gray-500">
-                    Long value lists show their first 50 values.
+                  <p v-if="e.attributes.length" class="text-xs text-gray-500">
+                    Highlighted: <ins class="rounded-sm bg-emerald-100 text-emerald-900 underline decoration-emerald-600 dark:bg-emerald-900/50 dark:text-emerald-100">only in the source</ins>
+                    (a reconcile adds it) and <del class="rounded-sm bg-red-100 text-red-900 line-through decoration-red-600 dark:bg-red-900/50 dark:text-red-100">only on the target</del>
+                    (a reconcile removes it); for a changed value, the characters that differ.
+                    <template v-if="e.attributes.some(a => a.truncated)">
+                      Long value lists show their first 50 values, those only one side has first.
+                    </template>
                   </p>
                   <p v-if="e.sourceDn" class="text-xs text-gray-600">
                     Source:
@@ -413,6 +410,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import RelativeTime from '@/components/RelativeTime.vue'
+import DriftValues from './DriftValues.vue'
 import AppModal from '@/components/AppModal.vue'
 import SyncEntryViewer, { type EntrySide } from './SyncEntryViewer.vue'
 import { appHref } from './syncLinks'

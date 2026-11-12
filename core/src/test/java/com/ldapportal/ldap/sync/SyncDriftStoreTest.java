@@ -69,6 +69,26 @@ class SyncDriftStoreTest {
     }
 
     @Test
+    void storesWhichValuesOnlyOneSideHas_andReadsOlderRowsWithout() throws Exception {
+        UUID set = UUID.randomUUID();
+        store.replace(set, List.of(new SyncDriftItem(SyncDriftCategory.MISMATCH, "cn=g,dc=t", "cn=g,dc=s", "g",
+                List.of(new SyncDriftItem.AttributeDiff("member", List.of("uid=b,dc=t", "uid=a,dc=t"),
+                        List.of("uid=c,dc=t", "uid=a,dc=t"), false, false, List.of(0), List.of(0))))));
+
+        var a = store.page(set, null, null, 0, 10).get(0).item().attributes().get(0);
+        assertThat(a.expectedOnly()).containsExactly(0);
+        assertThat(a.actualOnly()).containsExactly(0);
+
+        // A row stored before the flags were recorded has none.
+        var legacy = new ObjectMapper().readValue(
+                "{\"attribute\":\"title\",\"expected\":[\"Lead\"],\"actual\":[\"Eng\"],\"hidden\":false,\"truncated\":false}",
+                SyncDriftItem.AttributeDiff.class);
+        assertThat(legacy.expected()).containsExactly("Lead");
+        assertThat(legacy.expectedOnly()).isNull();
+        assertThat(legacy.actualOnly()).isNull();
+    }
+
+    @Test
     void replace_keepsOnlyTheLatestVerify_perSet() {
         UUID set = UUID.randomUUID();
         UUID other = UUID.randomUUID();
