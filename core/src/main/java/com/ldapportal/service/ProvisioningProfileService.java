@@ -697,6 +697,11 @@ public class ProvisioningProfileService {
     // ── Profile resolution ────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
+    /** Number of RDNs in {@code dn}; 0 if it doesn't parse (only called on DNs that did). */
+    private static int rdnDepth(String dn) {
+        return DnValidator.isValidDn(dn) ? DnValidator.parse(dn).getRDNs().length : 0;
+    }
+
     public Optional<ProvisioningProfile> resolveProfileForDn(UUID directoryId, String dn) {
         // No DN matches no profile. Callers on the approval path then fall back
         // to directory-level approval (the stricter outcome) instead of a 500.
@@ -705,13 +710,12 @@ public class ProvisioningProfileService {
         }
         List<ProvisioningProfile> profiles =
                 profileRepo.findAllByDirectoryIdAndEnabledTrue(directoryId);
-        String dnLower = dn.toLowerCase();
-
-        // Find profiles whose target OU is a suffix of the DN; most specific match wins
+        // Profiles whose target OU contains the DN (parsed, so case, spacing
+        // and escaping can't fake or hide containment); the deepest wins.
         return profiles.stream()
-                .filter(p -> p.getTargetUserDn() != null)
-                .filter(p -> dnLower.endsWith(p.getTargetUserDn().toLowerCase()))
-                .max(Comparator.comparingInt(p -> p.getTargetUserDn().length()));
+                .filter(p -> p.getTargetUserDn() != null && !p.getTargetUserDn().isBlank())
+                .filter(p -> DnValidator.isWithinSubtree(dn, p.getTargetUserDn()))
+                .max(Comparator.comparingInt(p -> rdnDepth(p.getTargetUserDn())));
     }
 
     /**
@@ -1687,11 +1691,11 @@ public class ProvisioningProfileService {
 
         // groupDn (lowercase) → set of acceptable memberAttribute values
         Map<String, Set<String>> allowedGroups = new HashMap<>();
-        // Lowercase target-OU suffixes for userDn containment checks
+        // Profile target OUs; a userDn must lie within one (parsed comparison)
         List<String> targetOus = new ArrayList<>();
         for (ProvisioningProfile p : profiles) {
             if (p.getTargetUserDn() != null && !p.getTargetUserDn().isBlank()) {
-                targetOus.add(p.getTargetUserDn().toLowerCase());
+                targetOus.add(p.getTargetUserDn());
             }
             for (ProfileGroupAssignment g :
                     groupAssignmentRepo.findAllByProfileIdOrderByDisplayOrderAsc(p.getId())) {
@@ -1719,8 +1723,8 @@ public class ProvisioningProfileService {
                                 + "] does not match the profile configuration for ["
                                 + entry.groupDn() + "]");
             }
-            String userDnLower = entry.userDn().toLowerCase();
-            boolean underAnyOu = targetOus.stream().anyMatch(userDnLower::endsWith);
+            boolean underAnyOu = targetOus.stream()
+                    .anyMatch(ou -> DnValidator.isWithinSubtree(entry.userDn(), ou));
             if (!underAnyOu) {
                 throw new IllegalArgumentException(
                         "User [" + entry.userDn() + "] is not under any profile target OU in this directory");

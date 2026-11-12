@@ -541,4 +541,88 @@ class PermissionServiceTest {
         fp.setEnabled(enabled);
         return fp;
     }
+
+    // ── DN scope compares parsed DNs, not raw string suffixes ────────────────
+
+    private static final String SALES = "ou=sales,dc=example,dc=com";
+
+    private void adminScopedTo(String ou) {
+        when(profileRoleRepo.findAllByAdminAccountIdAndProfileDirectoryIdWithProfile(adminId, dirId))
+                .thenReturn(List.of(roleWithOuDn(BaseRole.ADMIN, ou)));
+    }
+
+    @Test
+    void requireDnWithinScope_escapedCommaThatOnlyLooksUnderTheOu_isDenied() {
+        // Regression: the RDN is "cn=x,ou=sales" (escaped comma), so the entry's
+        // parent is dc=example,dc=com — outside ou=sales — even though the
+        // string ends with ",ou=sales,dc=example,dc=com".
+        adminScopedTo(SALES);
+        String escaped = "cn=x\\,ou=sales,dc=example,dc=com";
+
+        assertThatThrownBy(() -> permissionService.requireDnWithinScope(admin(), dirId, escaped))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThat(permissionService.isDnWithinScope(admin(), dirId, escaped)).isFalse();
+    }
+
+    @Test
+    void requireDnWithinScope_sameDnSpelledWithSpacesOrDifferentCase_isAllowed() {
+        adminScopedTo(SALES);
+
+        permissionService.requireDnWithinScope(admin(), dirId, "uid=bob,ou=sales, dc=example, dc=com");
+        permissionService.requireDnWithinScope(admin(), dirId, "uid=bob,OU=Sales,DC=Example,DC=com");
+        assertThat(permissionService.isDnWithinScope(admin(), dirId, "OU=Sales, DC=example, DC=com")).isTrue();
+    }
+
+    @Test
+    void requireDnWithinScope_siblingWhoseNameMerelyEndsWithTheOu_isDenied() {
+        adminScopedTo(SALES);
+
+        assertThatThrownBy(() -> permissionService.requireDnWithinScope(admin(), dirId,
+                "uid=bob,ou=presales,dc=example,dc=com"))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void requireDnWithinScope_unparseableDn_isDenied() {
+        adminScopedTo(SALES);
+
+        assertThatThrownBy(() -> permissionService.requireDnWithinScope(admin(), dirId,
+                "not a dn,ou=sales,dc=example,dc=com"))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void requireBaseDnWithinScope_escapedCommaBase_isDenied_andAncestorBaseIsAllowed() {
+        adminScopedTo(SALES);
+
+        assertThatThrownBy(() -> permissionService.requireBaseDnWithinScope(admin(), dirId,
+                "ou=x\\,ou=sales,dc=example,dc=com"))
+                .isInstanceOf(AccessDeniedException.class);
+        // A broader base that contains the OU is still accepted (results are clamped elsewhere).
+        permissionService.requireBaseDnWithinScope(admin(), dirId, "dc=example, dc=com");
+    }
+
+    @Test
+    void resolveSearchBaseDns_escapedCommaBase_isRefused_andAncestorIsClampedToTheOu() {
+        adminScopedTo(SALES);
+
+        assertThatThrownBy(() -> permissionService.resolveSearchBaseDns(admin(), dirId,
+                "ou=x\\,ou=sales,dc=example,dc=com"))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThat(permissionService.resolveSearchBaseDns(admin(), dirId, "DC=example, DC=com"))
+                .containsExactly(SALES);
+        assertThat(permissionService.resolveSearchBaseDns(admin(), dirId, "ou=east,ou=sales, dc=example,dc=com"))
+                .containsExactly("ou=east,ou=sales, dc=example,dc=com");
+    }
+
+    @Test
+    void isAtOrUnder_comparesParsedDns() {
+        assertThat(PermissionService.isAtOrUnder("uid=a,ou=sales,dc=example,dc=com", SALES)).isTrue();
+        assertThat(PermissionService.isAtOrUnder(SALES, SALES)).isTrue();
+        assertThat(PermissionService.isAtOrUnder("cn=x\\,ou=sales,dc=example,dc=com", SALES)).isFalse();
+        assertThat(PermissionService.isAtOrUnder("dc=example,dc=com", SALES)).isFalse();
+        // Unparseable: exact match only, never by suffix.
+        assertThat(PermissionService.isAtOrUnder("garbage", "GARBAGE ")).isTrue();
+        assertThat(PermissionService.isAtOrUnder("x garbage," + SALES, SALES)).isFalse();
+    }
 }

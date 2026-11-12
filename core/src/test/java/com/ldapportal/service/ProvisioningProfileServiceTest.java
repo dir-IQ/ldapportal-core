@@ -984,4 +984,50 @@ class ProvisioningProfileServiceTest {
         org.mockito.Mockito.verify(ldapGroupService, org.mockito.Mockito.never())
                 .addMember(any(), any(), any(), org.mockito.ArgumentMatchers.eq(svc));
     }
+
+    // ── Profile resolution compares parsed DNs ───────────────────────────────
+
+    @Test
+    void resolveProfileForDn_comparesParsedDns_andPicksTheDeepestProfile() {
+        UUID dirId = UUID.randomUUID();
+        ProvisioningProfile people = new ProvisioningProfile();
+        people.setName("people");
+        people.setTargetUserDn("ou=people,dc=example,dc=com");
+        ProvisioningProfile contractors = new ProvisioningProfile();
+        contractors.setName("contractors");
+        contractors.setTargetUserDn("OU=Contractors, ou=people, dc=example, dc=com");
+        given(profileRepo.findAllByDirectoryIdAndEnabledTrue(dirId)).willReturn(List.of(people, contractors));
+
+        // Different spelling of the same subtree still resolves; deepest wins.
+        assertThat(service.resolveProfileForDn(dirId, "uid=a,ou=contractors,ou=people,dc=example,dc=com"))
+                .map(ProvisioningProfile::getName).contains("contractors");
+        assertThat(service.resolveProfileForDn(dirId, "uid=b,OU=People, DC=example,DC=com"))
+                .map(ProvisioningProfile::getName).contains("people");
+        // An escaped comma only looks like it is under ou=people.
+        assertThat(service.resolveProfileForDn(dirId, "cn=x\\,ou=people,dc=example,dc=com")).isEmpty();
+        // No RDN boundary: "xou=people" is not "ou=people".
+        assertThat(service.resolveProfileForDn(dirId, "uid=c,xou=people,dc=example,dc=com")).isEmpty();
+    }
+
+    @Test
+    void applySelectiveGroupChanges_userOnlyLookingUnderATargetOu_isRejected() {
+        UUID dirId = UUID.randomUUID();
+        String devsDn = "cn=devs,ou=groups,dc=example,dc=com";
+        profile.setTargetUserDn("ou=people,dc=example,dc=com");
+        com.ldapportal.entity.DirectoryConnection dc = new com.ldapportal.entity.DirectoryConnection();
+        dc.setId(dirId);
+        given(dirRepo.findById(dirId)).willReturn(Optional.of(dc));
+        given(profileRepo.findAllByDirectoryIdOrderByNameAsc(dirId)).willReturn(List.of(profile));
+        given(groupAssignmentRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(assignment(devsDn, "member")));
+
+        assertThatThrownBy(() -> service.applySelectiveGroupChanges(dirId,
+                new com.ldapportal.dto.profile.SelectiveGroupChangeRequest(List.of(
+                        new com.ldapportal.dto.profile.SelectiveGroupChangeRequest.GroupMembershipEntry(
+                                "cn=x\\,ou=people,dc=example,dc=com", devsDn, "member"))),
+                null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not under any profile target OU");
+        org.mockito.Mockito.verifyNoInteractions(ldapGroupService);
+    }
 }
