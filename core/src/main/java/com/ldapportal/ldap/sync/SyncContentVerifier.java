@@ -500,7 +500,7 @@ public class SyncContentVerifier {
             } else {
                 mismatches.add(exp.displayDn());
                 mismatchItems.add(new SyncDriftItem(SyncDriftCategory.MISMATCH, target.getDN(), exp.sourceDn(),
-                        exp.identity(), attributeDiffs(mods, desired, target)));
+                        exp.identity(), attributeDiffs(mods, desired, target, schema, dnAttrs)));
             }
         }
 
@@ -545,9 +545,17 @@ public class SyncContentVerifier {
      * modify: what the projected source wants against what the target has.
      * Password material shows no values; each side keeps at most
      * {@link #VALUE_LIMIT} values, and a binary value shows as its size.
+     * Values only one side has are flagged and listed first (see
+     * {@link SyncDriftItem.AttributeDiff}).
      */
     static List<SyncDriftItem.AttributeDiff> attributeDiffs(List<Modification> mods, List<Attribute> desired,
                                                             Entry target) {
+        return attributeDiffs(mods, desired, target, null, List.of());
+    }
+
+    static List<SyncDriftItem.AttributeDiff> attributeDiffs(List<Modification> mods, List<Attribute> desired,
+                                                            Entry target, com.unboundid.ldap.sdk.schema.Schema schema,
+                                                            List<String> dnAttrs) {
         Map<String, SyncDriftItem.AttributeDiff> out = new LinkedHashMap<>();
         for (Modification m : mods) {
             String name = m.getAttributeName();
@@ -557,26 +565,74 @@ public class SyncContentVerifier {
             }
             int semi = key.indexOf(';');
             boolean hidden = SECRET_ATTRIBUTES.contains(semi < 0 ? key : key.substring(0, semi));
-            List<String> want = values(desired.stream().filter(a -> a.getName().equalsIgnoreCase(name)).findFirst()
-                    .orElse(null));
-            List<String> have = values(target.getAttribute(name));
-            boolean truncated = want.size() > VALUE_LIMIT || have.size() > VALUE_LIMIT;
-            out.put(key, new SyncDriftItem.AttributeDiff(name,
-                    hidden ? List.of() : limit(want), hidden ? List.of() : limit(have), hidden, truncated));
+            if (hidden) {
+                out.put(key, new SyncDriftItem.AttributeDiff(name, List.of(), List.of(), true, false,
+                        List.of(), List.of()));
+                continue;
+            }
+            Attribute wantAttr = desired.stream().filter(a -> a.getName().equalsIgnoreCase(name)).findFirst()
+                    .orElse(null);
+            Attribute haveAttr = target.getAttribute(name);
+            com.unboundid.ldap.matchingrules.MatchingRule rule =
+                    TargetEntryDiffer.matchingRule(Attribute.getBaseName(name), schema, dnAttrs);
+            Sided want = sided(wantAttr, haveAttr, rule);
+            Sided have = sided(haveAttr, wantAttr, rule);
+            boolean truncated = want.values().size() > VALUE_LIMIT || have.values().size() > VALUE_LIMIT;
+            out.put(key, new SyncDriftItem.AttributeDiff(name, limit(want.values()), limit(have.values()),
+                    false, truncated, onlyIndexes(want.only()), onlyIndexes(have.only())));
         }
         return List.copyOf(out.values());
     }
 
-    private static List<String> values(Attribute a) {
-        if (a == null || !a.hasValue()) {
-            return List.of();
+    /** One side's display values, the ones the other side lacks first, and how many those are. */
+    private record Sided(List<String> values, int only) {
+    }
+
+    private static Sided sided(Attribute side, Attribute other, com.unboundid.ldap.matchingrules.MatchingRule rule) {
+        if (side == null || !side.hasValue()) {
+            return new Sided(List.of(), 0);
         }
-        List<String> out = new ArrayList<>(a.size());
-        for (byte[] raw : a.getValueByteArrays()) {
-            out.add(printable(raw) ? new String(raw, java.nio.charset.StandardCharsets.UTF_8)
-                    : "(binary, " + raw.length + " bytes)");
+        Set<String> otherKeys = new java.util.HashSet<>();
+        if (other != null) {
+            for (byte[] raw : other.getValueByteArrays()) {
+                otherKeys.add(valueKey(raw, rule));
+            }
+        }
+        List<String> only = new ArrayList<>();
+        List<String> shared = new ArrayList<>();
+        for (byte[] raw : side.getValueByteArrays()) {
+            (otherKeys.contains(valueKey(raw, rule)) ? shared : only).add(display(raw));
+        }
+        List<String> all = new ArrayList<>(only.size() + shared.size());
+        all.addAll(only);
+        all.addAll(shared);
+        return new Sided(all, only.size());
+    }
+
+    /** The value as the sync compares it: normalized by the rule when it has one and can, else exact. */
+    private static String valueKey(byte[] raw, com.unboundid.ldap.matchingrules.MatchingRule rule) {
+        if (rule != null) {
+            try {
+                return "n:" + rule.normalize(new com.unboundid.asn1.ASN1OctetString(raw)).stringValue();
+            } catch (com.unboundid.ldap.sdk.LDAPException ex) {
+                // not normalizable (e.g. not a valid DN): compare exactly
+            }
+        }
+        return "x:" + new String(raw, java.nio.charset.StandardCharsets.ISO_8859_1);
+    }
+
+    private static List<Integer> onlyIndexes(int only) {
+        int n = Math.min(only, VALUE_LIMIT);
+        List<Integer> out = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            out.add(i);
         }
         return out;
+    }
+
+    private static String display(byte[] raw) {
+        return printable(raw) ? new String(raw, java.nio.charset.StandardCharsets.UTF_8)
+                : "(binary, " + raw.length + " bytes)";
     }
 
     private static boolean printable(byte[] raw) {

@@ -477,6 +477,13 @@ export interface SyncDriftAttribute {
   hidden: boolean
   /** A side had more values than were kept. */
   truncated: boolean
+  /**
+   * Indexes of the shown values the other side lacks (compared the way the sync
+   * compares them, over the full lists; listed first). Absent on items stored
+   * before they were recorded.
+   */
+  expectedOnly?: number[] | null
+  actualOnly?: number[] | null
 }
 
 export interface SyncDriftEntry {

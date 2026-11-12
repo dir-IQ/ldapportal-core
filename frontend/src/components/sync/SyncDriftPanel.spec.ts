@@ -176,12 +176,17 @@ describe('SyncDriftPanel', () => {
     const detailEl = w.find('[data-testid="drift-detail-2"]')
     const rows = detailEl.findAll('tbody tr').map(r => r.findAll('td').map(td => td.text()))
     expect(rows).toEqual([
-      ['title', 'Senior Engineer', 'Engineer'],
-      ['mail', 'js@corp.com', '(none)'],
+      ['title', 'not on target: Senior Engineer', 'not in source: Engineer'],
+      ['mail', 'not on target: js@corp.com', '(none)'],
       ['userPassword', '(hidden)', '(hidden)'],
     ])
     const detail = detailEl.text().replace(/\s+/g, ' ')
     expect(detail).toContain('Long value lists show their first 50 values')
+    // A changed value highlights the characters that differ; a value only one side has, whole.
+    const [title, mail] = detailEl.findAll('tbody tr')
+    expect(title.findAll('ins[data-testid="diff-char"]').map(e => e.element.textContent)).toEqual(['Senior '])
+    expect(title.findAll('del').length).toBe(0)
+    expect(mail.find('ins[data-testid="diff-value"]').text()).toBe('not on target: js@corp.com')
     expect(detail).toContain('Source: uid=js,ou=staff,dc=corp · identity js')
     // An orphan has nothing to expand.
     expect(w.find('[data-testid="drift-row-1"] button[aria-expanded]').exists()).toBe(false)

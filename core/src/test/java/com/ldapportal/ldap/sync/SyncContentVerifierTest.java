@@ -348,4 +348,48 @@ class SyncContentVerifierTest {
         assertThat(diffs.get(1).expected()).containsExactly("(binary, 3 bytes)");
         assertThat(diffs.get(1).actual()).isEmpty();
     }
+
+    @Test
+    void attributeDiffs_flagValuesOnlyOneSideHas_comparedAsTheSyncDoes_andListsThemFirst() {
+        // member is DN-valued: "UID=A, DC=T" is the same member as "uid=a,dc=t".
+        String[] want = new String[SyncContentVerifier.VALUE_LIMIT + 10];
+        for (int i = 0; i < want.length - 1; i++) want[i] = "uid=s" + i + ",dc=t";
+        want[want.length - 1] = "uid=new,dc=t"; // past the limit in source order
+        String[] have = new String[want.length];
+        for (int i = 0; i < have.length - 1; i++) have[i] = "UID=S" + i + ", DC=T";
+        have[have.length - 1] = "uid=gone,dc=t";
+        var desired = List.of(new Attribute("member", want), new Attribute("title", "Lead"));
+        Entry target = new Entry("cn=g,dc=t", new Attribute("member", have), new Attribute("title", "lead"));
+        var mods = List.of(
+                new com.unboundid.ldap.sdk.Modification(com.unboundid.ldap.sdk.ModificationType.REPLACE, "member", want),
+                new com.unboundid.ldap.sdk.Modification(com.unboundid.ldap.sdk.ModificationType.REPLACE, "title", "Lead"));
+
+        var diffs = SyncContentVerifier.attributeDiffs(mods, desired, target, null, List.of("member"));
+
+        var member = diffs.get(0);
+        assertThat(member.truncated()).isTrue();
+        assertThat(member.expected()).hasSize(SyncContentVerifier.VALUE_LIMIT).first().isEqualTo("uid=new,dc=t");
+        assertThat(member.expectedOnly()).containsExactly(0);
+        assertThat(member.actual()).first().isEqualTo("uid=gone,dc=t");
+        assertThat(member.actualOnly()).containsExactly(0);
+        // title isn't DN-valued: compared exactly, so the case differs.
+        var title = diffs.get(1);
+        assertThat(title.expectedOnly()).containsExactly(0);
+        assertThat(title.actualOnly()).containsExactly(0);
+    }
+
+    @Test
+    void attributeDiffs_hideSecretValuesAndFlags() {
+        var desired = List.of(new Attribute("userPassword", "secret"));
+        Entry target = new Entry("uid=a,dc=t", new Attribute("userPassword", "old"));
+        var mods = List.of(new com.unboundid.ldap.sdk.Modification(
+                com.unboundid.ldap.sdk.ModificationType.REPLACE, "userPassword", "secret"));
+
+        var d = SyncContentVerifier.attributeDiffs(mods, desired, target).get(0);
+
+        assertThat(d.hidden()).isTrue();
+        assertThat(d.expected()).isEmpty();
+        assertThat(d.expectedOnly()).isEmpty();
+        assertThat(d.actualOnly()).isEmpty();
+    }
 }

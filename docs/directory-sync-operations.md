@@ -696,7 +696,15 @@ entry it can't delete, saying how many went. `POST …/memberships/{identity}/ap
   entry (below), and expand a content drift to see each
   differing attribute's **source (expected)** and **target (actual)** values
   (password attributes are flagged but their values never shown; a long value
-  list shows its first 50). **Export CSV** downloads them all
+  list shows its first 50, with the values only one side has listed first).
+  Values only the source has are highlighted as insertions (underlined, green)
+  and values only the target has as deletions (struck through, red), compared
+  the way the sync compares them (as DNs for DN-valued attributes such as
+  `member`, so `UID=A, DC=X` and `uid=a,dc=x` aren't flagged). When one value
+  replaced another, the characters that differ are highlighted instead (a
+  whitespace-only change shows as `·`); values over 2,000 characters or binary
+  are highlighted whole. Items from a verify run before this was added are
+  compared as exact text until the next verify. **Export CSV** downloads them all
   (`category,targetDn,sourceDn,identity,attribute,expected,actual`, one row per
   differing attribute). The list comes from `GET …/sets/{id}/drift` and
   `…/drift.csv`. Counts from a check made before the list was kept show with
