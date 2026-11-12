@@ -492,5 +492,96 @@ class OperationalReportServiceTest {
         verify(userService).searchUsersRaw(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*"));
         verifyNoInteractions(permissionService);
     }
-}
 
+    // ── USERS_WITH_NO_GROUP ("Users by Group Count") ──────────────────────────
+
+    private static final String GROUPS_OU = "ou=groups,dc=example,dc=com";
+
+    /**
+     * Users in ou=people, groups in the sibling ou=groups: alice is a member by
+     * DN (spelled with different case/spacing than her entry), carol only via
+     * a posixGroup memberUid, dave in two groups, bob in none.
+     */
+    private void stubPeopleAndSiblingGroups(DirectoryConnection dc, String groupBase) {
+        when(userService.searchUsersRaw(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*")))
+                .thenReturn(List.of(
+                        new LdapUser("uid=alice," + PEOPLE, Map.of("uid", List.of("alice"))),
+                        new LdapUser("uid=bob," + PEOPLE, Map.of("uid", List.of("bob"))),
+                        new LdapUser("uid=carol," + PEOPLE, Map.of("uid", List.of("carol"))),
+                        new LdapUser("uid=dave," + PEOPLE, Map.of("uid", List.of("dave")))));
+        LdapGroup admins = new LdapGroup("cn=admins," + GROUPS_OU, Map.of("cn", List.of("admins"),
+                "member", List.of("UID=Alice, OU=People, DC=example, DC=com", "uid=dave," + PEOPLE)));
+        LdapGroup devs = new LdapGroup("cn=devs," + GROUPS_OU, Map.of("cn", List.of("devs"),
+                "memberuid", List.of("carol")));
+        LdapGroup ops = new LdapGroup("cn=ops," + GROUPS_OU, Map.of("cn", List.of("ops"),
+                "uniquemember", List.of("uid=dave," + PEOPLE)));
+        if (groupBase == null) {
+            when(groupService.searchGroups(eq(dc), anyString(), isNull(), any(String[].class)))
+                    .thenReturn(List.of(admins, devs, ops));
+        } else {
+            when(groupService.searchGroups(eq(dc), anyString(), eq(groupBase), any(String[].class)))
+                    .thenReturn(List.of(admins, devs, ops));
+        }
+    }
+
+    private static List<String> dns(ReportData data) {
+        return data.rows().stream().map(r -> r.get("dn")).toList();
+    }
+
+    @Test
+    void usersByGroupCount_superadminScopedToUserOu_countsGroupsInSiblingOu() {
+        // Regression: the frontend scopes the report to the profile's user OU;
+        // the group scan used to run under that same OU, found no groups, and
+        // reported every user as group-less.
+        DirectoryConnection dc = ldapDir();
+        stubPeopleAndSiblingGroups(dc, null);
+
+        ReportData data = service.run(dc, "USERS_WITH_NO_GROUP",
+                Map.of("scopeBaseDn", PEOPLE), dirId, superadmin());
+
+        assertThat(dns(data)).containsExactly("uid=bob," + PEOPLE);
+        assertThat(data.rows()).singleElement()
+                .satisfies(row -> assertThat(row).containsEntry("groups", ""));
+    }
+
+    @Test
+    void usersByGroupCount_comparisonOperator_filtersOnDirectGroupCount() {
+        DirectoryConnection dc = ldapDir();
+        stubPeopleAndSiblingGroups(dc, null);
+
+        ReportData data = service.run(dc, "USERS_WITH_NO_GROUP",
+                Map.of("scopeBaseDn", PEOPLE, "groupCountOp", ">", "groupCountValue", 1), dirId, superadmin());
+
+        assertThat(dns(data)).containsExactly("uid=dave," + PEOPLE);
+        assertThat(data.rows()).singleElement()
+                .satisfies(row -> assertThat(row).containsEntry("groups", "admins|ops"));
+    }
+
+    @Test
+    void usersByGroupCount_admin_countsGroupsFromTheirGroupOus() {
+        AuthPrincipal alice = admin();
+        DirectoryConnection dc = ldapDir();
+        when(permissionService.resolveSearchBaseDns(alice, dirId, PEOPLE)).thenReturn(List.of(PEOPLE));
+        when(permissionService.resolveGroupSearchBaseDns(alice, dirId)).thenReturn(List.of(GROUPS_OU));
+        stubPeopleAndSiblingGroups(dc, GROUPS_OU);
+
+        ReportData data = service.run(dc, "USERS_WITH_NO_GROUP",
+                Map.of("scopeBaseDn", PEOPLE, "groupCountOp", ">=", "groupCountValue", 1), dirId, alice);
+
+        assertThat(dns(data)).containsExactly(
+                "uid=alice," + PEOPLE, "uid=carol," + PEOPLE, "uid=dave," + PEOPLE);
+        // Groups read once, for both the count and the groups column.
+        verify(groupService).searchGroups(eq(dc), anyString(), eq(GROUPS_OU), any(String[].class));
+    }
+
+    @Test
+    void usersByGroupCount_rejectsUnknownOperatorAndNegativeValue() {
+        assertThatThrownBy(() -> service.run(ldapDir(), "USERS_WITH_NO_GROUP",
+                Map.of("groupCountOp", "~"), dirId))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.run(ldapDir(), "USERS_WITH_NO_GROUP",
+                Map.of("groupCountValue", -1), dirId))
+                .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(groupService, userService);
+    }
+}
