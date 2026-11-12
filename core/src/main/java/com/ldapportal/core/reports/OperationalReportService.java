@@ -106,13 +106,15 @@ public class OperationalReportService {
      * <p>{@code groupBases} is where the groups column looks for groups. It is
      * wider than {@code bases} for an admin: a report narrowed to their user OU
      * must still name the groups in their group OU, so it covers every OU they
-     * hold, the same groups their Groups list shows.</p>
+     * hold, the same groups their Groups list shows. When unbounded it is the
+     * whole directory: the requested base narrows which <em>users</em> a
+     * report lists, but their groups usually live in a sibling OU.</p>
      */
     record ReportScope(List<String> bases, List<String> groupBases,
                        Predicate<String> dnAllowed, boolean restricted) {
         static ReportScope unbounded(String requestedBase) {
-            List<String> bases = Collections.singletonList(requestedBase);
-            return new ReportScope(bases, bases, dn -> true, false);
+            return new ReportScope(Collections.singletonList(requestedBase),
+                    Collections.singletonList(null), dn -> true, false);
         }
 
         /** Refuse an explicit DN parameter (branch, group) outside the scope. */
@@ -190,8 +192,7 @@ public class OperationalReportService {
                     yield withGroups(dc, scope, runLdapReport(dc,
                             "(|(objectClass=inetOrgPerson)(objectClass=person))", branchDn, safeParams));
                 }
-                case USERS_WITH_NO_GROUP    -> withGroups(dc, scope, perBase(scope,
-                        base -> runUsersByGroupCountReport(dc, base, safeParams)));
+                case USERS_WITH_NO_GROUP    -> runUsersByGroupCountReport(dc, scope, safeParams);
                 case RECENTLY_ADDED         -> withGroups(dc, scope, perBase(scope, base -> runLdapReport(dc,
                         buildRecentFilter("createTimestamp", safeParams), base, safeParams)));
                 case RECENTLY_MODIFIED      -> withGroups(dc, scope, perBase(scope, base -> runLdapReport(dc,
@@ -272,6 +273,13 @@ public class OperationalReportService {
             log.warn("Could not read groups for the report's groups column: {}", e.getMessage());
             return data;
         }
+        return withGroups(index, data);
+    }
+
+    /** Add the groups columns to {@code data} from an already-built index. */
+    private static ReportData withGroups(UserGroupIndex index, ReportData data) {
+        List<String> columns = UserGroupIndex.withColumns(data.columns());
+        Map<String, String> labels = data.labels();
         List<Map<String, String>> rows = new ArrayList<>(data.rows().size());
         for (Map<String, String> row : data.rows()) {
             Map<String, String> out = new LinkedHashMap<>(row);
@@ -350,11 +358,18 @@ public class OperationalReportService {
     }
 
     /**
-     * Two-pass implementation that doesn't rely on the memberOf overlay:
-     * count how many groups each user appears in, then return the users whose
-     * group count satisfies an operator/value comparison. When {@code scopeBaseDn}
-     * is non-null, both the group scan and the user scan run under that base so
-     * an admin only sees groups + users under their authorized OU.
+     * Users whose direct group count satisfies an operator/value comparison,
+     * worked out from the group entries themselves (no reliance on the
+     * {@code memberOf} overlay).
+     *
+     * <p>Groups are counted with the same {@link UserGroupIndex} that fills
+     * the report's groups column, so the filter and the column always agree:
+     * groups are read from {@link ReportScope#groupBases()} (every OU an admin
+     * holds, or the whole directory when unbounded) rather than from the user
+     * search base — groups usually sit in a sibling OU of the users, and
+     * scanning only the user OU made every user look group-less. Member DNs
+     * are compared normalized, and posixGroup {@code memberUid} entries match
+     * the user's {@code uid}.</p>
      *
      * <p>The comparison is driven by two optional params:
      * {@code groupCountOp} (one of {@code =, !=, >, >=, <, <=}) and
@@ -364,35 +379,29 @@ public class OperationalReportService {
      * Passing {@code groupCountOp=">"} with {@code groupCountValue=1} returns
      * users belonging to more than one group.</p>
      */
-    private ReportData runUsersByGroupCountReport(DirectoryConnection dc, String scopeBaseDn,
+    private ReportData runUsersByGroupCountReport(DirectoryConnection dc, ReportScope scope,
                                                   Map<String, Object> params) {
         String op = groupCountOp(params);
         int threshold = groupCountValue(params);
 
-        String groupFilter = "(|(objectClass=groupOfNames)(objectClass=groupOfUniqueNames)"
-                + "(objectClass=posixGroup)(objectClass=group))";
-        List<LdapGroup> allGroups = groupService.searchGroups(dc, groupFilter, scopeBaseDn, MAX_LDAP_RESULTS,
-                "member", "uniqueMember", "memberUid");
+        // Unlike the groups column, the count can't degrade gracefully: a
+        // failed group scan would make every user look group-less, so let it
+        // surface as an error rather than return a wrong report.
+        UserGroupIndex index = UserGroupIndex.build(groupService, dc, scope.groupBases());
 
-        Map<String, Integer> groupCounts = new HashMap<>();
-        for (LdapGroup g : allGroups) {
-            for (String m : g.getAllMembers()) {
-                groupCounts.merge(m.toLowerCase(), 1, Integer::sum);
-            }
-        }
-
-        List<LdapUser> allUsers = userService.searchUsersRaw(dc,
-                "(|(objectClass=inetOrgPerson)(objectClass=person))", scopeBaseDn,
-                MAX_LDAP_RESULTS, entryAttributes(params));
-
-        List<LdapUser> matched = allUsers.stream()
-                .filter(u -> matchesGroupCount(
-                        groupCounts.getOrDefault(u.getDn().toLowerCase(), 0), op, threshold))
-                .toList();
-
-        log.info("Users by group count ({} {}): {} matched out of {} total users ({} groups scanned)",
-                op, threshold, matched.size(), allUsers.size(), allGroups.size());
-        return buildReportDataFromUsers(matched);
+        ReportData data = perBase(scope, base -> {
+            List<LdapUser> users = userService.searchUsersRaw(dc,
+                    "(|(objectClass=inetOrgPerson)(objectClass=person))", base,
+                    MAX_LDAP_RESULTS, entryAttributes(params));
+            List<LdapUser> matched = users.stream()
+                    .filter(u -> matchesGroupCount(
+                            index.groupsOf(u.getDn(), u.getUid()).size(), op, threshold))
+                    .toList();
+            log.info("Users by group count ({} {}) under {}: {} matched out of {} users",
+                    op, threshold, base, matched.size(), users.size());
+            return buildReportDataFromUsers(matched);
+        });
+        return withGroups(index, data);
     }
 
     /** Read the optional group-count comparison operator; defaults to "=". */
@@ -427,7 +436,7 @@ public class OperationalReportService {
 
     private static boolean matchesGroupCount(int actual, String op, int threshold) {
         return switch (op) {
-            case "=", ""  -> actual == threshold;
+            case "="      -> actual == threshold;
             case "!="     -> actual != threshold;
             case ">"      -> actual > threshold;
             case ">="     -> actual >= threshold;
