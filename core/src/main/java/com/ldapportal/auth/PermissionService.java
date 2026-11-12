@@ -10,6 +10,8 @@ import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.repository.AdminFeaturePermissionRepository;
 import com.ldapportal.repository.AdminProfileRoleRepository;
 import com.ldapportal.repository.SuperadminPermissionGrantRepository;
+import com.unboundid.ldap.sdk.DN;
+import com.unboundid.ldap.sdk.LDAPException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.access.AccessDeniedException;
@@ -19,7 +21,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -269,6 +270,28 @@ public class PermissionService {
     }
 
     /**
+     * Whether {@code dn} is {@code ancestor} or lies beneath it, comparing
+     * <em>parsed</em> DNs: case, spacing and escaping are folded the way the
+     * directory folds them, and the boundary is a real RDN boundary.
+     *
+     * <p>A raw string-suffix check is not safe here. {@code cn=x\,ou=sales,dc=example,dc=com}
+     * ends with {@code ,ou=sales,dc=example,dc=com}, yet its first RDN is
+     * {@code cn=x,ou=sales} (an escaped comma) and its parent is
+     * {@code dc=example,dc=com} — outside {@code ou=sales}. Conversely
+     * {@code uid=bob,ou=sales, dc=example, dc=com} <em>is</em> under it.</p>
+     *
+     * <p>A value that doesn't parse as a DN matches only an identical value
+     * (ignoring case and surrounding whitespace), never by suffix.</p>
+     */
+    static boolean isAtOrUnder(String dn, String ancestor) {
+        try {
+            return new DN(dn).isDescendantOf(new DN(ancestor), true);
+        } catch (LDAPException e) {
+            return dn.trim().equalsIgnoreCase(ancestor.trim());
+        }
+    }
+
+    /**
      * Verifies that the given DN falls within one of the admin's authorized OUs
      * in the specified directory. A DN is in-scope if it is equal to or a
      * descendant of any authorized OU.
@@ -284,12 +307,7 @@ public class PermissionService {
             throw new AccessDeniedException("No profile access in directory [" + directoryId + "]");
         }
 
-        String normalizedDn = dn.toLowerCase(Locale.ROOT).trim();
-        boolean inScope = allowedOus.stream().anyMatch(ou -> {
-            String normalizedOu = ou.toLowerCase(Locale.ROOT).trim();
-            return normalizedDn.equals(normalizedOu)
-                    || normalizedDn.endsWith("," + normalizedOu);
-        });
+        boolean inScope = allowedOus.stream().anyMatch(ou -> isAtOrUnder(dn, ou));
 
         if (!inScope) {
             throw new AccessDeniedException("DN is outside authorized OUs for this admin");
@@ -314,12 +332,7 @@ public class PermissionService {
         Set<String> allowedOus = getAuthorizedOuDns(principal, directoryId);
         if (allowedOus.isEmpty()) return false;
 
-        String normalizedDn = dn.toLowerCase(Locale.ROOT).trim();
-        return allowedOus.stream().anyMatch(ou -> {
-            String normalizedOu = ou.toLowerCase(Locale.ROOT).trim();
-            return normalizedDn.equals(normalizedOu)
-                    || normalizedDn.endsWith("," + normalizedOu);
-        });
+        return allowedOus.stream().anyMatch(ou -> isAtOrUnder(dn, ou));
     }
 
     /**
@@ -338,16 +351,11 @@ public class PermissionService {
             throw new AccessDeniedException("No profile access in directory [" + directoryId + "]");
         }
 
-        String normalizedBase = baseDn.toLowerCase(Locale.ROOT).trim();
         // baseDn is valid if it equals or is a descendant of an allowed OU,
         // OR if an allowed OU is a descendant of baseDn (broader search that
         // will return results within the allowed scope)
-        boolean inScope = allowedOus.stream().anyMatch(ou -> {
-            String normalizedOu = ou.toLowerCase(Locale.ROOT).trim();
-            return normalizedBase.equals(normalizedOu)
-                    || normalizedBase.endsWith("," + normalizedOu)
-                    || normalizedOu.endsWith("," + normalizedBase);
-        });
+        boolean inScope = allowedOus.stream().anyMatch(ou ->
+                isAtOrUnder(baseDn, ou) || isAtOrUnder(ou, baseDn));
 
         if (!inScope) {
             throw new AccessDeniedException("Search baseDn is outside authorized OUs for this admin");
@@ -415,17 +423,14 @@ public class PermissionService {
             return List.copyOf(allowedOus);
         }
 
-        String normalizedRequested = requestedBaseDn.toLowerCase(Locale.ROOT).trim();
         List<String> clampedToAuthorized = new ArrayList<>();
         for (String ou : allowedOus) {
-            String normalizedOu = ou.toLowerCase(Locale.ROOT).trim();
-            if (normalizedRequested.equals(normalizedOu)
-                    || normalizedRequested.endsWith("," + normalizedOu)) {
+            if (isAtOrUnder(requestedBaseDn, ou)) {
                 // Requested DN is at or under this authorized OU — narrower
                 // (or equal) than the authorized scope. Use it directly.
                 return Collections.singletonList(requestedBaseDn);
             }
-            if (normalizedOu.endsWith("," + normalizedRequested)) {
+            if (isAtOrUnder(ou, requestedBaseDn)) {
                 // Requested DN is a strict ancestor of this authorized OU —
                 // clamp to the OU so the search stays within scope.
                 clampedToAuthorized.add(ou);
