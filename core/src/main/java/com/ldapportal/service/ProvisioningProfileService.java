@@ -1517,9 +1517,11 @@ public class ProvisioningProfileService {
             effectiveMap.put(g.groupDn(), g.memberAttribute());
         }
 
-        // Search LDAP for users under the profile's target OU
+        // Users under the profile's target OU — only user entries: the OU
+        // itself, sub-OUs and any groups kept there are not users and must
+        // not be reported as missing groups.
         List<LdapUser> users = ldapUserService.searchUsers(
-                dc, "(objectClass=*)", profile.getTargetUserDn(), "uid");
+                dc, DirectoryObjectClassDefaults.userSearchFilter(dc), profile.getTargetUserDn(), "uid");
 
         // Membership is read from the profile's groups themselves, not the
         // users' memberOf: that is operational (never returned unless asked
@@ -1558,6 +1560,30 @@ public class ProvisioningProfileService {
     }
 
     /**
+     * The value {@code memberAttribute} stores for this user: their uid for a
+     * posixGroup's {@code memberUid}, otherwise their DN. The uid is read
+     * once per user per request ({@code uids} caches it).
+     *
+     * @throws IllegalArgumentException when the group uses memberUid and the
+     *         user has no uid
+     */
+    private String memberValue(DirectoryConnection dc, String memberAttribute, String userDn,
+                               Map<String, String> uids) {
+        if (!"memberUid".equalsIgnoreCase(memberAttribute)) {
+            return userDn;
+        }
+        String uid = uids.computeIfAbsent(userDn.toLowerCase(Locale.ROOT), k -> {
+            String v = ldapUserService.getUser(dc, userDn, "uid").getUid();
+            return v == null ? "" : v;
+        });
+        if (uid.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Group uses memberUid but " + userDn + " has no uid");
+        }
+        return uid;
+    }
+
+    /**
      * Applies the group membership changes previewed by
      * {@link #evaluateGroupChanges(UUID, UUID)}.
      */
@@ -1566,12 +1592,13 @@ public class ProvisioningProfileService {
                                                  AuthPrincipal principal) {
         GroupChangePreview preview = evaluateGroupChanges(directoryId, profileId);
         DirectoryConnection dc = requireDirectory(directoryId);
+        Map<String, String> uids = new HashMap<>();
 
         for (GroupChangePreview.UserGroupChange change : preview.changes()) {
             for (GroupChangePreview.GroupChange add : change.groupsToAdd()) {
                 try {
-                    ldapGroupService.addMember(dc, add.groupDn(),
-                            add.memberAttribute(), change.userDn());
+                    ldapGroupService.addMember(dc, add.groupDn(), add.memberAttribute(),
+                            memberValue(dc, add.memberAttribute(), change.userDn(), uids));
                     auditService.record(principal, directoryId,
                             AuditAction.GROUP_MEMBER_ADD, add.groupDn(),
                             Map.of("attribute", add.memberAttribute(),
@@ -1584,8 +1611,8 @@ public class ProvisioningProfileService {
             }
             for (GroupChangePreview.GroupChange remove : change.groupsToRemove()) {
                 try {
-                    ldapGroupService.removeMember(dc, remove.groupDn(),
-                            remove.memberAttribute(), change.userDn());
+                    ldapGroupService.removeMember(dc, remove.groupDn(), remove.memberAttribute(),
+                            memberValue(dc, remove.memberAttribute(), change.userDn(), uids));
                     auditService.record(principal, directoryId,
                             AuditAction.GROUP_MEMBER_REMOVE, remove.groupDn(),
                             Map.of("attribute", remove.memberAttribute(),
@@ -1625,10 +1652,11 @@ public class ProvisioningProfileService {
         validateSelectiveGroupChangeEntries(directoryId, request);
 
         int applied = 0;
+        Map<String, String> uids = new HashMap<>();
         for (SelectiveGroupChangeRequest.GroupMembershipEntry entry : request.entries()) {
             try {
-                ldapGroupService.addMember(dc, entry.groupDn(),
-                        entry.memberAttribute(), entry.userDn());
+                ldapGroupService.addMember(dc, entry.groupDn(), entry.memberAttribute(),
+                        memberValue(dc, entry.memberAttribute(), entry.userDn(), uids));
                 auditService.record(principal, directoryId,
                         AuditAction.GROUP_MEMBER_ADD, entry.groupDn(),
                         Map.of("attribute", entry.memberAttribute(),

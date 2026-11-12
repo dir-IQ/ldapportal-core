@@ -890,7 +890,10 @@ class ProvisioningProfileServiceTest {
         given(dirRepo.findById(dirId)).willReturn(Optional.of(dc));
         given(groupAssignmentRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
                 .willReturn(List.of(assignment(staffDn, "member"), assignment(devsDn, "memberUid")));
-        given(ldapUserService.searchUsers(dc, "(objectClass=*)", people, "uid")).willReturn(List.of(
+        // Only user entries: the OU itself and other non-users are not candidates.
+        given(ldapUserService.searchUsers(dc,
+                com.ldapportal.entity.DirectoryObjectClassDefaults.userSearchFilter(dc), people, "uid"))
+                .willReturn(List.of(
                 new com.ldapportal.ldap.model.LdapUser("uid=alice," + people, Map.of("uid", List.of("alice"))),
                 new com.ldapportal.ldap.model.LdapUser("uid=bob," + people, Map.of("uid", List.of("bob")))));
         // alice: in staff by DN (spelled differently) and in devs by memberUid.
@@ -915,5 +918,70 @@ class ProvisioningProfileServiceTest {
         a.setGroupDn(groupDn);
         a.setMemberAttribute(attribute);
         return a;
+    }
+
+    // ── Applying group changes to memberUid (posixGroup) groups ──────────────
+
+    @Test
+    void applyGroupChanges_writesTheUidToMemberUidGroups_andTheDnElsewhere() {
+        UUID dirId = UUID.randomUUID();
+        String people = "ou=people,dc=example,dc=com";
+        String staffDn = "cn=staff,ou=groups,dc=example,dc=com";
+        String devsDn = "cn=devs,ou=groups,dc=example,dc=com";
+        String bob = "uid=bob," + people;
+        profile.setTargetUserDn(people);
+        profile.setExcludeAutoIncludes(true);
+        com.ldapportal.entity.DirectoryConnection dc = new com.ldapportal.entity.DirectoryConnection();
+        dc.setId(dirId);
+        given(profileRepo.findByIdAndDirectoryId(profileId, dirId)).willReturn(Optional.of(profile));
+        given(dirRepo.findById(dirId)).willReturn(Optional.of(dc));
+        given(groupAssignmentRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(assignment(staffDn, "member"), assignment(devsDn, "memberUid")));
+        given(ldapUserService.searchUsers(dc,
+                com.ldapportal.entity.DirectoryObjectClassDefaults.userSearchFilter(dc), people, "uid"))
+                .willReturn(List.of(new com.ldapportal.ldap.model.LdapUser(bob, Map.of("uid", List.of("bob")))));
+        given(ldapGroupService.getGroup(any(), any(), any(String[].class)))
+                .willAnswer(inv -> new com.ldapportal.ldap.model.LdapGroup(inv.getArgument(1), Map.of()));
+        given(ldapUserService.getUser(dc, bob, "uid"))
+                .willReturn(new com.ldapportal.ldap.model.LdapUser(bob, Map.of("uid", List.of("bob"))));
+
+        service.applyGroupChanges(dirId, profileId, null);
+
+        org.mockito.Mockito.verify(ldapGroupService).addMember(dc, staffDn, "member", bob);
+        org.mockito.Mockito.verify(ldapGroupService).addMember(dc, devsDn, "memberUid", "bob");
+    }
+
+    @Test
+    void applySelectiveGroupChanges_memberUidGroup_writesTheUid_andSkipsAUserWithoutOne() {
+        UUID dirId = UUID.randomUUID();
+        String people = "ou=people,dc=example,dc=com";
+        String devsDn = "cn=devs,ou=groups,dc=example,dc=com";
+        String bob = "uid=bob," + people;
+        String svc = "cn=svc," + people;
+        profile.setTargetUserDn(people);
+        com.ldapportal.entity.DirectoryConnection dc = new com.ldapportal.entity.DirectoryConnection();
+        dc.setId(dirId);
+        given(dirRepo.findById(dirId)).willReturn(Optional.of(dc));
+        given(profileRepo.findAllByDirectoryIdOrderByNameAsc(dirId)).willReturn(List.of(profile));
+        given(groupAssignmentRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(assignment(devsDn, "memberUid")));
+        given(ldapUserService.getUser(dc, bob, "uid"))
+                .willReturn(new com.ldapportal.ldap.model.LdapUser(bob, Map.of("uid", List.of("bob"))));
+        given(ldapUserService.getUser(dc, svc, "uid"))
+                .willReturn(new com.ldapportal.ldap.model.LdapUser(svc, Map.of()));
+
+        int applied = service.applySelectiveGroupChanges(dirId,
+                new com.ldapportal.dto.profile.SelectiveGroupChangeRequest(List.of(
+                        new com.ldapportal.dto.profile.SelectiveGroupChangeRequest.GroupMembershipEntry(
+                                bob, devsDn, "memberUid"),
+                        new com.ldapportal.dto.profile.SelectiveGroupChangeRequest.GroupMembershipEntry(
+                                svc, devsDn, "memberUid"))),
+                null);
+
+        assertThat(applied).isEqualTo(1);
+        org.mockito.Mockito.verify(ldapGroupService).addMember(dc, devsDn, "memberUid", "bob");
+        // No uid: nothing written (the old code stored the DN in memberUid).
+        org.mockito.Mockito.verify(ldapGroupService, org.mockito.Mockito.never())
+                .addMember(any(), any(), any(), org.mockito.ArgumentMatchers.eq(svc));
     }
 }
