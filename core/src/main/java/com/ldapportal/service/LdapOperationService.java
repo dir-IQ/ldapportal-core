@@ -712,11 +712,23 @@ public class LdapOperationService {
         UUID profileId = ps == null ? null
                 : ps.resolveProfileForDn(directoryId, dn).map(p -> p.getId()).orElse(null);
 
+        // Read the uid while the entry still exists: removing the user from
+        // the profile's posixGroups (memberUid) needs it, and a uid left
+        // behind would grant those groups to whoever is given it next.
+        String uid = null;
+        if (ps != null && profileId != null) {
+            try {
+                uid = userService.getUser(dc, dn, "uid").getUid();
+            } catch (Exception e) {
+                log.debug("Could not read uid of {} before delete: {}", dn, e.getMessage());
+            }
+        }
+
         userService.deleteUser(dc, dn, profileId);
 
         if (ps != null && profileId != null) {
             try {
-                ps.removeUserFromProfileGroups(directoryId, profileId, dn, principal);
+                ps.removeUserFromProfileGroups(directoryId, profileId, dn, uid, principal, "profile_delete");
             } catch (Exception e) {
                 // Don't fail the delete for a group-cleanup hiccup —
                 // user is gone (or soft-disabled); log + continue.

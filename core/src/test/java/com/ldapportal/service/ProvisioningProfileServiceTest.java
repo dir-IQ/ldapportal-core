@@ -984,4 +984,89 @@ class ProvisioningProfileServiceTest {
         org.mockito.Mockito.verify(ldapGroupService, org.mockito.Mockito.never())
                 .addMember(any(), any(), any(), org.mockito.ArgumentMatchers.eq(svc));
     }
+
+    // ── Create / delete paths and memberUid groups ───────────────────────────
+
+    private com.ldapportal.entity.DirectoryConnection stubProfileWithMemberAndPosixGroups(
+            UUID dirId, String staffDn, String devsDn) {
+        profile.setExcludeAutoIncludes(true);
+        com.ldapportal.entity.DirectoryConnection dc = new com.ldapportal.entity.DirectoryConnection();
+        dc.setId(dirId);
+        given(profileRepo.findByIdAndDirectoryId(profileId, dirId)).willReturn(Optional.of(profile));
+        given(dirRepo.findById(dirId)).willReturn(Optional.of(dc));
+        given(groupAssignmentRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(assignment(staffDn, "member"), assignment(devsDn, "memberUid")));
+        return dc;
+    }
+
+    @Test
+    void applyGroupAssignmentsToUser_writesTheUidToMemberUidGroups() {
+        UUID dirId = UUID.randomUUID();
+        String staffDn = "cn=staff,ou=groups,dc=example,dc=com";
+        String devsDn = "cn=devs,ou=groups,dc=example,dc=com";
+        String bob = "uid=bob,ou=people,dc=example,dc=com";
+        var dc = stubProfileWithMemberAndPosixGroups(dirId, staffDn, devsDn);
+        given(ldapUserService.getUser(dc, bob, "uid"))
+                .willReturn(new com.ldapportal.ldap.model.LdapUser(bob, Map.of("uid", List.of("bob"))));
+
+        var result = service.applyGroupAssignmentsToUser(dirId, profileId, bob, null);
+
+        assertThat(result.added()).isEqualTo(2);
+        assertThat(result.warnings()).isEmpty();
+        org.mockito.Mockito.verify(ldapGroupService).addMember(dc, staffDn, "member", bob);
+        org.mockito.Mockito.verify(ldapGroupService).addMember(dc, devsDn, "memberUid", "bob");
+    }
+
+    @Test
+    void applyGroupAssignmentsToUser_userWithoutUid_warnsForTheMemberUidGroup() {
+        UUID dirId = UUID.randomUUID();
+        String staffDn = "cn=staff,ou=groups,dc=example,dc=com";
+        String devsDn = "cn=devs,ou=groups,dc=example,dc=com";
+        String svc = "cn=svc,ou=people,dc=example,dc=com";
+        var dc = stubProfileWithMemberAndPosixGroups(dirId, staffDn, devsDn);
+        given(ldapUserService.getUser(dc, svc, "uid"))
+                .willReturn(new com.ldapportal.ldap.model.LdapUser(svc, Map.of()));
+
+        var result = service.applyGroupAssignmentsToUser(dirId, profileId, svc, null);
+
+        assertThat(result.added()).isEqualTo(1);
+        assertThat(result.warnings()).singleElement().asString()
+                .contains(devsDn).contains("has no uid");
+        org.mockito.Mockito.verify(ldapGroupService, org.mockito.Mockito.never())
+                .addMember(dc, devsDn, "memberUid", svc);
+    }
+
+    @Test
+    void removeUserFromProfileGroups_withAKnownUid_removesItFromMemberUidGroups_withoutReadingTheEntry() {
+        // The delete path passes the uid read before the entry was deleted.
+        UUID dirId = UUID.randomUUID();
+        String staffDn = "cn=staff,ou=groups,dc=example,dc=com";
+        String devsDn = "cn=devs,ou=groups,dc=example,dc=com";
+        String bob = "uid=bob,ou=people,dc=example,dc=com";
+        var dc = stubProfileWithMemberAndPosixGroups(dirId, staffDn, devsDn);
+
+        int removed = service.removeUserFromProfileGroups(dirId, profileId, bob, "bob", null, "profile_delete");
+
+        assertThat(removed).isEqualTo(2);
+        org.mockito.Mockito.verify(ldapGroupService).removeMember(dc, staffDn, "member", bob);
+        org.mockito.Mockito.verify(ldapGroupService).removeMember(dc, devsDn, "memberUid", "bob");
+        org.mockito.Mockito.verify(ldapUserService, org.mockito.Mockito.never())
+                .getUser(any(), any(), any(String[].class));
+    }
+
+    @Test
+    void removeUserFromProfileGroups_withoutAUid_readsItFromTheEntry() {
+        // The move path: the entry still exists, so the uid is read on demand.
+        UUID dirId = UUID.randomUUID();
+        String staffDn = "cn=staff,ou=groups,dc=example,dc=com";
+        String devsDn = "cn=devs,ou=groups,dc=example,dc=com";
+        String bob = "uid=bob,ou=people,dc=example,dc=com";
+        var dc = stubProfileWithMemberAndPosixGroups(dirId, staffDn, devsDn);
+        given(ldapUserService.getUser(dc, bob, "uid"))
+                .willReturn(new com.ldapportal.ldap.model.LdapUser(bob, Map.of("uid", List.of("bob"))));
+
+        service.removeUserFromProfileGroups(dirId, profileId, bob, null, "profile_move");
+
+        org.mockito.Mockito.verify(ldapGroupService).removeMember(dc, devsDn, "memberUid", "bob");
+    }
 }
