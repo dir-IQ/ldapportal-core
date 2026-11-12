@@ -2,6 +2,7 @@
 import type {
   DirectoryDiffCategory, DirectoryDiffCounts, DirectoryDiffPhase, DirectoryDiffRun, DirectoryDiffSide,
 } from '@/api/directoryDiff'
+import { formatLocalDate, formatTimeOfDay } from '@/utils/dateTime'
 
 export const CATEGORIES: DirectoryDiffCategory[] = ['DIFFERENT', 'ONLY_A', 'ONLY_B', 'SAME']
 
@@ -61,12 +62,12 @@ export function formatTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const d = new Date(iso)
   const now = new Date()
-  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const time = formatTimeOfDay(d)
   if (d.toDateString() === now.toDateString()) return `Today ${time}`
   const yesterday = new Date(now)
   yesterday.setDate(now.getDate() - 1)
   if (d.toDateString() === yesterday.toDateString()) return `Yesterday ${time}`
-  return `${d.toLocaleDateString()} ${time}`
+  return `${formatLocalDate(d)} ${time}`
 }
 
 export function formatDuration(fromIso: string, toIso?: string | null): string {

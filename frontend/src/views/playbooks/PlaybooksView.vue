@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useDirectoryPicker } from '@/composables/useDirectoryPicker'
@@ -13,40 +13,111 @@ import AppModal from '@/components/AppModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import DataTable from '@/components/DataTable.vue'
 import DnPicker from '@/components/DnPicker.vue'
+import { formatDateTime } from '@/utils/dateTime'
+
+type StepParams = Record<string, string | undefined>
+
+interface PlaybookStepDto {
+  action: string
+  parameters?: string | null
+  continueOnError: boolean
+}
+interface Playbook {
+  id: string
+  name: string
+  description?: string | null
+  type: string
+  profileId: string | null
+  requireApproval: boolean
+  enabled: boolean
+  steps?: PlaybookStepDto[]
+  stepCount?: number
+}
+interface PlaybookStepForm {
+  action: string
+  parameters: StepParams
+  continueOnError: boolean
+}
+interface PlaybookForm {
+  name: string
+  description: string
+  type: string
+  profileId: string | null
+  requireApproval: boolean
+  enabled: boolean
+  steps: PlaybookStepForm[]
+}
+interface PreviewStep {
+  stepOrder: number
+  action: string
+  description?: string
+  reversible?: boolean
+  continueOnError?: boolean
+}
+interface PlaybookPreview {
+  steps: PreviewStep[]
+}
+interface StepResult {
+  stepOrder: number
+  action: string
+  status: string
+  error?: string
+}
+interface PlaybookExecution {
+  id: string
+  status: string
+  targetDn: string
+  startedAt: string
+  stepResults: string
+}
+
+function errMessage(e: unknown): string {
+  const err = e as {
+    response?: { data?: { detail?: string, message?: string } },
+    message?: string,
+  }
+  return err.response?.data?.detail || err.response?.data?.message || err.message || 'Request failed'
+}
 
 const { dirId, directories, selectedDir, loadingDirs, showPicker } = useDirectoryPicker({ ldapOnly: true })
+// useDirectoryPicker is a plain-JS composable; give the list a shape for the
+// template.
+const directoryOptions = computed<{ id: string, displayName: string }[]>(
+  () => directories.value as { id: string, displayName: string }[])
 const notif = useNotificationStore()
+// DnPicker takes a single directory id; dirId is typed from route params.
+const pickerDirId = computed<string>(() => String(dirId.value ?? ''))
 const { hasFeature } = usePermissions()
 const canManage = computed(() => hasFeature('playbook.manage'))
 const canExecute = computed(() => hasFeature('playbook.execute'))
 
-const playbooks = ref([])
-const loading = ref(false)
-const saving = ref(false)
+const playbooks = ref<Playbook[]>([])
+const loading = ref<boolean>(false)
+const saving = ref<boolean>(false)
 
 // Modal state
-const showModal = ref(false)
-const editing = ref(null)
-const modalTab = ref('general')
+const showModal = ref<boolean>(false)
+const editing = ref<string | null>(null)
+const modalTab = ref<string>('general')
 
 // Delete confirm
-const showDeleteConfirm = ref(false)
-const deleteTarget = ref(null)
+const showDeleteConfirm = ref<boolean>(false)
+const deleteTarget = ref<Playbook | null>(null)
 
 // Preview/execute
-const showPreviewModal = ref(false)
-const previewData = ref(null)
-const executeTarget = ref({ playbookId: null, dn: '' })
-const executing = ref(false)
+const showPreviewModal = ref<boolean>(false)
+const previewData = ref<PlaybookPreview | null>(null)
+const executeTarget = ref<{ playbookId: string | null, dn: string }>({ playbookId: null, dn: '' })
+const executing = ref<boolean>(false)
 
 // Execution result
-const showResultModal = ref(false)
-const executionResult = ref(null)
+const showResultModal = ref<boolean>(false)
+const executionResult = ref<PlaybookExecution | null>(null)
 
 // History
-const showHistoryModal = ref(false)
-const historyData = ref([])
-const historyPlaybookName = ref('')
+const showHistoryModal = ref<boolean>(false)
+const historyData = ref<PlaybookExecution[]>([])
+const historyPlaybookName = ref<string>('')
 
 const playbookTypes = [
   { value: 'ONBOARD', label: 'Onboard' },
@@ -75,7 +146,7 @@ const cols = [
   { key: 'actions', label: '', align: 'right' },
 ]
 
-function emptyPlaybook() {
+function emptyPlaybook(): PlaybookForm {
   return {
     name: '', description: '', type: 'CUSTOM',
     profileId: null, requireApproval: false, enabled: true,
@@ -83,7 +154,7 @@ function emptyPlaybook() {
   }
 }
 
-const playbook = ref(emptyPlaybook())
+const playbook = ref<PlaybookForm>(emptyPlaybook())
 
 watch(dirId, (v) => { if (v) reload() })
 onMounted(() => { if (dirId.value) reload() })
@@ -92,9 +163,9 @@ async function reload() {
   loading.value = true
   try {
     const { data } = await listPlaybooks(dirId.value)
-    playbooks.value = data.map(p => ({ ...p, stepCount: p.steps?.length || 0 }))
+    playbooks.value = (data as Playbook[]).map(p => ({ ...p, stepCount: p.steps?.length || 0 }))
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMessage(e))
   } finally {
     loading.value = false
   }
@@ -107,7 +178,7 @@ function openCreate() {
   showModal.value = true
 }
 
-function openEdit(p) {
+function openEdit(p: Playbook) {
   editing.value = p.id
   playbook.value = {
     name: p.name, description: p.description || '',
@@ -115,7 +186,7 @@ function openEdit(p) {
     requireApproval: p.requireApproval, enabled: p.enabled,
     steps: (p.steps || []).map(s => ({
       action: s.action,
-      parameters: s.parameters ? JSON.parse(s.parameters) : {},
+      parameters: (s.parameters ? JSON.parse(s.parameters) : {}) as StepParams,
       continueOnError: s.continueOnError
     }))
   }
@@ -145,21 +216,21 @@ async function save() {
     showModal.value = false
     await reload()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.response?.data?.message || e.message)
+    notif.error(errMessage(e))
   } finally {
     saving.value = false
   }
 }
 
-function confirmDelete(p) { deleteTarget.value = p; showDeleteConfirm.value = true }
+function confirmDelete(p: Playbook) { deleteTarget.value = p; showDeleteConfirm.value = true }
 
 async function doDelete() {
   try {
-    await deletePlaybook(dirId.value, deleteTarget.value.id)
+    await deletePlaybook(dirId.value, deleteTarget.value!.id)
     notif.success('Playbook deleted')
     showDeleteConfirm.value = false
     await reload()
-  } catch (e) { notif.error(e.response?.data?.detail || e.message) }
+  } catch (e) { notif.error(errMessage(e)) }
 }
 
 // Steps management
@@ -167,21 +238,21 @@ function addStep() {
   playbook.value.steps.push({ action: 'ADD_TO_GROUP', parameters: {}, continueOnError: false })
 }
 
-function removeStep(i) { playbook.value.steps.splice(i, 1) }
+function removeStep(i: number) { playbook.value.steps.splice(i, 1) }
 
-function moveStep(i, dir) {
+function moveStep(i: number, dir: number) {
   const arr = playbook.value.steps
   const j = i + dir
   if (j < 0 || j >= arr.length) return
-  ;[arr[i], arr[j]] = [arr[j], arr[i]]
+  ;[arr[i], arr[j]] = [arr[j]!, arr[i]!]
 }
 
-function actionDef(action) {
-  return stepActions.find(a => a.value === action) || stepActions[0]
+function actionDef(action: string) {
+  return stepActions.find(a => a.value === action) || stepActions[0]!
 }
 
 // Preview and execute
-function openRunDialog(p) {
+function openRunDialog(p: Playbook) {
   executeTarget.value = { playbookId: p.id, dn: '' }
   previewData.value = null
   showPreviewModal.value = true
@@ -191,40 +262,40 @@ async function doPreview() {
   if (!executeTarget.value.dn) { notif.error('Enter a user DN'); return }
   try {
     const { data } = await previewPlaybook(dirId.value, executeTarget.value.playbookId, executeTarget.value.dn)
-    previewData.value = data
-  } catch (e) { notif.error(e.response?.data?.detail || e.message) }
+    previewData.value = data as PlaybookPreview
+  } catch (e) { notif.error(errMessage(e)) }
 }
 
 async function doExecute() {
   executing.value = true
   try {
     const { data } = await executePlaybook(dirId.value, executeTarget.value.playbookId, [executeTarget.value.dn])
-    executionResult.value = data[0]
+    executionResult.value = (data as PlaybookExecution[])[0] ?? null
     showPreviewModal.value = false
     showResultModal.value = true
-  } catch (e) { notif.error(e.response?.data?.detail || e.message) }
+  } catch (e) { notif.error(errMessage(e)) }
   finally { executing.value = false }
 }
 
-async function doRollback(executionId) {
+async function doRollback(executionId: string) {
   try {
     await rollbackExecution(dirId.value, executionId)
     notif.success('Rollback completed')
     showResultModal.value = false
-  } catch (e) { notif.error(e.response?.data?.detail || e.message) }
+  } catch (e) { notif.error(errMessage(e)) }
 }
 
-async function openHistory(p) {
+async function openHistory(p: Playbook) {
   historyPlaybookName.value = p.name
   try {
     const { data } = await listExecutions(dirId.value, p.id)
-    historyData.value = data
+    historyData.value = data as PlaybookExecution[]
     showHistoryModal.value = true
-  } catch (e) { notif.error(e.response?.data?.detail || e.message) }
+  } catch (e) { notif.error(errMessage(e)) }
 }
 
-function parsedStepResults(json) {
-  try { return JSON.parse(json) } catch { return [] }
+function parsedStepResults(json: string): StepResult[] {
+  try { return JSON.parse(json) as StepResult[] } catch { return [] }
 }
 </script>
 
@@ -243,7 +314,7 @@ function parsedStepResults(json) {
       <label for="pb-directory" class="block text-sm font-medium text-gray-700 mb-1">Directory</label>
       <select id="pb-directory" v-model="selectedDir" class="input w-64">
         <option value="" disabled>{{ loadingDirs ? 'Loading…' : '— Select directory —' }}</option>
-        <option v-for="d in directories" :key="d.id" :value="d.id">{{ d.displayName }}</option>
+        <option v-for="d in directoryOptions" :key="d.id" :value="d.id">{{ d.displayName }}</option>
       </select>
     </div>
 
@@ -320,7 +391,7 @@ function parsedStepResults(json) {
           <!-- Dynamic params based on action -->
           <div v-if="actionDef(step.action).params.includes('groupDn')" class="pl-8">
             <label class="block text-xs text-gray-500">Group DN</label>
-            <DnPicker v-model="step.parameters.groupDn" :directory-id="dirId" scope="group" />
+            <DnPicker v-model="step.parameters.groupDn" :directory-id="pickerDirId" scope="group" />
             <div class="mt-1">
               <label :for="`pb-step-${i}-member-attr`" class="block text-xs text-gray-500">Member Attribute</label>
               <select :id="`pb-step-${i}-member-attr`" v-model="step.parameters.memberAttribute" class="input w-40 text-sm">
@@ -340,7 +411,7 @@ function parsedStepResults(json) {
           </div>
           <div v-if="actionDef(step.action).params.includes('targetDn')" class="pl-8">
             <label class="block text-xs text-gray-500">Target OU DN</label>
-            <DnPicker v-model="step.parameters.targetDn" :directory-id="dirId" />
+            <DnPicker v-model="step.parameters.targetDn" :directory-id="pickerDirId" />
           </div>
           <div v-if="actionDef(step.action).params.includes('recipients')" class="pl-8 space-y-1">
             <div>
@@ -447,7 +518,7 @@ function parsedStepResults(json) {
             {{ exec.status }}
           </span>
           <span class="font-mono text-gray-600 truncate flex-1">{{ exec.targetDn }}</span>
-          <span class="text-gray-500 text-xs whitespace-nowrap">{{ new Date(exec.startedAt).toLocaleString() }}</span>
+          <span class="text-gray-500 text-xs whitespace-nowrap">{{ formatDateTime(exec.startedAt) }}</span>
           <button v-if="exec.status === 'PARTIAL'" @click="doRollback(exec.id)"
             class="text-amber-600 hover:text-amber-800 text-xs font-medium">Rollback</button>
         </div>

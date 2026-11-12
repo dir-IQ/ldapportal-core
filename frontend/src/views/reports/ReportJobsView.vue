@@ -468,6 +468,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import DnPicker from '@/components/DnPicker.vue'
 import ResultsTable, { type ColumnDef } from '@/components/ResultsTable.vue'
 import { IVIA_ABBR } from '@/constants/productNames'
+import { formatDateTime, localTimeZone } from '@/utils/dateTime'
 
 interface ReportTypeDef {
   value: string
@@ -606,7 +607,7 @@ const integrityChecks = [
 ]
 
 function labelFor(type: string): string { return reportTypes.value.find(t => t.value === type)?.label ?? type }
-function fmtDate(iso: string): string { return new Date(iso).toLocaleString() }
+function fmtDate(iso: string): string { return formatDateTime(iso) }
 
 // ── Run log ───────────────────────────────────────────────────────────────────
 // The scheduled-jobs table expands one job at a time to show its run-history
@@ -977,7 +978,7 @@ interface JobForm {
 // The operator's browser timezone, used as the default for a new job so the
 // cron expression they type runs at the time they expect. Falls back to UTC.
 function browserTimezone(): string {
-  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } catch { return 'UTC' }
+  return localTimeZone()
 }
 
 // IANA timezone list for the picker. Prefer the platform's full set

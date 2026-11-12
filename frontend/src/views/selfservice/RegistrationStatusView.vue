@@ -81,33 +81,42 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
 import { getRegistrationStatus } from '@/api/selfservice'
+import { formatDateTime } from '@/utils/dateTime'
+
+interface RegistrationStatus {
+  requestId: string
+  email: string
+  emailVerified: boolean
+  status: string
+  createdAt: string
+}
 
 const route = useRoute()
-const email = ref('')
-const loading = ref(false)
-const loadError = ref('')
-const statusData = ref(null)
+const email = ref<string>('')
+const loading = ref<boolean>(false)
+const loadError = ref<string>('')
+const statusData = ref<RegistrationStatus | null>(null)
 
 async function loadStatus() {
   loading.value = true
   loadError.value = ''
   try {
-    const { data } = await getRegistrationStatus(route.params.requestId, email.value)
-    statusData.value = data
+    const { data } = await getRegistrationStatus(route.params.requestId as string, email.value)
+    statusData.value = data as RegistrationStatus
   } catch (e) {
-    loadError.value = e.response?.data?.detail || 'Request not found or email does not match.'
+    const err = e as { response?: { data?: { detail?: string } } }
+    loadError.value = err.response?.data?.detail || 'Request not found or email does not match.'
   } finally {
     loading.value = false
   }
 }
 
-function formatDate(dateStr) {
-  if (!dateStr) return ''
-  return new Date(dateStr).toLocaleString()
+function formatDate(dateStr: string | null | undefined): string {
+  return formatDateTime(dateStr)
 }
 
 // Timeline step component

@@ -26,7 +26,7 @@
         <span class="cell-muted uppercase">{{ value }}</span>
       </template>
       <template #cell-lastLoginAt="{ value }">
-        <span class="cell-muted">{{ value ? new Date(value as string).toLocaleString() : '—' }}</span>
+        <span class="cell-muted">{{ formatDateTime(value as string, { fallback: '—' }) }}</span>
       </template>
       <template #actions="{ row }">
         <ActionMenu :items="[
@@ -297,6 +297,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { formatDateTime } from '@/utils/dateTime'
 import type { Ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notifications'

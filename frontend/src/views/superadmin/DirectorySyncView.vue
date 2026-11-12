@@ -359,6 +359,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref, computed, watch } from 'vue'
+import { formatDateTime } from '@/utils/dateTime'
 import { useRoute } from 'vue-router'
 import PageContainer from '@/components/PageContainer.vue'
 import AppModal from '@/components/AppModal.vue'
@@ -444,7 +445,7 @@ function linkName(linkId: string): string {
   return links.value.find((l) => l.id === linkId)?.displayName ?? '—'
 }
 function verifiedAt(s: SyncSet): string {
-  return s.verify?.at ? new Date(s.verify.at).toLocaleString() : '—'
+  return formatDateTime(s.verify?.at, { fallback: '—' })
 }
 /** A link's drift rollup over its enabled sets. */
 function linkDrift(linkId: string): { label: string; tone: string } {
@@ -747,7 +748,7 @@ const impactRanAt = computed<string>(() => {
   const at = impact.value?.finishedAt ?? impact.value?.startedAt
   if (!at) return ''
   const by = impact.value?.requestedBy
-  return `Last preview: ${new Date(at).toLocaleString()}${by ? ` by ${by}` : ''}.`
+  return `Last preview: ${formatDateTime(at)}${by ? ` by ${by}` : ''}.`
 })
 // Per-entry dry run (what a reconcile would do to each entry), in its own dialog.
 const showChanges = ref<boolean>(false)

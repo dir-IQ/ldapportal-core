@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ref, onUnmounted } from 'vue'
+import { formatDateTime } from '@/utils/dateTime'
 
 const UNITS = [
   { max: 60, divisor: 1, unit: 'second' },
@@ -37,13 +38,10 @@ export function formatRelativeTime(value) {
 }
 
 /**
- * Format a date value as a full locale string for tooltips.
+ * Format a date value as a full local date/time with zone label (tooltips).
  */
 export function formatAbsoluteTime(value) {
-  if (!value) return ''
-  const date = value instanceof Date ? value : new Date(value)
-  if (isNaN(date.getTime())) return ''
-  return date.toLocaleString()
+  return formatDateTime(value)
 }
 
 /**

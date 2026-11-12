@@ -3,6 +3,7 @@
  * Shared formatting utilities for report table rendering.
  */
 import { isIviaAttr, iviaAttrLabel } from '@/constants/productNames'
+import { formatDateTime } from '@/utils/dateTime'
 
 /**
  * Format an ISO timestamp as a friendly relative or absolute date.
@@ -43,13 +44,11 @@ function formatAbsoluteDate(date) {
 }
 
 /**
- * Format an ISO timestamp as a full readable date for tooltips.
+ * Format an ISO timestamp as a full local date/time with zone label (tooltips).
  */
 export function formatFullDate(iso) {
   if (!iso) return ''
-  const d = new Date(iso)
-  if (isNaN(d.getTime())) return iso
-  return d.toLocaleString()
+  return formatDateTime(iso, { fallback: iso })
 }
 
 /**
