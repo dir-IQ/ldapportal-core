@@ -601,6 +601,8 @@ export interface SyncOrphanDeletePreviewItem {
   targetDn: string
   /** For a SKIP: why it's left alone. */
   reason: string | null
+  /** For a DELETE: how many entries are beneath it on the target (its delete fails while any remain). */
+  beneath: number
 }
 
 export interface SyncOrphanDeleteResult {
@@ -614,11 +616,14 @@ export const previewOrphanDelete = (setId: string, seqs: number[], verifiedAt: s
   client.post<{ items: SyncOrphanDeletePreviewItem[] }>(
     `/superadmin/sync/sets/${setId}/drift/orphans/delete/preview`, { seqs, verifiedAt, targetDns })
 
-/** `confirm` must be exactly "DELETE" (the dialog's typed confirmation); `verifiedAt` as for repair. */
+/**
+ * `confirm` must be exactly "DELETE" (the dialog's typed confirmation); `verifiedAt` as for repair.
+ * `includeBeneath` deletes the entries beneath each orphan too (never ones a sync set manages).
+ */
 export const deleteOrphans = (setId: string, seqs: number[], verifiedAt: string, confirm: string,
-  targetDns?: string[]) =>
+  targetDns?: string[], includeBeneath = false) =>
   client.post<SyncOrphanDeleteResult>(`/superadmin/sync/sets/${setId}/drift/orphans/delete`,
-    { seqs, verifiedAt, confirm, targetDns })
+    { seqs, verifiedAt, confirm, targetDns, includeBeneath })
 
 // ── Inventory + operator triggers ───────────────────────────────────────────
 
@@ -681,9 +686,16 @@ export interface SyncDeleteApproval {
   targetDirectoryId: string
   targetDn: string
   message: string | null
+  /** The entries deleted beneath the target entry (with `includeBeneath`). */
+  beneath: string[]
 }
 
-/** Approve a delete held for review: deletes the target entry now, whatever the delete policy. */
-export const approveDelete = (setId: string, identity: string) =>
+/**
+ * Approve a delete held for review: deletes the target entry now, whatever the delete policy.
+ * `includeBeneath` deletes the entries beneath it too (never ones a sync set manages), and also
+ * finishes a delete that failed because of them.
+ */
+export const approveDelete = (setId: string, identity: string, includeBeneath = false) =>
   client.post<SyncDeleteApproval>(
-    `/superadmin/sync/sets/${setId}/memberships/${encodeURIComponent(identity)}/approve-delete`)
+    `/superadmin/sync/sets/${setId}/memberships/${encodeURIComponent(identity)}/approve-delete`,
+    undefined, includeBeneath ? { params: { includeBeneath: true } } : undefined)

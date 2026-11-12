@@ -200,6 +200,16 @@ public class RecomputeEngine {
      *         alone; the message says why) or {@code ERROR} (the delete failed)
      */
     public SyncDeleteApproval orphanDelete(UUID syncSetId, String targetDn, boolean apply) {
+        return orphanDelete(syncSetId, targetDn, apply, false);
+    }
+
+    /**
+     * As {@link #orphanDelete(UUID, String, boolean)}; with {@code includeBeneath}
+     * the operator has chosen to delete the entries beneath it on the target too
+     * (see {@link #deleteWithBeneath}). A check ({@code apply} false) reports the
+     * entries beneath a deletable orphan either way, so the operator can choose.
+     */
+    public SyncDeleteApproval orphanDelete(UUID syncSetId, String targetDn, boolean apply, boolean includeBeneath) {
         SyncSet set = syncSetRepo.findById(syncSetId)
                 .orElseThrow(() -> new IllegalArgumentException("Sync set not found"));
         SyncLink link = syncLinkRepo.findById(set.getLinkId()).orElse(null);
@@ -277,7 +287,20 @@ public class RecomputeEngine {
             }
         }
         if (!apply) {
-            return new SyncDeleteApproval(SyncPreviewAction.DELETE, target.getId(), targetDn, null);
+            Beneath beneath = entriesBeneath(target, targetDn);
+            return new SyncDeleteApproval(SyncPreviewAction.DELETE, target.getId(), targetDn, null, false,
+                    beneath == null ? List.of() : beneath.dns());
+        }
+        if (includeBeneath) {
+            BeneathDelete r = deleteWithBeneath(set, target, targetDn);
+            if (r.failure() != null) {
+                return new SyncDeleteApproval(SyncPreviewAction.ERROR, target.getId(), targetDn, r.failure(),
+                        false, r.deleted());
+            }
+            log.info("Sync set {}: operator-approved delete of orphaned target {} and {} entries beneath it",
+                    syncSetId, targetDn, r.deleted().size());
+            return new SyncDeleteApproval(SyncPreviewAction.DELETE, target.getId(), targetDn, null, false,
+                    r.deleted());
         }
         ApplyOutcome del = live.delete(target, targetDn);
         if (!LdapResultInterpreter.deleteConverged(del.code())) {
@@ -319,6 +342,19 @@ public class RecomputeEngine {
      *         isn't a held delete, or the entry is back in scope
      */
     public SyncDeleteApproval approveDelete(UUID syncSetId, String identity) {
+        return approveDelete(syncSetId, identity, false);
+    }
+
+    /**
+     * As {@link #approveDelete(UUID, String)}; with {@code includeBeneath} the
+     * operator has chosen to delete the entries beneath the target entry too
+     * (see {@link #deleteWithBeneath}). That choice also applies to a row whose
+     * delete already failed because of those entries ({@code FAILED} with a
+     * {@link #NONLEAF_PREFIX} reason), so a delete the sync couldn't finish on
+     * its own can be finished by an operator. A refusal (synced entries beneath
+     * it, or too many) leaves the row as it was.
+     */
+    public SyncDeleteApproval approveDelete(UUID syncSetId, String identity, boolean includeBeneath) {
         SyncSet set = syncSetRepo.findById(syncSetId)
                 .orElseThrow(() -> new IllegalArgumentException("Sync set not found"));
         SyncLink link = syncLinkRepo.findById(set.getLinkId()).orElse(null);
@@ -331,9 +367,12 @@ public class RecomputeEngine {
             throw new IllegalArgumentException("The sync link's source or target directory is missing.");
         }
         Membership current = membershipRepo.findById(new MembershipId(syncSetId, identity)).orElse(null);
-        if (current == null
-                || SyncReviewKind.of(current.getState(), current.getFailReason()) != SyncReviewKind.PENDING_DELETE) {
-            throw new IllegalArgumentException("This entry has no deletion waiting for review.");
+        boolean held = current != null
+                && SyncReviewKind.of(current.getState(), current.getFailReason()) == SyncReviewKind.PENDING_DELETE;
+        if (!held && !(includeBeneath && isNonLeafDeleteFailure(current))) {
+            throw new IllegalArgumentException(includeBeneath
+                    ? "This entry has no deletion waiting for review or blocked by entries beneath it."
+                    : "This entry has no deletion waiting for review.");
         }
 
         IdentityStrategy strategy = identityStrategies.forType(source.getDirectoryType());
@@ -356,18 +395,162 @@ public class RecomputeEngine {
             live.dropRow(set, identity);
             return new SyncDeleteApproval(SyncPreviewAction.FORGET, target.getId(), targetDn, null);
         }
-        ApplyOutcome del = live.delete(target, targetDn);
-        if (!LdapResultInterpreter.deleteConverged(del.code())) {
-            String reason = deleteFailure(set, target, targetDn, del, true);
-            live.failed(set, identity, current.getSourceDn(), targetDn, current.getContentHash(), reason);
-            return new SyncDeleteApproval(SyncPreviewAction.ERROR, target.getId(), targetDn, reason);
+        List<String> deletedBeneath = List.of();
+        if (includeBeneath) {
+            BeneathDelete r = deleteWithBeneath(set, target, targetDn);
+            deletedBeneath = r.deleted();
+            if (r.failure() != null) {
+                if (r.attempted()) {
+                    live.failed(set, identity, current.getSourceDn(), targetDn, current.getContentHash(),
+                            r.failure());
+                }
+                return new SyncDeleteApproval(SyncPreviewAction.ERROR, target.getId(), targetDn, r.failure(),
+                        false, deletedBeneath);
+            }
+        } else {
+            ApplyOutcome del = live.delete(target, targetDn);
+            if (!LdapResultInterpreter.deleteConverged(del.code())) {
+                String reason = deleteFailure(set, target, targetDn, del, true);
+                live.failed(set, identity, current.getSourceDn(), targetDn, current.getContentHash(), reason);
+                return new SyncDeleteApproval(SyncPreviewAction.ERROR, target.getId(), targetDn, reason);
+            }
         }
         live.dropRow(set, identity);
         if (current.getSourceDn() != null) {
             closureResolver.fanOut(link, current.getSourceDn());
         }
-        log.info("Sync set {}: operator-approved delete of target {} (identity {})", syncSetId, targetDn, identity);
-        return new SyncDeleteApproval(SyncPreviewAction.DELETE, target.getId(), targetDn, null);
+        log.info("Sync set {}: operator-approved delete of target {} (identity {}){}", syncSetId, targetDn,
+                identity, deletedBeneath.isEmpty() ? "" : " and " + deletedBeneath.size() + " entries beneath it");
+        return new SyncDeleteApproval(SyncPreviewAction.DELETE, target.getId(), targetDn, null, false,
+                deletedBeneath);
+    }
+
+    /**
+     * A row whose target delete failed because entries are beneath the target
+     * entry, or whose delete together with them stopped part-way: either way an
+     * operator can (re)try deleting it with its entries beneath.
+     */
+    static boolean isNonLeafDeleteFailure(Membership m) {
+        return m != null && m.getState() == MembershipState.FAILED && m.getFailReason() != null
+                && (m.getFailReason().startsWith(NONLEAF_PREFIX) || m.getFailReason().startsWith(BENEATH_PREFIX));
+    }
+
+    /** The most entries beneath one entry an operator's delete removes with it. */
+    static final int BENEATH_LIMIT = 500;
+
+    /**
+     * What {@link #deleteWithBeneath} did.
+     *
+     * @param deleted   the entries beneath the target removed, deepest first
+     * @param failure   why the target isn't deleted, or {@code null} when it is
+     * @param attempted whether any delete was sent (false for a refusal made
+     *                  before touching the target)
+     */
+    record BeneathDelete(List<String> deleted, String failure, boolean attempted) {
+    }
+
+    /**
+     * An operator's delete of {@code dn} together with the entries beneath it:
+     * those go first, deepest first, then {@code dn}. Only entries no sync set
+     * manages are removed this way, so it refuses, touching nothing, when any
+     * entry beneath is a sync set's (those leave through their own set, or Stop
+     * tracking) or when more than {@link #BENEATH_LIMIT} are beneath. A failure
+     * part-way stops there, keeping the rest, and the reason says how far it got.
+     */
+    BeneathDelete deleteWithBeneath(SyncSet set, DirectoryConnection target, String dn) {
+        Beneath found = entriesBeneath(target, dn);
+        if (found == null) {
+            return new BeneathDelete(List.of(), BENEATH_PREFIX + "couldn't list the entries beneath it on the"
+                    + " target, so nothing was deleted.", false);
+        }
+        List<String> beneath = found.dns();
+        if (found.truncated() || beneath.size() > BENEATH_LIMIT) {
+            return new BeneathDelete(List.of(), BENEATH_PREFIX + "more entries are beneath it on the target than"
+                    + " one delete removes (" + BENEATH_LIMIT + "), so nothing was deleted. Delete them in the"
+                    + " Directory Browser.", false);
+        }
+        long managed = membershipRepo.countByTargetDnUnder(setsOnTarget(set, target), underDnPattern(dn));
+        if (managed > 0) {
+            return new BeneathDelete(List.of(), BENEATH_PREFIX + managed
+                    + (managed == 1 ? " synced entry is" : " synced entries are") + " beneath it on the target,"
+                    + " so nothing was deleted: entries a sync set manages are never deleted with another one."
+                    + " Delete them through their own set first, or Stop tracking them.", false);
+        }
+        List<String> ordered = new ArrayList<>(beneath);
+        ordered.sort(SyncDnUtil.deepestFirst(d -> d));
+        List<String> deleted = new ArrayList<>();
+        for (String child : ordered) {
+            ApplyOutcome o = live.delete(target, child);
+            if (!LdapResultInterpreter.deleteConverged(o.code())) {
+                return new BeneathDelete(deleted, BENEATH_PREFIX + "couldn't delete " + child + " beneath it ("
+                        + describe("delete", o) + "). " + deleted.size() + " of " + ordered.size()
+                        + " entries beneath it were deleted; the rest and the entry itself remain.",
+                        true);
+            }
+            deleted.add(child);
+        }
+        ApplyOutcome del = live.delete(target, dn);
+        if (!LdapResultInterpreter.deleteConverged(del.code())) {
+            String why = del.code() == ResultCode.NOT_ALLOWED_ON_NONLEAF
+                    ? "it still has entries beneath it that the portal's account can't see (an access control or"
+                      + " a hidden entry). Delete them on the target."
+                    : describe("delete", del) + ".";
+            return new BeneathDelete(deleted, BENEATH_PREFIX + deleted.size() + " entries beneath it were deleted,"
+                    + " but the entry itself wasn't: " + why, true);
+        }
+        return new BeneathDelete(deleted, null, true);
+    }
+
+    /** How a refused or failed delete-with-entries-beneath's reason starts. */
+    static final String BENEATH_PREFIX = "delete with entries beneath failed — ";
+
+    /**
+     * Entries beneath an entry on the target.
+     *
+     * @param dns       their DNs (not the entry's own)
+     * @param truncated the listing hit a size limit (ours or the server's), so
+     *                  there are more than {@code dns} holds
+     */
+    record Beneath(List<String> dns, boolean truncated) {
+    }
+
+    /**
+     * The entries beneath {@code dn} on the target, listing at most
+     * {@link #BENEATH_LIMIT} + 1; none when {@code dn} is gone, and
+     * {@code null} when they can't be listed.
+     */
+    private Beneath entriesBeneath(DirectoryConnection target, String dn) {
+        try {
+            return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
+                SearchRequest req = new SearchRequest(dn, SearchScope.SUB,
+                        com.unboundid.ldap.sdk.Filter.createPresenceFilter("objectClass"), "1.1");
+                req.setSizeLimit(BENEATH_LIMIT + 2);
+                List<SearchResultEntry> found;
+                boolean truncated = false;
+                try {
+                    found = conn.search(req).getSearchEntries();
+                } catch (com.unboundid.ldap.sdk.LDAPSearchException e) {
+                    if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
+                        return new Beneath(List.of(), false);
+                    }
+                    if (e.getResultCode() != ResultCode.SIZE_LIMIT_EXCEEDED) {
+                        throw e;
+                    }
+                    found = e.getSearchEntries();
+                    truncated = true;
+                }
+                List<String> out = new ArrayList<>();
+                for (SearchResultEntry e : found) {
+                    if (!SyncDnUtil.sameDn(e.getDN(), dn)) {
+                        out.add(e.getDN());
+                    }
+                }
+                return new Beneath(out, truncated);
+            }));
+        } catch (RuntimeException e) {
+            log.warn("Couldn't list the entries beneath {} on the target: {}", dn, e.toString());
+            return null;
+        }
     }
 
     /**

@@ -349,8 +349,28 @@
           <div v-if="toDelete.length" data-testid="delete-group-delete">
             <p class="font-medium text-rose-700">{{ toDelete.length }} to delete from the target</p>
             <ul class="mt-1 space-y-1 text-xs font-mono break-all">
-              <li v-for="i in toDelete" :key="i.seq">{{ i.targetDn }}</li>
+              <li v-for="i in toDelete" :key="i.seq">
+                {{ i.targetDn }}
+                <span v-if="i.beneath" class="font-sans text-amber-700" data-testid="delete-beneath-count">
+                  — {{ i.beneath }} {{ i.beneath === 1 ? 'entry' : 'entries' }} beneath it
+                </span>
+              </li>
             </ul>
+          </div>
+          <!-- Only when something is beneath: an explicit, unticked-by-default choice. -->
+          <div v-if="beneathTotal" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800"
+               data-testid="delete-beneath">
+            <p>
+              {{ withBeneath.length === 1 ? 'One of these has' : `${withBeneath.length} of these have` }}
+              entries beneath {{ withBeneath.length === 1 ? 'it' : 'them' }} on the target
+              ({{ beneathTotal }} in all), so {{ withBeneath.length === 1 ? 'its' : 'their' }} delete fails unless
+              those go too.
+            </p>
+            <label class="mt-2 flex items-start gap-2">
+              <input v-model="deleteBeneath" type="checkbox" class="mt-0.5" data-testid="delete-beneath-toggle" />
+              <span>Also delete the entries beneath them. Entries a sync set manages are never deleted this way;
+                an orphan with one beneath it is left alone. Each entry deleted is recorded in the audit log.</span>
+            </label>
           </div>
           <div v-if="deleteSkipped.length" data-testid="delete-group-skip">
             <p class="font-medium text-gray-500">{{ deleteSkipped.length }} left alone</p>
@@ -687,6 +707,10 @@ const deletePreviewing = ref(false)
 const deleting = ref(false)
 const deletePreview = ref<SyncOrphanDeletePreviewItem[] | null>(null)
 const deleteConfirm = ref('')
+/** The operator's explicit choice to delete the entries beneath the orphans too; off by default. */
+const deleteBeneath = ref(false)
+const withBeneath = computed<SyncOrphanDeletePreviewItem[]>(() => toDelete.value.filter(i => i.beneath > 0))
+const beneathTotal = computed<number>(() => withBeneath.value.reduce((n, i) => n + i.beneath, 0))
 const toDelete = computed<SyncOrphanDeletePreviewItem[]>(() =>
   (deletePreview.value ?? []).filter(i => i.action === 'DELETE'))
 const deleteSkipped = computed<SyncOrphanDeletePreviewItem[]>(() =>
@@ -697,6 +721,7 @@ async function openDelete(seqs: number[]): Promise<void> {
   if (!seqs.length || !at) return
   deletePreview.value = null
   deleteConfirm.value = ''
+  deleteBeneath.value = false
   showDelete.value = true
   deletePreviewing.value = true
   try {
@@ -717,7 +742,8 @@ async function applyDelete(): Promise<void> {
   if (!seqs.length || !at || deleteConfirm.value !== 'DELETE') return
   deleting.value = true
   try {
-    const { data: r } = await deleteOrphans(props.set.id, seqs, at, deleteConfirm.value, dnsFor(seqs))
+    const { data: r } = await deleteOrphans(props.set.id, seqs, at, deleteConfirm.value, dnsFor(seqs),
+      deleteBeneath.value && beneathTotal.value > 0)
     const parts = [
       r.deleted ? `${r.deleted} deleted` : '',
       r.skipped ? `${r.skipped} left alone` : '',

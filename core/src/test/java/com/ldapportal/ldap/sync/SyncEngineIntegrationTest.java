@@ -823,6 +823,30 @@ class SyncEngineIntegrationTest {
     }
 
     @Test
+    void orphanDelete_reportsTheEntriesBeneath_andDeletesThemOnlyWhenChosen() throws Exception {
+        peopleSet.setSourceAnchorAttribute("description");
+        setRepo.save(peopleSet);
+        addTargetPerson("ghost", "11111111-2222-3333-4444-555555555555");
+        String ghost = "uid=ghost," + DST_USERS;
+        addEntriesBeneath(ghost);
+
+        var check = engine.orphanDelete(peopleSet.getId(), ghost, false);
+        assertThat(check.outcome()).isEqualTo(com.ldapportal.dto.sync.SyncPreviewAction.DELETE);
+        assertThat(check.beneath()).hasSize(2);
+
+        var plain = engine.orphanDelete(peopleSet.getId(), ghost, true);
+        assertThat(plain.outcome()).isEqualTo(com.ldapportal.dto.sync.SyncPreviewAction.ERROR);
+        assertThat(plain.message()).startsWith(RecomputeEngine.NONLEAF_PREFIX);
+        assertThat(target.getEntry(ghost)).isNotNull();
+
+        var withBeneath = engine.orphanDelete(peopleSet.getId(), ghost, true, true);
+        assertThat(withBeneath.outcome()).isEqualTo(com.ldapportal.dto.sync.SyncPreviewAction.DELETE);
+        assertThat(withBeneath.beneath()).hasSize(2);
+        assertThat(target.getEntry("cn=policies," + ghost)).isNull();
+        assertThat(target.getEntry(ghost)).isNull();
+    }
+
+    @Test
     void orphanDelete_leavesAnEntryWhoseAnchorValueIsntAnIdentity() throws Exception {
         peopleSet.setSourceAnchorAttribute("description");
         setRepo.save(peopleSet);
@@ -984,6 +1008,76 @@ class SyncEngineIntegrationTest {
         assertThat(result.targetDn()).isEqualToIgnoringCase("uid=alice," + DST_USERS);
         assertThat(target.getEntry("uid=alice," + DST_USERS)).isNull();
         assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).isEmpty();
+    }
+
+    /** IVIA-style server-managed entries beneath a target entry: cn=policies, and one more level below it. */
+    private void addEntriesBeneath(String parentDn) throws Exception {
+        target.add(new Entry("cn=policies," + parentDn, new Attribute("objectClass", "top", "device"),
+                new Attribute("cn", "policies")));
+        target.add(new Entry("cn=pwd,cn=policies," + parentDn, new Attribute("objectClass", "top", "device"),
+                new Attribute("cn", "pwd")));
+    }
+
+    @Test
+    void approveDelete_includeBeneath_finishesADeleteBlockedByUnmanagedEntriesBeneath() throws Exception {
+        String identity = holdAliceDeleteForReview();
+        String alice = "uid=alice," + DST_USERS;
+        addEntriesBeneath(alice);
+
+        // Approved on its own, the delete fails and leaves everything; the row says why.
+        SyncDeleteApproval plain = engine.approveDelete(peopleSet.getId(), identity);
+        assertThat(plain.outcome()).isEqualTo(SyncPreviewAction.ERROR);
+        assertThat(membership(identity).getState()).isEqualTo(MembershipState.FAILED);
+        assertThat(membership(identity).getFailReason()).startsWith(RecomputeEngine.NONLEAF_PREFIX);
+        assertThat(target.getEntry("cn=policies," + alice)).isNotNull();
+        // A leaf-only approval can't be retried on a failed row...
+        assertThatThrownBy(() -> engine.approveDelete(peopleSet.getId(), identity))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        // ...but the operator can choose to take the entries beneath it too.
+        SyncDeleteApproval result = engine.approveDelete(peopleSet.getId(), identity, true);
+
+        assertThat(result.outcome()).isEqualTo(SyncPreviewAction.DELETE);
+        assertThat(result.beneath()).hasSize(2);
+        assertThat(result.beneath().get(0)).startsWithIgnoringCase("cn=pwd,"); // deepest first
+        assertThat(target.getEntry("cn=pwd,cn=policies," + alice)).isNull();
+        assertThat(target.getEntry("cn=policies," + alice)).isNull();
+        assertThat(target.getEntry(alice)).isNull();
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).isEmpty();
+    }
+
+    @Test
+    void approveDelete_includeBeneath_onALeafHeldDelete_justDeletesIt() throws Exception {
+        String identity = holdAliceDeleteForReview();
+
+        SyncDeleteApproval result = engine.approveDelete(peopleSet.getId(), identity, true);
+
+        assertThat(result.outcome()).isEqualTo(SyncPreviewAction.DELETE);
+        assertThat(result.beneath()).isEmpty();
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNull();
+    }
+
+    @Test
+    void approveDelete_includeBeneath_neverDeletesASyncedEntryBeneath() throws Exception {
+        SyncSet orgSet = nestedSet();
+        reconciler.reconcile(orgSet.getId());
+        // The unit leaves the set; the person in it stays, so the unit's delete fails as non-leaf.
+        source.modify("ou=team," + SRC_ORG, new Modification(ModificationType.ADD, "description", "skip"));
+        reconciler.reconcile(orgSet.getId());
+        Membership team = orgRow(orgSet, "ou=team," + DST_ORG);
+        String reasonBefore = team.getFailReason();
+        assertThat(reasonBefore).startsWith(RecomputeEngine.NONLEAF_PREFIX);
+
+        SyncDeleteApproval result = engine.approveDelete(orgSet.getId(), team.getIdentity(), true);
+
+        assertThat(result.outcome()).isEqualTo(SyncPreviewAction.ERROR);
+        assertThat(result.message()).startsWith(RecomputeEngine.BENEATH_PREFIX)
+                .contains("1 synced entry is beneath it").contains("nothing was deleted");
+        assertThat(result.beneath()).isEmpty();
+        assertThat(target.getEntry("uid=tess,ou=team," + DST_ORG)).isNotNull();
+        assertThat(target.getEntry("ou=team," + DST_ORG)).isNotNull();
+        // A refusal touches nothing, so the row keeps the reason it had.
+        assertThat(orgRow(orgSet, "ou=team," + DST_ORG).getFailReason()).isEqualTo(reasonBefore);
     }
 
     @Test

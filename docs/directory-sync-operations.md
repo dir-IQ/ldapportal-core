@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background, the Drift tab laid out like the Reconciliation tab with bulk-only actions, every held reference listed and exportable from the Drift tab, drift repairs and deletes that survive a newer content check, entries viewed in place from the Drift tab, subtree deletes children-first with a reason saying what blocks a non-leaf delete; 2026-11-10).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background, the Drift tab laid out like the Reconciliation tab with bulk-only actions, every held reference listed and exportable from the Drift tab, drift repairs and deletes that survive a newer content check, entries viewed in place from the Drift tab, subtree deletes children-first with a reason saying what blocks a non-leaf delete, an operator-chosen delete of the unmanaged entries beneath a held, failed or orphaned delete; 2026-11-12).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -540,7 +540,8 @@ reported with the first reason and doesn't stop the others.
 | Action | Applies to |
 |---|---|
 | **Recompute** — named for the selection: **Re-check** (held deletes), **Retry match** (ambiguous match / placement conflict, after cleaning up the conflicting target entries), **Retry** (`FAILED`), **Re-sync** (Synced / Pending), or **Recompute** when the selection mixes them | Every selected row |
-| **Delete target** — approves the deletion: deletes the target entry now, whatever the set's delete policy or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`, with the set and directory names as for a run's writes). Refused while the set or link is disabled. | Only the held deletes (`PENDING_DELETE`) among the selection; the button appears only when there are some, and other selected rows are left alone |
+| **Delete target** — approves the deletion: deletes the target entry now, whatever the set's delete policy or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`, with the set and directory names as for a run's writes). Refused while the set or link is disabled. | Only the held deletes (`PENDING_DELETE`) among the selection, and only on the **Review** list (never under **All**); the button appears only when there are some, and other selected rows are left alone |
+| **Delete with entries beneath** — as **Delete target**, and also deletes everything beneath the target entry that no sync set manages, deepest first, such as entries the target directory creates itself (IVIA's `cn=policies` under a user). Entries a sync set manages are never deleted this way: if any is beneath, the delete is refused and nothing is touched. More than 500 entries beneath is refused too (delete them in the Directory Browser). Each entry deleted beneath is audited as its own `entry.delete` (`detail.beneath` names the entry it went with), and the entry's own record carries `deletedBeneath` (how many). | On the **Review** list: the held deletes among the selection. On the **Failed** list: rows whose delete failed with `delete failed: NOT_ALLOWED_ON_NONLEAF` (an automatic or approved delete blocked by entries beneath it). Not offered under **All** |
 | **Stop tracking** — dismiss | Every selected row |
 
 A recompute queues each selected row, and the worker picks the requests up
@@ -583,11 +584,21 @@ says which case it is:
 - `delete failed: NOT_ALLOWED_ON_NONLEAF — it has entries beneath it on the
   target that no sync set manages…`: something created directly on the
   target, or nothing the sync tracks, is under it, and the sync will never
-  delete it. Delete those entries on the target, or **Stop tracking** the
-  parent.
+  delete it on its own. Choose **Delete with entries beneath** on the row
+  (inventory → **Failed**) to delete it together with those entries, delete
+  them on the target, or **Stop tracking** the parent.
 
 A held delete approved, or an orphan deleted from the Drift tab, fails the
 same way with the same reason (an orphan has no row to stop tracking).
+
+**Deleting the entries beneath, by choice.** Only an operator can delete an
+entry together with what's beneath it: **Delete with entries beneath** in the
+inventory (held deletes on the **Review** list, non-leaf failures on the
+**Failed** list), or the *Also delete the entries beneath them* choice in the
+Drift tab's delete dialog. Automatic deletes stay one entry at a time. Such a
+delete removes only entries no sync set manages, refuses (touching nothing)
+when a synced entry is beneath or more than 500 are, and stops at the first
+entry it can't delete, saying how many went. `POST …/memberships/{identity}/approve-delete?includeBeneath=true`.
 
 ---
 
@@ -765,16 +776,20 @@ same way with the same reason (an orphan has no row to stop tracking).
     keeping its filter, page and selection.
   - **Typed confirmation.** Type `DELETE` to enable **Delete n**; the server
     refuses a delete without it too.
-  - **One entry, not a subtree.** An entry with children fails its delete and
-    is reported, saying whether the entries beneath it are synced; nothing
-    beneath it is removed. Several chosen orphans are deleted deepest first,
-    so a chosen parent goes after its chosen children (see §6, *FAILED
-    reasons*).
+  - **One entry, unless you choose otherwise.** The preview says how many
+    entries are beneath each orphan. Unless you tick *Also delete the entries
+    beneath them* (never pre-ticked, shown only when there are some), an entry
+    with children fails its delete and is reported, saying whether the
+    entries beneath it are synced; nothing beneath it is removed. Ticked, the
+    entries beneath that no sync set manages are deleted first (see
+    *Deleting the entries beneath, by choice* in §6). Several chosen orphans
+    are deleted deepest first, so a chosen parent goes after its chosen
+    children (see §6, *FAILED reasons*).
   - **Audited** under your name (`entry.delete`, detail
     `operation: orphan-delete`). Deleted entries, and ones already gone, leave
     the Drift tab and the set's counts. Endpoints:
     `POST …/sets/{id}/drift/orphans/delete/preview` and `…/drift/orphans/delete`,
-    body `{"seqs": [...], "verifiedAt": "<the drift page's verifiedAt>", "targetDns": [...], "confirm": "DELETE"}`
+    body `{"seqs": [...], "verifiedAt": "<the drift page's verifiedAt>", "targetDns": [...], "confirm": "DELETE", "includeBeneath": false}`
     (repair takes the same `seqs`, `verifiedAt` and `targetDns`; `targetDns`
     is optional, each item's stored target DN in the order of `seqs`).
 - **Orphan scope.** When the set

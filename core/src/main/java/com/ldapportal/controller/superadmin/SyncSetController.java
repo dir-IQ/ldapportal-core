@@ -406,14 +406,17 @@ public class SyncSetController {
 
     /**
      * Delete these orphaned drift items from the target, each re-checked first;
-     * {@code confirm} must be {@code DELETE}. Audited with the operator.
+     * {@code confirm} must be {@code DELETE}. With {@code includeBeneath} the
+     * entries beneath each one go too (never ones a sync set manages). Audited
+     * with the operator.
      */
     @PostMapping("/{id}/drift/orphans/delete")
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public com.ldapportal.dto.sync.SyncOrphanDeleteResult deleteOrphans(
             @PathVariable UUID id, @Valid @RequestBody com.ldapportal.dto.sync.SyncOrphanDeleteRequest req,
             @AuthenticationPrincipal AuthPrincipal principal) {
-        return service.deleteOrphans(id, req.seqs(), req.verifiedAt(), req.targetDns(), req.confirm(), principal);
+        return service.deleteOrphans(id, req.seqs(), req.verifiedAt(), req.targetDns(), req.confirm(),
+                req.includeBeneath(), principal);
     }
 
     @PostMapping("/{id}/recompute")
@@ -426,14 +429,17 @@ public class SyncSetController {
     /**
      * Approve a delete held for review: deletes the identity's target entry now,
      * whatever the delete policy or guard (the source is re-read first; an entry
-     * back in scope is refused with 400).
+     * back in scope is refused with 400). {@code includeBeneath=true} deletes the
+     * entries beneath the target entry too (never ones a sync set manages), and
+     * also finishes a delete that failed because of them.
      */
     @PostMapping("/{id}/memberships/{identity}/approve-delete")
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public com.ldapportal.dto.sync.SyncDeleteApproval approveDelete(
             @PathVariable UUID id, @PathVariable String identity,
+            @RequestParam(defaultValue = "false") boolean includeBeneath,
             @AuthenticationPrincipal AuthPrincipal principal) {
-        return service.approveDelete(id, identity, principal);
+        return service.approveDelete(id, identity, includeBeneath, principal);
     }
 
     @DeleteMapping("/{id}/memberships/{identity}")

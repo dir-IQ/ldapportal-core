@@ -225,7 +225,7 @@ class SyncControllerTest extends BaseControllerTest {
     @Test
     void approveDelete_superadmin_returnsOutcome() throws Exception {
         UUID targetDir = UUID.randomUUID();
-        given(service.approveDelete(eq(SET), eq("id-1"), any())).willReturn(
+        given(service.approveDelete(eq(SET), eq("id-1"), eq(false), any())).willReturn(
                 new SyncDeleteApproval(SyncPreviewAction.DELETE, targetDir, "uid=a,dc=dst", null));
         mockMvc.perform(post(SETS + "/" + SET + "/memberships/id-1/approve-delete")
                         .with(authentication(superadminAuth())))
@@ -235,8 +235,21 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void approveDelete_passesIncludeBeneath_andReturnsTheEntriesDeletedBeneath() throws Exception {
+        UUID targetDir = UUID.randomUUID();
+        given(service.approveDelete(eq(SET), eq("id-1"), eq(true), any())).willReturn(
+                new SyncDeleteApproval(SyncPreviewAction.DELETE, targetDir, "uid=a,dc=dst", null, false,
+                        List.of("cn=policies,uid=a,dc=dst")));
+        mockMvc.perform(post(SETS + "/" + SET + "/memberships/id-1/approve-delete")
+                        .param("includeBeneath", "true")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.beneath[0]").value("cn=policies,uid=a,dc=dst"));
+    }
+
+    @Test
     void approveDelete_entryBackInScope_returns400() throws Exception {
-        given(service.approveDelete(eq(SET), eq("id-1"), any()))
+        given(service.approveDelete(eq(SET), eq("id-1"), eq(false), any()))
                 .willThrow(new IllegalArgumentException("The source entry is back in scope"));
         mockMvc.perform(post(SETS + "/" + SET + "/memberships/id-1/approve-delete")
                         .with(authentication(superadminAuth())))
@@ -505,9 +518,21 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void orphanDelete_passesIncludeBeneath() throws Exception {
+        given(service.deleteOrphans(eq(SET), eq(List.of(4)), any(), org.mockito.ArgumentMatchers.isNull(),
+                eq("DELETE"), eq(true), any()))
+                .willReturn(new com.ldapportal.dto.sync.SyncOrphanDeleteResult(1, 0, 0, List.of()));
+
+        mockMvc.perform(post(SETS + "/" + SET + "/drift/orphans/delete").with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seqs\":[4],\"verifiedAt\":\"2026-11-05T08:00:00Z\",\"confirm\":\"DELETE\",\"includeBeneath\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deleted").value(1));
+    }
+
+    @Test
     void orphanDelete_passesTheConfirmation_andIsForbiddenToAdmins() throws Exception {
         given(service.deleteOrphans(eq(SET), eq(List.of(4)), argThat(at -> at.isEqual(DRIFT_AT)),
-                org.mockito.ArgumentMatchers.isNull(), eq("DELETE"), any()))
+                org.mockito.ArgumentMatchers.isNull(), eq("DELETE"), eq(false), any()))
                 .willReturn(new com.ldapportal.dto.sync.SyncOrphanDeleteResult(1, 0, 0, List.of()));
 
         mockMvc.perform(post(SETS + "/" + SET + "/drift/orphans/delete").with(authentication(superadminAuth()))
