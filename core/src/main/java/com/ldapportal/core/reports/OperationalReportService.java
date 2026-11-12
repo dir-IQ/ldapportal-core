@@ -17,6 +17,7 @@ import com.ldapportal.ldap.model.LdapUser;
 import com.ldapportal.repository.AuditEventRepository;
 import com.ldapportal.repository.ProvisioningProfileRepository;
 import com.ldapportal.service.ProvisioningProfileService;
+import com.unboundid.ldap.sdk.Filter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -330,31 +331,73 @@ public class OperationalReportService {
         String groupDn = requireString(params, "groupDn");
         scope.requireInScope(groupDn);
         List<String> memberDns = new ArrayList<>();
+        List<String> memberUids = new ArrayList<>();
         try {
             LdapGroup group = groupService.getGroup(dc, groupDn,
                     "member", "uniqueMember", "memberUid");
-            memberDns.addAll(group.getAllMembers());
+            memberDns.addAll(group.getMember());
+            memberDns.addAll(group.getUniqueMember());
+            // posixGroup members are bare uids, not DNs: resolved below.
+            memberUids.addAll(group.getMemberUid());
         } catch (Exception e) {
             log.warn("Could not read group {}: {}", groupDn, e.getMessage());
         }
         // A group may hold members from OUs the admin cannot read.
         memberDns.removeIf(m -> !scope.dnAllowed().test(m));
 
-        if (memberDns.isEmpty()) {
+        if (memberDns.isEmpty() && memberUids.isEmpty()) {
             List<String> columns = List.of("dn", "cn", "mail", "uid");
             return new ReportData(columns, List.of());
         }
 
-        List<LdapUser> users = new ArrayList<>();
+        // Keyed by lower-cased DN: a user listed by DN and by uid shows once.
+        Map<String, LdapUser> users = new LinkedHashMap<>();
         for (String memberDn : memberDns) {
             try {
-                users.addAll(userService.searchUsersRaw(dc, "(objectClass=*)", memberDn, 1,
-                        entryAttributes(params)));
+                for (LdapUser u : userService.searchUsersRaw(dc, "(objectClass=*)", memberDn, 1,
+                        entryAttributes(params))) {
+                    users.putIfAbsent(u.getDn().toLowerCase(), u);
+                }
             } catch (Exception e) {
                 log.debug("Skipping member {}: {}", memberDn, e.getMessage());
             }
         }
-        return buildReportDataFromUsers(users);
+        for (LdapUser u : usersByUid(dc, memberUids, scope, params)) {
+            users.putIfAbsent(u.getDn().toLowerCase(), u);
+        }
+        return buildReportDataFromUsers(new ArrayList<>(users.values()));
+    }
+
+    /** uids per search when resolving posixGroup members, to keep filters small. */
+    private static final int UID_BATCH = 100;
+
+    /**
+     * Resolve posixGroup {@code memberUid} values to user entries: searched
+     * under the admin's OUs (the whole directory when unbounded) and held to
+     * the same DN scope as DN members.
+     */
+    private List<LdapUser> usersByUid(DirectoryConnection dc, List<String> uids,
+                                      ReportScope scope, Map<String, Object> params) {
+        List<LdapUser> out = new ArrayList<>();
+        if (uids.isEmpty()) return out;
+        List<String> bases = scope.restricted() ? scope.bases() : Collections.singletonList(null);
+        for (int i = 0; i < uids.size(); i += UID_BATCH) {
+            List<Filter> byUid = uids.subList(i, Math.min(i + UID_BATCH, uids.size())).stream()
+                    .map(uid -> Filter.createEqualityFilter("uid", uid))
+                    .toList();
+            String filter = Filter.createORFilter(byUid).toString();
+            for (String base : bases) {
+                try {
+                    for (LdapUser u : userService.searchUsersRaw(dc, filter, base, MAX_LDAP_RESULTS,
+                            entryAttributes(params))) {
+                        if (scope.dnAllowed().test(u.getDn())) out.add(u);
+                    }
+                } catch (Exception e) {
+                    log.debug("Could not resolve memberUid batch under {}: {}", base, e.getMessage());
+                }
+            }
+        }
+        return out;
     }
 
     /**

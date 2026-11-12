@@ -324,6 +324,50 @@ public class LdapGroupService {
     }
 
     /**
+     * One direct membership: {@code group} lists the user under
+     * {@code attribute} with {@code value} (the user's DN for
+     * {@code member}/{@code uniqueMember}, their uid for {@code memberUid}).
+     * Exactly the triple a {@link #removeMember} or {@link #addMember} call
+     * needs to undo or redo it.
+     */
+    public record DirectMembership(LdapGroup group, String attribute, String value) {}
+
+    /**
+     * Every group that lists {@code userDn} (or, for posixGroups, {@code uid})
+     * as a direct member, across every root of the directory. Asks the
+     * server rather than reading {@code memberOf}, which OpenLDAP/389-DS
+     * only maintain with an overlay, only return when asked for explicitly
+     * (it is operational), and never maintain for {@code memberUid} groups.
+     * The server's own DN matching applies, so spelling differences in the
+     * stored member values don't matter.
+     *
+     * <p>One search per membership attribute, so the caller learns which
+     * attribute to modify without fetching (possibly huge) member lists. A
+     * group listing the user under two attributes yields two entries.</p>
+     *
+     * @param uid             the user's uid, or null to skip posixGroups
+     * @param groupAttributes attributes to fetch on each group (e.g. cn)
+     */
+    public List<DirectMembership> findDirectMemberships(DirectoryConnection dc, String userDn,
+                                                        String uid, String... groupAttributes) {
+        String[] attrs = groupAttributes.length > 0 ? groupAttributes : new String[] {"cn"};
+        List<DirectMembership> out = new ArrayList<>();
+        for (String attribute : List.of("member", "uniqueMember")) {
+            Filter filter = Filter.createEqualityFilter(attribute, userDn);
+            for (LdapGroup g : searchGroups(dc, filter.toString(), null, attrs)) {
+                out.add(new DirectMembership(g, attribute, userDn));
+            }
+        }
+        if (uid != null && !uid.isBlank()) {
+            Filter filter = Filter.createEqualityFilter("memberUid", uid);
+            for (LdapGroup g : searchGroups(dc, filter.toString(), null, attrs)) {
+                out.add(new DirectMembership(g, "memberUid", uid));
+            }
+        }
+        return out;
+    }
+
+    /**
      * Returns all members of a group, including nested/transitive members.
      * Per-directory dispatch:
      * <ul>

@@ -870,4 +870,50 @@ class ProvisioningProfileServiceTest {
                 .save(captor.capture());
         assertThat(captor.getValue().getThemeColor()).isNull();
     }
+
+    // ── Group change evaluation ──────────────────────────────────────────────
+
+    @Test
+    void evaluateGroupChanges_readsMembershipFromTheGroups_notMemberOf() {
+        // Regression: users were fetched with only "dn" and checked against
+        // memberOf, which was therefore always empty — every user showed as
+        // missing every profile group.
+        UUID dirId = UUID.randomUUID();
+        String people = "ou=people,dc=example,dc=com";
+        String staffDn = "cn=staff,ou=groups,dc=example,dc=com";
+        String devsDn = "cn=devs,ou=groups,dc=example,dc=com";
+        profile.setTargetUserDn(people);
+        profile.setExcludeAutoIncludes(true);
+        com.ldapportal.entity.DirectoryConnection dc = new com.ldapportal.entity.DirectoryConnection();
+        dc.setId(dirId);
+        given(profileRepo.findByIdAndDirectoryId(profileId, dirId)).willReturn(Optional.of(profile));
+        given(dirRepo.findById(dirId)).willReturn(Optional.of(dc));
+        given(groupAssignmentRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(assignment(staffDn, "member"), assignment(devsDn, "memberUid")));
+        given(ldapUserService.searchUsers(dc, "(objectClass=*)", people, "uid")).willReturn(List.of(
+                new com.ldapportal.ldap.model.LdapUser("uid=alice," + people, Map.of("uid", List.of("alice"))),
+                new com.ldapportal.ldap.model.LdapUser("uid=bob," + people, Map.of("uid", List.of("bob")))));
+        // alice: in staff by DN (spelled differently) and in devs by memberUid.
+        given(ldapGroupService.getGroup(dc, staffDn, "cn", "member", "uniqueMember", "memberUid"))
+                .willReturn(new com.ldapportal.ldap.model.LdapGroup(staffDn, Map.of(
+                        "cn", List.of("staff"), "member", List.of("UID=Alice, OU=People,dc=example,dc=com"))));
+        given(ldapGroupService.getGroup(dc, devsDn, "cn", "member", "uniqueMember", "memberUid"))
+                .willReturn(new com.ldapportal.ldap.model.LdapGroup(devsDn, Map.of(
+                        "cn", List.of("devs"), "memberuid", List.of("alice"))));
+
+        var preview = service.evaluateGroupChanges(dirId, profileId);
+
+        assertThat(preview.changes()).singleElement().satisfies(c -> {
+            assertThat(c.userDn()).isEqualTo("uid=bob," + people);
+            assertThat(c.groupsToAdd()).extracting(g -> g.groupDn()).containsExactly(staffDn, devsDn);
+        });
+    }
+
+    private com.ldapportal.entity.ProfileGroupAssignment assignment(String groupDn, String attribute) {
+        var a = new com.ldapportal.entity.ProfileGroupAssignment();
+        a.setProfile(profile);
+        a.setGroupDn(groupDn);
+        a.setMemberAttribute(attribute);
+        return a;
+    }
 }
