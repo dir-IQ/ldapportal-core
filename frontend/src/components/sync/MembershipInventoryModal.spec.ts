@@ -378,6 +378,46 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
+  it('shows how far a multi-row delete has got, and Stop leaves the rows not reached yet', async () => {
+    withRows(
+      { reviewKind: 'PENDING_DELETE', targetDn: 'uid=a,dc=dst' },
+      { reviewKind: 'PENDING_DELETE', targetDn: 'uid=b,dc=dst' },
+      { reviewKind: 'PENDING_DELETE', targetDn: 'uid=c,dc=dst' },
+    )
+    // Hold each delete open so the test can look at the progress in between.
+    const pending: Array<() => void> = []
+    vi.mocked(syncApi.approveDelete).mockImplementation((_s, _id) => new Promise((resolve) => {
+      pending.push(() => resolve({ data: {
+        outcome: 'DELETE', targetDirectoryId: 'd', targetDn: 'x', message: null, beneath: [],
+      } } as never))
+    }))
+    const wrapper = open('REVIEW')
+    await flushPromises()
+    const info = vi.spyOn(useNotificationStore(), 'info')
+    await selectAll()
+    byExactText('Delete target (3)')!.click()
+    await flushPromises()
+
+    const status = () => document.querySelector('[role="status"]')?.textContent ?? ''
+    expect(status()).toContain('Deleting target entries: 0 of 3')
+    expect(status()).toContain('uid=a,dc=dst')
+    pending.shift()!()
+    await flushPromises()
+    expect(status()).toContain('Deleting target entries: 1 of 3')
+    expect(status()).toContain('uid=b,dc=dst')
+    expect(document.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow')).toBe('1')
+
+    // Stop: the row in flight finishes, the last one is never sent.
+    document.querySelector<HTMLButtonElement>('[data-testid="bulk-stop"]')!.click()
+    await flushPromises()
+    pending.shift()!()
+    await flushPromises()
+    expect(syncApi.approveDelete).toHaveBeenCalledTimes(2)
+    expect(info).toHaveBeenCalledWith('Stopped after 2 of 3; the other row was left as it is.')
+    expect(document.querySelector('[data-testid="bulk-stop"]')).toBeNull()
+    wrapper.unmount()
+  })
+
   it('does not delete when the confirm is cancelled', async () => {
     withRow({ reviewKind: 'PENDING_DELETE' })
     confirmMock.mockResolvedValueOnce(false)
