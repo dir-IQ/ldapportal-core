@@ -17,6 +17,7 @@ import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapGroupService;
 import com.ldapportal.ldap.validation.DnValidator;
 import com.ldapportal.ldap.LdapUserService;
+import com.ldapportal.ldap.UserGroupIndex;
 import com.ldapportal.ldap.model.LdapGroup;
 import com.ldapportal.ldap.model.LdapUser;
 import com.ldapportal.repository.*;
@@ -1478,6 +1479,24 @@ public class ProvisioningProfileService {
     // ── Group change evaluation and application ──────────────────────────────
 
     /**
+     * The profile's groups with their member lists. A group that can't be
+     * read (deleted, renamed) is left out, so its users show as missing it —
+     * the same answer an empty group gives.
+     */
+    private List<LdapGroup> readGroups(DirectoryConnection dc, Collection<String> groupDns) {
+        List<LdapGroup> groups = new ArrayList<>();
+        for (String groupDn : groupDns) {
+            try {
+                groups.add(ldapGroupService.getGroup(dc, groupDn,
+                        "cn", "member", "uniqueMember", "memberUid"));
+            } catch (RuntimeException e) {
+                log.warn("Could not read profile group {}: {}", groupDn, e.getMessage());
+            }
+        }
+        return groups;
+    }
+
+    /**
      * Evaluates group membership changes for all users provisioned under this
      * profile by comparing their current group memberships against the
      * effective group set.
@@ -1500,23 +1519,26 @@ public class ProvisioningProfileService {
 
         // Search LDAP for users under the profile's target OU
         List<LdapUser> users = ldapUserService.searchUsers(
-                dc, "(objectClass=*)", profile.getTargetUserDn(), "dn");
+                dc, "(objectClass=*)", profile.getTargetUserDn(), "uid");
+
+        // Membership is read from the profile's groups themselves, not the
+        // users' memberOf: that is operational (never returned unless asked
+        // for), absent without the overlay, and never set for memberUid
+        // groups — so every user looked like they were missing every group.
+        UserGroupIndex membership = UserGroupIndex.of(readGroups(dc, effectiveMap.keySet()));
 
         List<GroupChangePreview.UserGroupChange> changes = new ArrayList<>();
 
         for (LdapUser user : users) {
             String userDn = user.getDn();
-            List<String> currentMemberships = user.getMemberOf();
-            Set<String> currentSet = currentMemberships.stream()
-                    .map(String::toLowerCase)
-                    .collect(Collectors.toSet());
+            String uid = user.getUid();
 
             List<GroupChangePreview.GroupChange> toAdd = new ArrayList<>();
             List<GroupChangePreview.GroupChange> toRemove = new ArrayList<>();
 
             // Groups to add: in effective set but user is not a member
             for (var entry : effectiveMap.entrySet()) {
-                if (!currentSet.contains(entry.getKey().toLowerCase())) {
+                if (!membership.isDirectMember(entry.getKey(), userDn, uid)) {
                     toAdd.add(new GroupChangePreview.GroupChange(
                             entry.getKey(), entry.getValue()));
                 }

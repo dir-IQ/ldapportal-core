@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap;
 
+import static org.assertj.core.api.Assertions.tuple;
 import com.ldapportal.core.provisioning.DeletePlan;
 import com.ldapportal.core.provisioning.DeleteStep;
 import com.ldapportal.core.provisioning.PlanExecutor;
@@ -423,5 +424,46 @@ class LdapGroupServiceTest {
         d.setPoolResponseTimeoutSeconds(10);
         d.setPagingSize(100);
         return d;
+    }
+
+    // ── findDirectMemberships ─────────────────────────────────────────────────
+
+    @Test
+    void findDirectMemberships_findsMemberUniqueMemberAndMemberUidGroups() throws Exception {
+        String alice = "uid=alice," + USERS_OU;
+        addGroup("cn=Staff," + GROUPS_OU, "Staff", alice);
+        addGroup("cn=Other," + GROUPS_OU, "Other", "uid=bob," + USERS_OU);
+        inMemoryServer.add(new Entry("cn=Unique," + GROUPS_OU,
+                new Attribute("objectClass", "top", "groupOfUniqueNames"),
+                new Attribute("cn", "Unique"),
+                new Attribute("uniqueMember", alice)));
+        inMemoryServer.add(new Entry("cn=Devs," + GROUPS_OU,
+                new Attribute("objectClass", "top", "posixGroup"),
+                new Attribute("cn", "Devs"),
+                new Attribute("gidNumber", "1000"),
+                new Attribute("memberUid", "alice")));
+
+        List<LdapGroupService.DirectMembership> found =
+                groupService.findDirectMemberships(dc, alice, "alice", "cn");
+
+        assertThat(found)
+                .extracting(m -> m.group().getCn(), LdapGroupService.DirectMembership::attribute,
+                        LdapGroupService.DirectMembership::value)
+                .containsExactlyInAnyOrder(
+                        tuple("Staff", "member", alice),
+                        tuple("Unique", "uniqueMember", alice),
+                        tuple("Devs", "memberUid", "alice"));
+    }
+
+    @Test
+    void findDirectMemberships_withoutUid_skipsPosixGroups() throws Exception {
+        String alice = "uid=alice," + USERS_OU;
+        inMemoryServer.add(new Entry("cn=Devs," + GROUPS_OU,
+                new Attribute("objectClass", "top", "posixGroup"),
+                new Attribute("cn", "Devs"),
+                new Attribute("gidNumber", "1000"),
+                new Attribute("memberUid", "alice")));
+
+        assertThat(groupService.findDirectMemberships(dc, alice, null, "cn")).isEmpty();
     }
 }

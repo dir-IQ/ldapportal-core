@@ -110,6 +110,15 @@ public final class UserGroupIndex {
     }
 
     /**
+     * Whether the indexed group {@code groupDn} lists the user directly, by
+     * DN (compared normalized) or, for a posixGroup, by {@code uid} (may be
+     * null). False for a group that isn't indexed.
+     */
+    public boolean isDirectMember(String groupDn, String userDn, String uid) {
+        return directGroupDns(userDn, uid).contains(normalize(groupDn));
+    }
+
+    /**
      * The groups a user belongs to directly or through nesting, by label:
      * the direct groups first, then each further level outwards.
      */

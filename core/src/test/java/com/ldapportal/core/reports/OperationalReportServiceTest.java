@@ -584,4 +584,42 @@ class OperationalReportServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
         verifyNoInteractions(groupService, userService);
     }
+
+    // ── USERS_IN_GROUP with posixGroup members ───────────────────────────────
+
+    @Test
+    void usersInGroup_resolvesPosixMemberUids_toUsers() {
+        String devs = "cn=devs,ou=groups,dc=example,dc=com";
+        DirectoryConnection dc = ldapDir();
+        when(groupService.getGroup(dc, devs, "member", "uniqueMember", "memberUid"))
+                .thenReturn(new LdapGroup(devs, Map.of("cn", List.of("devs"),
+                        "memberuid", List.of("alice", "bob"))));
+        when(userService.searchUsersRaw(eq(dc), eq("(|(uid=alice)(uid=bob))"), isNull(), anyInt(), eq("*")))
+                .thenReturn(List.of(
+                        new LdapUser("uid=alice," + PEOPLE, Map.of("uid", List.of("alice"))),
+                        new LdapUser("uid=bob," + PEOPLE, Map.of("uid", List.of("bob")))));
+
+        ReportData data = service.run(dc, "USERS_IN_GROUP", Map.of("groupDn", devs), dirId, superadmin());
+
+        assertThat(data.rows()).extracting(r -> r.get("dn"))
+                .containsExactly("uid=alice," + PEOPLE, "uid=bob," + PEOPLE);
+    }
+
+    @Test
+    void usersInGroup_posixMembers_forAnAdmin_areSearchedUnderTheirOus_andScopeChecked() {
+        String devs = "cn=devs,ou=groups,dc=example,dc=com";
+        AuthPrincipal alice = admin();
+        DirectoryConnection dc = ldapDir();
+        when(permissionService.resolveSearchBaseDns(alice, dirId, null)).thenReturn(List.of(PEOPLE));
+        when(permissionService.isDnWithinScope(alice, dirId, devs)).thenReturn(true);
+        when(permissionService.isDnWithinScope(alice, dirId, "uid=bob," + PEOPLE)).thenReturn(true);
+        when(groupService.getGroup(dc, devs, "member", "uniqueMember", "memberUid"))
+                .thenReturn(new LdapGroup(devs, Map.of("cn", List.of("devs"), "memberuid", List.of("bob"))));
+        when(userService.searchUsersRaw(eq(dc), eq("(|(uid=bob))"), eq(PEOPLE), anyInt(), eq("*")))
+                .thenReturn(List.of(new LdapUser("uid=bob," + PEOPLE, Map.of("uid", List.of("bob")))));
+
+        ReportData data = service.run(dc, "USERS_IN_GROUP", Map.of("groupDn", devs), dirId, alice);
+
+        assertThat(data.rows()).extracting(r -> r.get("dn")).containsExactly("uid=bob," + PEOPLE);
+    }
 }

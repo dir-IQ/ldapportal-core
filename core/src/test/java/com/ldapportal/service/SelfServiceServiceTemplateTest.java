@@ -111,4 +111,30 @@ class SelfServiceServiceTemplateTest {
 
         assertThat(order).containsExactly("mobile", "mail", "pager");
     }
+
+    @Test
+    void getGroups_includesPosixGroups_andListsAGroupOnceWhateverAttributeListsTheUser() {
+        DirectoryConnection dc = new DirectoryConnection();
+        dc.setId(DIR_ID);
+        given(dirRepo.findById(DIR_ID)).willReturn(Optional.of(dc));
+        given(ldapUserService.getUser(dc, USER_DN, "uid"))
+                .willReturn(new com.ldapportal.ldap.model.LdapUser(USER_DN,
+                        java.util.Map.of("uid", List.of("jdoe"))));
+        var staff = new com.ldapportal.ldap.model.LdapGroup("cn=staff,ou=groups,dc=example,dc=com",
+                java.util.Map.of("cn", List.of("staff")));
+        var devs = new com.ldapportal.ldap.model.LdapGroup("cn=devs,ou=groups,dc=example,dc=com",
+                java.util.Map.of("cn", List.of("devs")));
+        given(ldapGroupService.findDirectMemberships(dc, USER_DN, "jdoe", "cn", "description"))
+                .willReturn(List.of(
+                        new LdapGroupService.DirectMembership(staff, "member", USER_DN),
+                        new LdapGroupService.DirectMembership(staff, "uniqueMember", USER_DN),
+                        new LdapGroupService.DirectMembership(devs, "memberUid", "jdoe")));
+
+        AuthPrincipal principal = new AuthPrincipal(
+                PrincipalType.SELF_SERVICE, UUID.randomUUID(), "jdoe", USER_DN, DIR_ID);
+
+        assertThat(service.getGroups(principal))
+                .extracting(SelfServiceService.SelfServiceGroupResponse::name)
+                .containsExactly("staff", "devs");
+    }
 }

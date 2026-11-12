@@ -203,6 +203,9 @@ public class LifecyclePlaybookService {
                 hadFailure = true;
 
                 if (!step.isContinueOnError()) {
+                    // Record the failed step itself (with its error) before
+                    // the skipped ones; the break below bypasses the add.
+                    results.add(result);
                     // Mark remaining steps as skipped
                     for (int i = steps.indexOf(step) + 1; i < steps.size(); i++) {
                         ObjectNode skipped = objectMapper.createObjectNode();
@@ -311,18 +314,22 @@ public class LifecyclePlaybookService {
                     params.path("memberAttribute").asText("member"),
                     targetDn);
             case REMOVE_ALL_GROUPS -> {
-                LdapUser user = ldapUserService.getUser(dc, targetDn);
-                for (String groupDn : user.getMemberOf()) {
+                // Remove every membership, then fail the step if any couldn't
+                // be removed: an offboarding that leaves access behind must
+                // not report success.
+                List<String> failed = new ArrayList<>();
+                for (LdapGroupService.DirectMembership m : directMemberships(dc, targetDn)) {
                     try {
-                        ldapGroupService.removeMember(dc, groupDn, "member", targetDn);
+                        ldapGroupService.removeMember(dc, m.group().getDn(), m.attribute(), m.value());
                     } catch (Exception e) {
-                        // Try uniqueMember as fallback
-                        try {
-                            ldapGroupService.removeMember(dc, groupDn, "uniqueMember", targetDn);
-                        } catch (Exception ignored) {
-                            log.warn("Could not remove {} from group {}", targetDn, groupDn);
-                        }
+                        log.warn("Could not remove {} from group {} ({}): {}",
+                                targetDn, m.group().getDn(), m.attribute(), e.getMessage());
+                        failed.add(m.group().getDn());
                     }
+                }
+                if (!failed.isEmpty()) {
+                    throw new IllegalStateException("Could not remove " + targetDn
+                            + " from " + failed.size() + " group(s): " + String.join("; ", failed));
                 }
             }
             case SET_ATTRIBUTE -> {
@@ -380,9 +387,15 @@ public class LifecyclePlaybookService {
                 case ADD_TO_GROUP -> ""; // reverse: just remove from group
                 case REMOVE_FROM_GROUP -> ""; // reverse: just add back
                 case REMOVE_ALL_GROUPS -> {
-                    // Capture current group memberships
-                    LdapUser user = ldapUserService.getUser(dc, targetDn);
-                    yield objectMapper.writeValueAsString(user.getMemberOf());
+                    // Capture each membership with the attribute and value that
+                    // carry it, so a rollback can restore posixGroup (memberUid)
+                    // memberships too.
+                    List<Map<String, String>> snapshot = new ArrayList<>();
+                    for (LdapGroupService.DirectMembership m : directMemberships(dc, targetDn)) {
+                        snapshot.add(Map.of("groupDn", m.group().getDn(),
+                                "attribute", m.attribute(), "value", m.value()));
+                    }
+                    yield objectMapper.writeValueAsString(snapshot);
                 }
                 case SET_ATTRIBUTE -> {
                     // Capture current attribute values
@@ -418,6 +431,30 @@ public class LifecyclePlaybookService {
     }
 
     /**
+     * The groups that list {@code targetDn} directly, asked of the groups
+     * themselves rather than read from the user's {@code memberOf} (absent
+     * without the overlay, operational on OpenLDAP so a plain read never
+     * returns it, and never set for posixGroup {@code memberUid}).
+     */
+    private List<LdapGroupService.DirectMembership> directMemberships(DirectoryConnection dc,
+                                                                      String targetDn) {
+        String uid = ldapUserService.getUser(dc, targetDn, "uid").getUid();
+        return ldapGroupService.findDirectMemberships(dc, targetDn, uid, "cn");
+    }
+
+    private void restoreLegacyMembership(DirectoryConnection dc, String groupDn, String targetDn) {
+        try {
+            ldapGroupService.addMember(dc, groupDn, "member", targetDn);
+        } catch (Exception e) {
+            try {
+                ldapGroupService.addMember(dc, groupDn, "uniqueMember", targetDn);
+            } catch (Exception ignored) {
+                log.warn("Rollback could not re-add {} to {}", targetDn, groupDn);
+            }
+        }
+    }
+
+    /**
      * Reverses a single step using the captured previous state.
      */
     private void rollbackStep(DirectoryConnection dc, String targetDn,
@@ -438,15 +475,21 @@ public class LifecyclePlaybookService {
                 // Re-add to all groups that were captured
                 if (previousState != null && !previousState.isBlank()) {
                     try {
-                        List<String> groups = objectMapper.readValue(previousState,
-                                objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
-                        for (String groupDn : groups) {
-                            try {
-                                ldapGroupService.addMember(dc, groupDn, "member", targetDn);
-                            } catch (Exception e) {
+                        for (JsonNode g : objectMapper.readTree(previousState)) {
+                            if (g.isTextual()) {
+                                // Snapshot taken before memberships carried their
+                                // attribute: a bare group DN.
+                                restoreLegacyMembership(dc, g.asText(), targetDn);
+                            } else {
+                                String groupDn = g.path("groupDn").asText();
                                 try {
-                                    ldapGroupService.addMember(dc, groupDn, "uniqueMember", targetDn);
-                                } catch (Exception ignored) { }
+                                    ldapGroupService.addMember(dc, groupDn,
+                                            g.path("attribute").asText("member"),
+                                            g.path("value").asText(targetDn));
+                                } catch (Exception e) {
+                                    log.warn("Rollback could not re-add {} to {}: {}",
+                                            targetDn, groupDn, e.getMessage());
+                                }
                             }
                         }
                     } catch (JsonProcessingException ignored) { }

@@ -21,7 +21,6 @@ import com.ldapportal.repository.RegistrationRequestRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.unboundid.ldap.sdk.BindResult;
-import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPConnection;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
@@ -224,17 +223,22 @@ public class SelfServiceService {
         requireSelfService(principal);
         DirectoryConnection dc = requireDirectory(principal.directoryId());
 
-        // Search for groups containing this user as a member
-        // Escape the DN value to prevent LDAP filter injection
-        String escapedDn = Filter.encodeValue(principal.dn());
-        String memberFilter = "(|(member=" + escapedDn + ")"
-                + "(uniqueMember=" + escapedDn + "))";
-        // Null base: every root of the directory — a group under another
-        // suffix can still list this user.
-        List<LdapGroup> groups = ldapGroupService.searchGroups(
-                dc, memberFilter, null, "cn", "description");
+        // Every root of the directory — a group under another suffix can still
+        // list this user — and posixGroups too, which list the uid, not the DN.
+        String uid = null;
+        try {
+            uid = ldapUserService.getUser(dc, principal.dn(), "uid").getUid();
+        } catch (RuntimeException e) {
+            log.debug("Could not read uid of {}; posixGroups skipped: {}", principal.dn(), e.getMessage());
+        }
+        // Keyed by DN: a group can list the user under more than one attribute.
+        Map<String, LdapGroup> groups = new LinkedHashMap<>();
+        for (LdapGroupService.DirectMembership m : ldapGroupService.findDirectMemberships(
+                dc, principal.dn(), uid, "cn", "description")) {
+            groups.putIfAbsent(m.group().getDn().toLowerCase(Locale.ROOT), m.group());
+        }
 
-        return groups.stream()
+        return groups.values().stream()
                 .map(g -> new SelfServiceGroupResponse(
                         g.getDn(),
                         g.getCn() != null ? g.getCn() : g.getDn(),
