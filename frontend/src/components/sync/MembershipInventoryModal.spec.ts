@@ -159,6 +159,16 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
+  it('shows the set\'s link (source → target) at title size in blue', async () => {
+    const wrapper = open()
+    await flushPromises()
+    const link = document.querySelector('[data-testid="sync-link-name"]')!
+    expect(link.textContent).toBe('Source → Target')
+    expect(link.className).toContain('text-lg')
+    expect(link.className).toContain('text-blue-600')
+    wrapper.unmount()
+  })
+
   it('opens pre-filtered when given an initialState (dashboard deep link)', async () => {
     const wrapper = mount(MembershipInventoryModal, {
       attachTo: document.body,

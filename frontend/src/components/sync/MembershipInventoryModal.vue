@@ -10,7 +10,8 @@
             fill storage-key="sync-membership-inventory">
     <div class="space-y-3">
       <div class="flex items-center justify-between gap-2 flex-wrap -mt-1">
-        <p class="text-xs text-gray-500 font-mono">{{ sourceName }} → {{ targetName }}</p>
+        <!-- The link (source → target) this set belongs to: title-sized and blue so it reads at a glance. -->
+        <p class="text-lg font-medium text-blue-600" data-testid="sync-link-name">{{ sourceName }} → {{ targetName }}</p>
         <div class="flex items-center gap-2">
           <button class="btn-secondary btn-compact" :disabled="reconciling || reconcileRunning"
                   title="Sync the whole set now instead of waiting for the schedule. Skips entries whose source hasn't changed since the sync last wrote them, so it doesn't repair entries changed or deleted directly on the target"
