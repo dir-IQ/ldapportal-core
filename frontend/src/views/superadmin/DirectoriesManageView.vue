@@ -239,6 +239,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { formatDateTime } from '@/utils/dateTime'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
 import { listDirectoryConnections, createDirectory, updateDirectory, deleteDirectory, testDirectory, evictPool, getDirectoryStatus } from '@/api/directories'
@@ -542,7 +543,7 @@ function capabilitiesTooltip(d: DirectoryRow) {
   const caps = d?.capabilities
   if (!caps) return ''
   const lines: string[] = []
-  if (caps.probedAt) lines.push(`Probed ${new Date(caps.probedAt).toLocaleString()}`)
+  if (caps.probedAt) lines.push(`Probed ${formatDateTime(caps.probedAt)}`)
   const ctrls = caps.supportedControls || []
   if (ctrls.length) lines.push(`Supported controls (${ctrls.length}):\n${ctrls.slice(0, 12).join('\n')}${ctrls.length > 12 ? '\n…' : ''}`)
   return lines.join('\n\n')

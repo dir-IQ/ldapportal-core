@@ -139,6 +139,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { formatDateTime } from '@/utils/dateTime'
 import type { Ref } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
@@ -231,7 +232,7 @@ function fmtDate(iso?: string): string {
   return iso ? new Date(iso).toLocaleDateString() : '—'
 }
 function fmtDateTime(iso: string): string {
-  return new Date(iso).toLocaleString()
+  return formatDateTime(iso)
 }
 
 // ── Row actions ──────────────────────────────────────────────────────────────

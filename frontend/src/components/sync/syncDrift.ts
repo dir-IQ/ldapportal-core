@@ -2,6 +2,7 @@
 // A sync set's stored drift snapshot (its last complete content verify), as the
 // sync page's Drift column and drifting-sets list show it.
 import type { SyncSet, SyncVerifySnapshot } from '@/api/sync'
+import { formatDateTime } from '@/utils/dateTime'
 
 export interface DriftCounts {
   missing: number
@@ -69,7 +70,7 @@ export function driftSummary(set: Pick<SyncSet, 'verify'> & Partial<Pick<SyncSet
   const c = driftCounts(set)
   const stale = verifyIncompleteSince(set.verify)
   const staleNote = stale && set.verify?.incompleteAt
-    ? ` A later verify (${new Date(set.verify.incompleteAt).toLocaleString()}) couldn't read both directories completely, so this may be out of date.`
+    ? ` A later verify (${formatDateTime(set.verify.incompleteAt)}) couldn't read both directories completely, so this may be out of date.`
     : ''
   if (!c) {
     return {
@@ -78,7 +79,7 @@ export function driftSummary(set: Pick<SyncSet, 'verify'> & Partial<Pick<SyncSet
       title: 'No complete content verify yet. It runs after each reconcile, or use Verify contents.' + staleNote + heldNote,
     }
   }
-  const when = `Last complete content verify: ${new Date(set.verify!.at!).toLocaleString()}.`
+  const when = `Last complete content verify: ${formatDateTime(set.verify!.at!)}.`
   const total = driftTotal(c)
   return {
     label: (total ? driftBreakdown(c) : 'In sync') + (stale ? ' (may be out of date)' : '') + heldLabel,
