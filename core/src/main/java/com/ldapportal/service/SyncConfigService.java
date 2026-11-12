@@ -950,12 +950,13 @@ public class SyncConfigService {
                         "Only orphaned entries are deleted here; repair this one instead."));
                 continue;
             }
-            var check = orphanCheck(syncSetId, dn, false);
+            var check = orphanCheck(syncSetId, dn, false, false);
+            boolean deletable = check.outcome() == com.ldapportal.dto.sync.SyncPreviewAction.DELETE;
             items.add(new com.ldapportal.dto.sync.SyncOrphanDeletePreview.Item(c.seq(),
-                    check.outcome() == com.ldapportal.dto.sync.SyncPreviewAction.DELETE
+                    deletable
                             ? com.ldapportal.dto.sync.SyncOrphanDeletePreview.Action.DELETE
                             : com.ldapportal.dto.sync.SyncOrphanDeletePreview.Action.SKIP,
-                    dn, check.message()));
+                    dn, check.message(), deletable ? check.beneath().size() : 0));
         }
         return new com.ldapportal.dto.sync.SyncOrphanDeletePreview(items);
     }
@@ -972,14 +973,28 @@ public class SyncConfigService {
     public com.ldapportal.dto.sync.SyncOrphanDeleteResult deleteOrphans(UUID syncSetId, List<Integer> seqs,
                                                                       java.time.OffsetDateTime verifiedAt,
                                                                       String confirm, AuthPrincipal principal) {
-        return deleteOrphans(syncSetId, seqs, verifiedAt, null, confirm, principal);
+        return deleteOrphans(syncSetId, seqs, verifiedAt, null, confirm, false, principal);
     }
 
-    /** As above, with each item's stored target DN (see {@link #choose}). */
+    /** As below, keeping the entries beneath each orphan. */
     public com.ldapportal.dto.sync.SyncOrphanDeleteResult deleteOrphans(UUID syncSetId, List<Integer> seqs,
                                                                       java.time.OffsetDateTime verifiedAt,
                                                                       List<String> targetDns,
                                                                       String confirm, AuthPrincipal principal) {
+        return deleteOrphans(syncSetId, seqs, verifiedAt, targetDns, confirm, false, principal);
+    }
+
+    /**
+     * As above, with each item's stored target DN (see {@link #choose}). With
+     * {@code includeBeneath} the operator chose to delete the entries beneath
+     * each orphan too (never ones a sync set manages); each one deleted is
+     * audited on its own.
+     */
+    public com.ldapportal.dto.sync.SyncOrphanDeleteResult deleteOrphans(UUID syncSetId, List<Integer> seqs,
+                                                                      java.time.OffsetDateTime verifiedAt,
+                                                                      List<String> targetDns,
+                                                                      String confirm, boolean includeBeneath,
+                                                                      AuthPrincipal principal) {
         SyncSet set = requireSet(syncSetId);
         if (!com.ldapportal.dto.sync.SyncOrphanDeleteRequest.CONFIRM_WORD.equals(confirm)) {
             throw new IllegalArgumentException("Type " + com.ldapportal.dto.sync.SyncOrphanDeleteRequest.CONFIRM_WORD
@@ -1008,7 +1023,8 @@ public class SyncConfigService {
                         "Only orphaned entries are deleted here; repair this one instead."));
                 continue;
             }
-            var r = orphanCheck(syncSetId, dn, true);
+            var r = orphanCheck(syncSetId, dn, true, includeBeneath);
+            auditBeneath(principal, r, "orphan-delete", labels, syncSetId);
             switch (r.outcome()) {
                 case DELETE -> {
                     deleted++;
@@ -1021,6 +1037,9 @@ public class SyncConfigService {
                         detail.put("operation", "orphan-delete");
                         labels.putInto(detail);
                         detail.put("syncSetId", syncSetId.toString());
+                        if (!r.beneath().isEmpty()) {
+                            detail.put("deletedBeneath", r.beneath().size());
+                        }
                         auditService.record(principal, r.targetDirectoryId(), AuditAction.ENTRY_DELETE, dn, detail);
                     }
                 }
@@ -1049,9 +1068,10 @@ public class SyncConfigService {
     }
 
 
-    private com.ldapportal.dto.sync.SyncDeleteApproval orphanCheck(UUID syncSetId, String dn, boolean apply) {
+    private com.ldapportal.dto.sync.SyncDeleteApproval orphanCheck(UUID syncSetId, String dn, boolean apply,
+                                                                   boolean includeBeneath) {
         try {
-            return engine.orphanDelete(syncSetId, dn, apply);
+            return engine.orphanDelete(syncSetId, dn, apply, includeBeneath);
         } catch (RuntimeException ex) {
             log.warn("Sync set {}: orphan {} of [{}] failed: {}", syncSetId, apply ? "delete" : "check", dn, ex.toString());
             String msg = ex.getMessage();
@@ -1276,19 +1296,60 @@ public class SyncConfigService {
      */
     public com.ldapportal.dto.sync.SyncDeleteApproval approveDelete(UUID syncSetId, String identity,
                                                                     AuthPrincipal principal) {
+        return approveDelete(syncSetId, identity, false, principal);
+    }
+
+    /**
+     * As above; with {@code includeBeneath} the operator chose to delete the
+     * entries beneath the target entry too (never ones a sync set manages; see
+     * {@code RecomputeEngine.deleteWithBeneath}). Each entry deleted beneath it
+     * is audited as its own {@code ENTRY_DELETE}, even when the entry itself
+     * then fails to go.
+     */
+    public com.ldapportal.dto.sync.SyncDeleteApproval approveDelete(UUID syncSetId, String identity,
+                                                                    boolean includeBeneath,
+                                                                    AuthPrincipal principal) {
         SyncSet set = requireSet(syncSetId);
-        com.ldapportal.dto.sync.SyncDeleteApproval result = engine.approveDelete(syncSetId, identity);
-        if (result.outcome() == com.ldapportal.dto.sync.SyncPreviewAction.DELETE && principal != null) {
-            Map<String, Object> detail = new java.util.LinkedHashMap<>();
-            detail.put("source", "directory-sync");
-            detail.put("operation", "approved-review-delete");
-            SyncAuditLabels.of(set, linkRepo, directoryRepo).putInto(detail);
-            detail.put("syncSetId", syncSetId.toString());
-            detail.put("identity", identity);
-            auditService.record(principal, result.targetDirectoryId(), AuditAction.ENTRY_DELETE,
-                    result.targetDn(), detail);
+        com.ldapportal.dto.sync.SyncDeleteApproval result = engine.approveDelete(syncSetId, identity, includeBeneath);
+        if (principal != null) {
+            SyncAuditLabels labels = SyncAuditLabels.of(set, linkRepo, directoryRepo);
+            auditBeneath(principal, result, "approved-review-delete", labels, syncSetId);
+            if (result.outcome() == com.ldapportal.dto.sync.SyncPreviewAction.DELETE) {
+                Map<String, Object> detail = new java.util.LinkedHashMap<>();
+                detail.put("source", "directory-sync");
+                detail.put("operation", "approved-review-delete");
+                labels.putInto(detail);
+                detail.put("syncSetId", syncSetId.toString());
+                detail.put("identity", identity);
+                if (!result.beneath().isEmpty()) {
+                    detail.put("deletedBeneath", result.beneath().size());
+                }
+                auditService.record(principal, result.targetDirectoryId(), AuditAction.ENTRY_DELETE,
+                        result.targetDn(), detail);
+            }
         }
         return result;
+    }
+
+    /**
+     * Audit each entry an operator's delete removed beneath its target entry:
+     * the same {@code operation} as the entry's own record, with
+     * {@code beneath} naming the entry it was deleted with.
+     */
+    private void auditBeneath(AuthPrincipal principal, com.ldapportal.dto.sync.SyncDeleteApproval result,
+                              String operation, SyncAuditLabels labels, UUID syncSetId) {
+        if (principal == null || result.targetDirectoryId() == null) {
+            return;
+        }
+        for (String child : result.beneath()) {
+            Map<String, Object> detail = new java.util.LinkedHashMap<>();
+            detail.put("source", "directory-sync");
+            detail.put("operation", operation);
+            labels.putInto(detail);
+            detail.put("syncSetId", syncSetId.toString());
+            detail.put("beneath", result.targetDn());
+            auditService.record(principal, result.targetDirectoryId(), AuditAction.ENTRY_DELETE, child, detail);
+        }
     }
 
     /** Dismiss a quarantined (or any) membership row — drop the index entry without touching the target. */

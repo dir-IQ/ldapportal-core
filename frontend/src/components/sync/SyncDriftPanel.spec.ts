@@ -32,7 +32,7 @@ vi.mock('@/api/sync', () => ({
   } })),
   downloadHeldCsv: vi.fn(() => Promise.resolve({ data: new Blob(['h']) })),
   previewOrphanDelete: vi.fn(() => Promise.resolve({ data: { items: [
-    { seq: 1, action: 'DELETE', targetDn: 'uid=old,ou=people,dc=hr', reason: null },
+    { seq: 1, action: 'DELETE', targetDn: 'uid=old,ou=people,dc=hr', reason: null, beneath: 0 },
     { seq: 7, action: 'SKIP', targetDn: 'uid=kept,ou=people,dc=hr', reason: 'This set now manages it.' },
   ] } })),
   deleteOrphans: vi.fn(() => Promise.resolve({ data: { deleted: 1, skipped: 0, failed: 0, items: [] } })),
@@ -549,10 +549,37 @@ describe('SyncDriftPanel', () => {
       await go().trigger('click')
       await flushPromises()
 
-      expect(syncApi.deleteOrphans).toHaveBeenCalledWith('set-1', [1], AT, 'DELETE', ['uid=old,ou=people,dc=hr'])
+      expect(syncApi.deleteOrphans).toHaveBeenCalledWith('set-1', [1], AT, 'DELETE', ['uid=old,ou=people,dc=hr'],
+        false)
+      // Nothing beneath, so no choice to make about it.
       expect(success).toHaveBeenCalledWith('Delete finished: 1 deleted')
       expect(w.emitted('changed')).toHaveLength(1)
       expect(w.find('[data-testid="delete-preview"]').exists()).toBe(false)
+    })
+
+    it('shows the entries beneath an orphan and deletes them only when the operator ticks the choice', async () => {
+      vi.mocked(syncApi.previewOrphanDelete).mockResolvedValue({ data: { items: [
+        { seq: 1, action: 'DELETE', targetDn: 'uid=old,ou=people,dc=hr', reason: null, beneath: 2 },
+      ] } } as never)
+      const w = mountPanel({ canManage: true })
+      await flushPromises()
+      const open = async () => {
+        await selectRow(w, 1)
+        await btn(w, 'Delete (1)').trigger('click')
+        await flushPromises()
+      }
+      await open()
+      expect(w.find('[data-testid="delete-beneath-count"]').text()).toContain('2 entries beneath it')
+      expect(w.find('[data-testid="delete-beneath"]').text()).toContain('2 in all')
+      const toggle = w.find<HTMLInputElement>('[data-testid="delete-beneath-toggle"]')
+      expect(toggle.element.checked).toBe(false) // never pre-ticked
+
+      await toggle.setValue(true)
+      await w.find('#drift-delete-confirm').setValue('DELETE')
+      await btn(w, 'Delete 1').trigger('click')
+      await flushPromises()
+      expect(syncApi.deleteOrphans).toHaveBeenLastCalledWith('set-1', [1], AT, 'DELETE', ['uid=old,ou=people,dc=hr'],
+        true)
     })
 
     it('warns with the reason when an orphan was left alone at delete time', async () => {

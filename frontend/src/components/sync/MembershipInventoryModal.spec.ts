@@ -87,10 +87,10 @@ function withRow(over: Partial<typeof membership>) {
     .mockResolvedValue(page([{ ...membership, ...over }]))
 }
 
-function open() {
+function open(initialState?: 'REVIEW' | 'FAILED') {
   return mount(MembershipInventoryModal, {
     attachTo: document.body,
-    props: { show: true, set, sourceName: 'Source', targetName: 'Target' },
+    props: { show: true, set, sourceName: 'Source', targetName: 'Target', initialState },
   })
 }
 const byText = (t: string) =>
@@ -156,6 +156,16 @@ describe('MembershipInventoryModal', () => {
     expect(txt).not.toContain('Applied')
     expect(txt).toContain('Failed')
     expect(txt).toContain('Membership inventory — people')
+    wrapper.unmount()
+  })
+
+  it('shows the set\'s link (source → target) at title size in blue', async () => {
+    const wrapper = open()
+    await flushPromises()
+    const link = document.querySelector('[data-testid="sync-link-name"]')!
+    expect(link.textContent).toBe('Source → Target')
+    expect(link.className).toContain('text-lg')
+    expect(link.className).toContain('text-blue-600')
     wrapper.unmount()
   })
 
@@ -252,7 +262,7 @@ describe('MembershipInventoryModal', () => {
 
   it('offers Delete target only for selected held deletes and approves them after a danger confirm', async () => {
     withRows({ state: 'FAILED', reviewKind: null }, { reviewKind: 'PENDING_DELETE' })
-    const wrapper = open()
+    const wrapper = open('REVIEW')
     await flushPromises()
     await selectRow('1111')
     expect(byText('Delete target')).toBeUndefined()
@@ -265,7 +275,67 @@ describe('MembershipInventoryModal', () => {
       message: expect.stringContaining('The other 1 selected row isn\'t a held delete and is left alone.'),
     }))
     expect(syncApi.approveDelete).toHaveBeenCalledTimes(1)
-    expect(syncApi.approveDelete).toHaveBeenCalledWith('set-1', '2222')
+    expect(syncApi.approveDelete).toHaveBeenCalledWith('set-1', '2222', false)
+    wrapper.unmount()
+  })
+
+  it('does not offer the delete actions under All, even for a selected held delete', async () => {
+    withRow({ reviewKind: 'PENDING_DELETE' })
+    const wrapper = open()
+    await flushPromises()
+    await selectRow('1111')
+    expect(byText('Delete target')).toBeUndefined()
+    expect(byText('Delete with entries beneath')).toBeUndefined()
+    // Stop tracking is still there: only the deletes need the review list.
+    expect(byText('Stop tracking')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('deletes a held delete with the entries beneath it only when that action is chosen', async () => {
+    withRow({ reviewKind: 'PENDING_DELETE' })
+    vi.mocked(syncApi.approveDelete).mockResolvedValueOnce({ data: {
+      outcome: 'DELETE', targetDirectoryId: 'd', targetDn: 'uid=a', message: null,
+      beneath: ['cn=pwd,cn=policies,uid=a', 'cn=policies,uid=a'],
+    } } as never)
+    const wrapper = open('REVIEW')
+    await flushPromises()
+    const info = vi.spyOn(useNotificationStore(), 'info')
+    await selectRow('1111')
+    byExactText('Delete with entries beneath (1)')!.click()
+    await flushPromises()
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({
+      danger: true, confirmLabel: 'Delete entry and beneath',
+      message: expect.stringContaining('Entries a sync set manages are never deleted this way'),
+    }))
+    expect(syncApi.approveDelete).toHaveBeenCalledWith('set-1', '1111', true)
+    expect(info).toHaveBeenCalledWith('Deleted 2 entries beneath the target entry.')
+    wrapper.unmount()
+  })
+
+  it('on the Failed list, offers Delete with entries beneath only for deletes blocked by entries beneath', async () => {
+    withRows(
+      { state: 'FAILED', reviewKind: null, failReason: 'add failed: 65' },
+      { state: 'FAILED', reviewKind: null,
+        failReason: 'delete failed: NOT_ALLOWED_ON_NONLEAF — it has entries beneath it on the target that no sync set manages' },
+      // A delete with its entries beneath that stopped part-way can be retried the same way.
+      { state: 'FAILED', reviewKind: null, failReason: 'delete with entries beneath failed — couldn\'t delete cn=x' },
+    )
+    const wrapper = open('FAILED')
+    await flushPromises()
+    await selectRow('1111')
+    expect(byText('Delete with entries beneath')).toBeUndefined()
+    expect(byText('Delete target')).toBeUndefined()
+
+    await selectRow('2222')
+    await selectRow('3333')
+    byExactText('Delete with entries beneath (2)')!.click()
+    await flushPromises()
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('The other 1 selected row isn\'t a delete that failed and is left alone.'),
+    }))
+    expect(syncApi.approveDelete).toHaveBeenCalledTimes(2)
+    expect(syncApi.approveDelete).toHaveBeenCalledWith('set-1', '2222', true)
+    expect(syncApi.approveDelete).toHaveBeenCalledWith('set-1', '3333', true)
     wrapper.unmount()
   })
 
@@ -274,7 +344,7 @@ describe('MembershipInventoryModal', () => {
       { identity: 'p', reviewKind: 'PENDING_DELETE', targetDn: 'ou=team,ou=Users,dc=dst' },
       { identity: 'c', reviewKind: 'PENDING_DELETE', targetDn: 'uid=a,ou=team,ou=Users,dc=dst' },
     )
-    const wrapper = open()
+    const wrapper = open('REVIEW')
     await flushPromises()
     await selectAll()
     byExactText('Delete target (2)')!.click()
@@ -289,7 +359,7 @@ describe('MembershipInventoryModal', () => {
       .mockResolvedValueOnce({ data: { outcome: 'DELETE', targetDirectoryId: 'd', targetDn: 'uid=a', message: null } } as never)
       .mockResolvedValueOnce({ data: { outcome: 'FORGET', targetDirectoryId: 'd', targetDn: 'uid=b', message: null } } as never)
       .mockResolvedValueOnce({ data: { outcome: 'ERROR', targetDirectoryId: 'd', targetDn: 'uid=c', message: 'busy' } } as never)
-    const wrapper = open()
+    const wrapper = open('REVIEW')
     await flushPromises()
     const notif = useNotificationStore()
     const success = vi.spyOn(notif, 'success')
@@ -308,10 +378,50 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
+  it('shows how far a multi-row delete has got, and Stop leaves the rows not reached yet', async () => {
+    withRows(
+      { reviewKind: 'PENDING_DELETE', targetDn: 'uid=a,dc=dst' },
+      { reviewKind: 'PENDING_DELETE', targetDn: 'uid=b,dc=dst' },
+      { reviewKind: 'PENDING_DELETE', targetDn: 'uid=c,dc=dst' },
+    )
+    // Hold each delete open so the test can look at the progress in between.
+    const pending: Array<() => void> = []
+    vi.mocked(syncApi.approveDelete).mockImplementation((_s, _id) => new Promise((resolve) => {
+      pending.push(() => resolve({ data: {
+        outcome: 'DELETE', targetDirectoryId: 'd', targetDn: 'x', message: null, beneath: [],
+      } } as never))
+    }))
+    const wrapper = open('REVIEW')
+    await flushPromises()
+    const info = vi.spyOn(useNotificationStore(), 'info')
+    await selectAll()
+    byExactText('Delete target (3)')!.click()
+    await flushPromises()
+
+    const status = () => document.querySelector('[role="status"]')?.textContent ?? ''
+    expect(status()).toContain('Deleting target entries: 0 of 3')
+    expect(status()).toContain('uid=a,dc=dst')
+    pending.shift()!()
+    await flushPromises()
+    expect(status()).toContain('Deleting target entries: 1 of 3')
+    expect(status()).toContain('uid=b,dc=dst')
+    expect(document.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow')).toBe('1')
+
+    // Stop: the row in flight finishes, the last one is never sent.
+    document.querySelector<HTMLButtonElement>('[data-testid="bulk-stop"]')!.click()
+    await flushPromises()
+    pending.shift()!()
+    await flushPromises()
+    expect(syncApi.approveDelete).toHaveBeenCalledTimes(2)
+    expect(info).toHaveBeenCalledWith('Stopped after 2 of 3; the other row was left as it is.')
+    expect(document.querySelector('[data-testid="bulk-stop"]')).toBeNull()
+    wrapper.unmount()
+  })
+
   it('does not delete when the confirm is cancelled', async () => {
     withRow({ reviewKind: 'PENDING_DELETE' })
     confirmMock.mockResolvedValueOnce(false)
-    const wrapper = open()
+    const wrapper = open('REVIEW')
     await flushPromises()
     await selectRow('1111')
     byText('Delete target')!.click()

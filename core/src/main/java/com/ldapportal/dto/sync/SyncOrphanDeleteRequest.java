@@ -14,15 +14,24 @@ import java.util.List;
  * them from, and {@code targetDns} their stored target DNs (see
  * {@link SyncDriftRepairRequest}). {@code confirm} must be
  * exactly {@code DELETE} to delete (the dialog's typed confirmation); the
- * preview ignores it.
+ * preview ignores it. {@code includeBeneath} deletes the entries beneath each
+ * chosen orphan too (never ones a sync set manages); off unless the operator
+ * ticks it.
  */
 public record SyncOrphanDeleteRequest(@NotEmpty @Size(max = 200) List<Integer> seqs,
                                       @NotNull OffsetDateTime verifiedAt, String confirm,
-                                      @Size(max = 200) List<String> targetDns) {
+                                      @Size(max = 200) List<String> targetDns,
+                                      boolean includeBeneath) {
 
     /** Without target DNs (see {@link SyncDriftRepairRequest}). */
     public SyncOrphanDeleteRequest(List<Integer> seqs, OffsetDateTime verifiedAt, String confirm) {
-        this(seqs, verifiedAt, confirm, null);
+        this(seqs, verifiedAt, confirm, null, false);
+    }
+
+    /** Leaf-only: the entries beneath each orphan are kept. */
+    public SyncOrphanDeleteRequest(List<Integer> seqs, OffsetDateTime verifiedAt, String confirm,
+                                   List<String> targetDns) {
+        this(seqs, verifiedAt, confirm, targetDns, false);
     }
 
     /** The word an operator types to confirm a delete. */

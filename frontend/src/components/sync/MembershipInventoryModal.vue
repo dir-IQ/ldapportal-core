@@ -10,7 +10,8 @@
             fill storage-key="sync-membership-inventory">
     <div class="space-y-3">
       <div class="flex items-center justify-between gap-2 flex-wrap -mt-1">
-        <p class="text-xs text-gray-500 font-mono">{{ sourceName }} → {{ targetName }}</p>
+        <!-- The link (source → target) this set belongs to: title-sized and blue so it reads at a glance. -->
+        <p class="text-lg font-medium text-blue-600" data-testid="sync-link-name">{{ sourceName }} → {{ targetName }}</p>
         <div class="flex items-center gap-2">
           <button class="btn-secondary btn-compact" :disabled="reconciling || reconcileRunning"
                   title="Sync the whole set now instead of waiting for the schedule. Skips entries whose source hasn't changed since the sync last wrote them, so it doesn't repair entries changed or deleted directly on the target"
@@ -25,8 +26,20 @@
         </div>
       </div>
 
-      <!-- Live progress of Reconcile now / Re-check target / Verify contents (and a reconcile already running). -->
-      <SyncActivityProgress v-if="progress" v-bind="progress" />
+      <!--
+        Live progress of Reconcile now / Re-check target / Verify contents (and a
+        reconcile already running), or of a bulk action on several rows, which
+        can be stopped after the row in flight.
+      -->
+      <div v-if="progress" class="flex items-start gap-3">
+        <SyncActivityProgress v-bind="progress" class="flex-1 min-w-0" />
+        <button v-if="bulkProgress" type="button" class="btn-secondary btn-compact shrink-0"
+                :disabled="bulkStopRequested" data-testid="bulk-stop"
+                title="Stop after the row in progress; the rows not reached yet are left as they are."
+                @click="bulkStopRequested = true">
+          {{ bulkStopRequested ? 'Stopping…' : 'Stop' }}
+        </button>
+      </div>
 
       <!--
         Two questions, two tabs. Reconciliation: what the sync did and what it
@@ -113,8 +126,11 @@
       <template v-else>
         <!--
           Bulk actions on the selected rows (this page only). Recompute is named
-          for what it does to the selection; Delete target only appears, and only
-          acts on, held deletes among it.
+          for what it does to the selection. The delete actions only appear while
+          a review list is showing, never under All: Delete target on the Review
+          list, for held deletes; Delete with entries beneath on the Review list
+          (held deletes) and the Failed list (deletes that failed because entries
+          are beneath the target entry). Each acts only on those rows.
         -->
         <div class="flex items-center gap-2 flex-wrap" data-testid="bulk-actions">
           <span class="text-xs text-gray-600 tabular-nums mr-1">
@@ -124,10 +140,15 @@
                   :title="recomputeAction.hint" @click="bulkRecompute">
             {{ recomputeAction.label }}<template v-if="selectedRows.length"> ({{ selectedRows.length }})</template>
           </button>
-          <button v-if="heldDeletes.length" class="btn-danger btn-compact" :disabled="bulkBusy"
+          <button v-if="reviewView && heldDeletes.length" class="btn-danger btn-compact" :disabled="bulkBusy"
                   title="The source entries left scope. Approve the held deletion of their target entries."
-                  @click="bulkApproveDelete">
+                  @click="bulkApproveDelete(false)">
             Delete target ({{ heldDeletes.length }})
+          </button>
+          <button v-if="beneathCandidates.length" class="btn-danger btn-compact" :disabled="bulkBusy"
+                  title="Delete the target entries and the entries beneath them that no sync set manages (for example ones the target directory creates itself)."
+                  @click="bulkApproveDelete(true)">
+            Delete with entries beneath ({{ beneathCandidates.length }})
           </button>
           <button class="btn-secondary btn-compact" :disabled="!selectedRows.length || bulkBusy"
                   title="Forget the portal's record of these entries; the target isn't changed. Held deletes keep their target entry, which this set then no longer manages."
@@ -261,6 +282,18 @@ const rechecking = ref(false)
 const selected = ref<Set<unknown>>(new Set())
 const selectedRows = computed<Membership[]>(() => rows.value.filter((r) => selected.value.has(r.identity)))
 const heldDeletes = computed<Membership[]>(() => selectedRows.value.filter(isHeldDelete))
+/** Delete target is offered only while the Review list is showing, never under All. */
+const reviewView = computed<boolean>(() => stateFilter.value === 'REVIEW')
+/**
+ * Selected rows a delete-with-entries-beneath applies to: held deletes on the
+ * Review list, and deletes that failed because of entries beneath the target
+ * entry on the Failed list.
+ */
+const beneathCandidates = computed<Membership[]>(() => {
+  if (reviewView.value) return heldDeletes.value
+  if (stateFilter.value === 'FAILED') return selectedRows.value.filter(isNonLeafDeleteFailure)
+  return []
+})
 /** A bulk action is sending its requests. */
 const bulkBusy = ref(false)
 
@@ -270,6 +303,22 @@ const ROW_POLL_MS = 2_000
 // The latest recompute watch: a newer one, or closing the inventory, ends the older one.
 let batchSeq = 0
 let unmounted = false
+
+/** A bulk action's rows run so far (it can be stopped part-way), and those that failed. */
+interface BulkRun {
+  failures: { row: Membership; error: string }[]
+  done: Membership[]
+}
+/** Progress of a bulk action on several rows, sent one request at a time; null when none is running. */
+const bulkProgress = ref<{
+  label: string
+  processed: number
+  total: number
+  currentDn: string | null
+  startedAt: string
+} | null>(null)
+/** The operator asked a running bulk action to stop after the row in flight. */
+const bulkStopRequested = ref(false)
 const verifying = ref(false)
 const verifyResult = ref<SyncVerifyResult | null>(null)
 
@@ -652,6 +701,13 @@ const RECONCILE_HINT = 'A large group can take a while on its own: each member i
 
 /** What the progress line shows now, or null when nothing is running. */
 const progress = computed(() => {
+  const b = bulkProgress.value
+  if (b) {
+    return {
+      heading: `${b.label}: ${b.processed} of ${b.total}…`, processed: b.processed, total: b.total,
+      currentDn: b.currentDn, currentLabel: 'Now on', startedAt: b.startedAt,
+    }
+  }
   const a = activity.value
   const asOf = a?.asOf ?? null
   const v = a?.verify
@@ -722,6 +778,17 @@ onBeforeUnmount(() => {
 })
 // ── Bulk actions on the selected rows ───────────────────────────────────────
 
+/**
+ * How the engine words a delete blocked by entries beneath the target entry, and one
+ * that stopped part-way while deleting them (FAILED rows' reasons).
+ */
+const BENEATH_FAILURE_PREFIXES = ['delete failed: NOT_ALLOWED_ON_NONLEAF', 'delete with entries beneath failed']
+
+/** A row whose delete is blocked by entries beneath the target entry: an operator can delete it with them. */
+function isNonLeafDeleteFailure(row: Membership): boolean {
+  return row.state === 'FAILED' && BENEATH_FAILURE_PREFIXES.some(p => !!row.failReason?.startsWith(p))
+}
+
 function isHeldDelete(row: Membership): boolean {
   return row.state === 'REVIEW' && row.reviewKind === 'PENDING_DELETE'
 }
@@ -772,19 +839,41 @@ const recomputeAction = computed<NamedAction>(() => {
  * doesn't flood the server). A row fails when `fn` throws or returns a message.
  */
 async function eachRow(
-  list: Membership[], fn: (row: Membership) => Promise<string | void>,
-): Promise<{ row: Membership; error: string }[]> {
+  list: Membership[], fn: (row: Membership) => Promise<string | void>, label: string,
+): Promise<BulkRun> {
   const failures: { row: Membership; error: string }[] = []
-  for (const row of list) {
-    if (unmounted) break
-    try {
-      const error = await fn(row)
-      if (error) failures.push({ row, error })
-    } catch (e) {
-      failures.push({ row, error: errMsg(e) })
+  const done: Membership[] = []
+  bulkStopRequested.value = false
+  // Several rows take a while one request at a time: show how far it's got.
+  if (list.length > 1) {
+    bulkProgress.value = {
+      label, processed: 0, total: list.length, currentDn: null, startedAt: new Date().toISOString(),
     }
   }
-  return failures
+  try {
+    for (const row of list) {
+      if (unmounted || bulkStopRequested.value) break
+      if (bulkProgress.value) bulkProgress.value.currentDn = row.targetDn || row.sourceDn || row.identity
+      try {
+        const error = await fn(row)
+        if (error) failures.push({ row, error })
+      } catch (e) {
+        failures.push({ row, error: errMsg(e) })
+      }
+      done.push(row)
+      if (bulkProgress.value) bulkProgress.value.processed = done.length
+    }
+  } finally {
+    bulkProgress.value = null
+  }
+  const stopped = done.length < list.length && !unmounted
+  if (stopped) {
+    const left = list.length - done.length
+    notif.info(`Stopped after ${done.length} of ${list.length}; `
+      + (left === 1 ? 'the other row was left as it is.' : `the other ${left} rows were left as they are.`))
+  }
+  bulkStopRequested.value = false
+  return { failures, done }
 }
 
 /** "2 of 5 …: <first reason>" for the rows a bulk action couldn't do. */
@@ -803,14 +892,15 @@ async function bulkRecompute() {
   if (!setId || !batch.length) return
   const { label } = recomputeAction.value
   bulkBusy.value = true
-  let failures: { row: Membership; error: string }[]
+  let run: BulkRun
   try {
-    failures = await eachRow(batch, async (row) => { await recomputeKey(setId, row.identity) })
+    run = await eachRow(batch, async (row) => { await recomputeKey(setId, row.identity) }, `Queuing: ${label}`)
   } finally {
     bulkBusy.value = false
   }
-  if (failures.length) notif.error(failureMessage(`couldn't be queued (${label})`, failures, batch.length))
-  const queued = batch.filter((r) => !failures.some((f) => f.row === r))
+  const { failures, done } = run
+  if (failures.length) notif.error(failureMessage(`couldn't be queued (${label})`, failures, done.length))
+  const queued = done.filter((r) => !failures.some((f) => f.row === r))
   if (!queued.length) return
   selected.value = new Set()
   notif.success(queued.length === 1
@@ -915,37 +1005,56 @@ function unchangedMessage(row: Membership, label: string): string {
     + `${stateLabel(row.state)}. If a reconcile is running, the recompute may still be queued behind it.`
 }
 
-/** Approve the held deletes among the selection: deletes their target entries now. */
-async function bulkApproveDelete() {
+/**
+ * Approve the held deletes among the selection: deletes their target entries now.
+ * With `includeBeneath` (the operator's explicit choice) the entries beneath each
+ * target entry go too, never ones a sync set manages; this also finishes deletes
+ * that failed because of those entries.
+ */
+async function bulkApproveDelete(includeBeneath: boolean) {
   const setId = props.set?.id
   // Deepest first: a selected parent's delete would fail while its selected children are still there.
-  const batch = deepestFirst(heldDeletes.value, (r) => r.targetDn)
+  const batch = deepestFirst(includeBeneath ? beneathCandidates.value : heldDeletes.value, (r) => r.targetDn)
   if (!setId || !batch.length) return
   const n = batch.length
   const others = selectedRows.value.length - n
+  const kind = includeBeneath && !reviewView.value ? 'delete that failed' : 'held delete'
+  const beneathNote = includeBeneath
+    ? ` Everything beneath ${n === 1 ? 'it' : 'them'} on the target that no sync set manages is deleted too, `
+      + 'such as entries the target directory creates itself. Entries a sync set manages are never deleted '
+      + 'this way: a delete with one beneath it is refused and nothing of it is deleted.'
+    : ''
   const ok = await confirm({
-    title: n === 1 ? 'Delete target entry?' : `Delete ${n} target entries?`,
+    title: (n === 1 ? 'Delete target entry' : `Delete ${n} target entries`)
+      + (includeBeneath ? ' and the entries beneath?' : '?'),
     message: (n === 1
       ? `This deletes ${batch[0].targetDn} from ${props.targetName} now. The source entry has left this `
-        + "set's scope, and this approves the held deletion. It can't be undone."
+        + "set's scope, and this approves the deletion."
       : `This deletes ${n} entries from ${props.targetName} now. Their source entries have left this `
-        + "set's scope, and this approves the held deletions. It can't be undone.")
-      + (others ? ` The other ${others} selected ${others === 1 ? 'row isn\'t a held delete and is'
-        : 'rows aren\'t held deletes and are'} left alone.` : ''),
-    confirmLabel: n === 1 ? 'Delete entry' : `Delete ${n} entries`,
+        + "set's scope, and this approves the deletions.")
+      + beneathNote + " It can't be undone."
+      + (others ? ` The other ${others} selected ${others === 1 ? `row isn't a ${kind} and is`
+        : `rows aren't ${kind}s and are`} left alone.` : ''),
+    confirmLabel: (n === 1 ? 'Delete entry' : `Delete ${n} entries`) + (includeBeneath ? ' and beneath' : ''),
     danger: true,
   })
   if (!ok) return
   bulkBusy.value = true
   const deleted: string[] = []
   const kept: string[] = []
+  let beneathDeleted = 0
   try {
-    const failures = await eachRow(batch, async (row) => {
-      const { data } = await approveDelete(setId, row.identity)
+    const { failures, done } = await eachRow(batch, async (row) => {
+      const { data } = await approveDelete(setId, row.identity, includeBeneath)
+      beneathDeleted += data.beneath?.length ?? 0
       if (data.outcome === 'DELETE') deleted.push(data.targetDn)
       else if (data.outcome === 'FORGET') kept.push(data.targetDn)
       else return data.message || 'The deletion failed'
-    })
+    }, includeBeneath ? 'Deleting target entries and the entries beneath' : 'Deleting target entries')
+    if (beneathDeleted) {
+      notif.info(`Deleted ${beneathDeleted} ${beneathDeleted === 1 ? 'entry' : 'entries'} beneath the target `
+        + `${n === 1 ? 'entry' : 'entries'}.`)
+    }
     if (n === 1) {
       if (deleted.length) notif.success(`Deleted ${deleted[0]}`)
       if (kept.length) notif.success(`Kept ${kept[0]}: another sync identity owns it. Only this row was removed.`)
@@ -955,7 +1064,7 @@ async function bulkApproveDelete() {
         notif.success(`Deleted ${deleted.length} target ${deleted.length === 1 ? 'entry' : 'entries'}`
           + (kept.length ? `; kept ${kept.length} that another sync identity owns (only their rows were removed)` : ''))
       }
-      if (failures.length) notif.error(failureMessage('deletions failed', failures, n))
+      if (failures.length) notif.error(failureMessage('deletions failed', failures, done.length))
     }
     selected.value = new Set()
     await load()
@@ -988,10 +1097,13 @@ async function bulkStopTracking() {
   if (!ok) return
   bulkBusy.value = true
   try {
-    const failures = await eachRow(batch, async (row) => { await dismissMembership(setId, row.identity) })
-    const done = n - failures.length
-    if (done) notif.success(n === 1 ? 'Stopped tracking the entry' : `Stopped tracking ${done} entries`)
-    if (failures.length) notif.error(n === 1 ? failures[0].error : failureMessage('couldn\'t be dismissed', failures, n))
+    const { failures, done } = await eachRow(batch, async (row) => { await dismissMembership(setId, row.identity) },
+      'Stopping tracking')
+    const dismissed = done.length - failures.length
+    if (dismissed) notif.success(n === 1 ? 'Stopped tracking the entry' : `Stopped tracking ${dismissed} entries`)
+    if (failures.length) {
+      notif.error(n === 1 ? failures[0].error : failureMessage('couldn\'t be dismissed', failures, done.length))
+    }
     selected.value = new Set()
     await load()
     emit('changed')

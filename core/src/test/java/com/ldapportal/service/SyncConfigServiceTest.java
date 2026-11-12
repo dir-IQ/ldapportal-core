@@ -575,7 +575,7 @@ class SyncConfigServiceTest {
         when(setRepo.findById(setId)).thenReturn(Optional.of(verifiedSet()));
         assertThatThrownBy(() -> service.deleteOrphans(setId, List.of(1), AT, "yes", null))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Type DELETE");
-        verify(engine, never()).orphanDelete(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(engine, never()).orphanDelete(any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     @Test
@@ -591,14 +591,14 @@ class SyncConfigServiceTest {
                 driftRow(0, O, "ghost"), driftRow(1, O, "gone"), driftRow(2, O, "kids"), driftRow(3, O, "kept"),
                 driftRow(4, com.ldapportal.entity.enums.SyncDriftCategory.MISSING, "new")));
         UUID dir = UUID.randomUUID();
-        when(engine.orphanDelete(setId, "uid=ghost,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+        when(engine.orphanDelete(setId, "uid=ghost,dc=dst", true, false)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
                 com.ldapportal.dto.sync.SyncPreviewAction.DELETE, dir, "uid=ghost,dc=dst", null));
-        when(engine.orphanDelete(setId, "uid=gone,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+        when(engine.orphanDelete(setId, "uid=gone,dc=dst", true, false)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
                 com.ldapportal.dto.sync.SyncPreviewAction.UNCHANGED, dir, "uid=gone,dc=dst",
                 "Any wording: the flag, not the message, marks it gone.", true));
-        when(engine.orphanDelete(setId, "uid=kids,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+        when(engine.orphanDelete(setId, "uid=kids,dc=dst", true, false)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
                 com.ldapportal.dto.sync.SyncPreviewAction.ERROR, dir, "uid=kids,dc=dst", "delete failed: NOT_ALLOWED_ON_NONLEAF"));
-        when(engine.orphanDelete(setId, "uid=kept,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+        when(engine.orphanDelete(setId, "uid=kept,dc=dst", true, false)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
                 com.ldapportal.dto.sync.SyncPreviewAction.UNCHANGED, dir, "uid=kept,dc=dst", "This set now manages it."));
         var principal = new com.ldapportal.auth.AuthPrincipal(com.ldapportal.auth.PrincipalType.SUPERADMIN,
                 UUID.randomUUID(), "ops");
@@ -609,7 +609,7 @@ class SyncConfigServiceTest {
         assertThat(r.failed()).isEqualTo(1);
         assertThat(r.skipped()).isEqualTo(3);
         assertThat(r.items().get(4).message()).contains("Only orphaned entries");
-        verify(engine, never()).orphanDelete(eq(setId), eq("uid=new,dc=dst"), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(engine, never()).orphanDelete(eq(setId), eq("uid=new,dc=dst"), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyBoolean());
         verify(auditService).record(eq(principal), eq(dir), eq(com.ldapportal.entity.enums.AuditAction.ENTRY_DELETE),
                 eq("uid=ghost,dc=dst"), org.mockito.ArgumentMatchers.argThat(
                         d -> "orphan-delete".equals(((java.util.Map<?, ?>) d).get("operation"))));
@@ -637,7 +637,7 @@ class SyncConfigServiceTest {
         assertThatThrownBy(() -> service.previewOrphanDelete(setId, List.of(1),
                 AT.withOffsetSameInstant(java.time.ZoneOffset.ofHours(2))))
                 .hasMessageContaining("no longer stored");
-        verify(engine, never()).orphanDelete(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(engine, never()).orphanDelete(any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyBoolean());
         verify(verifier, never()).recheck(any(), any());
     }
 
@@ -696,7 +696,7 @@ class SyncConfigServiceTest {
         when(driftStore.byTargetDn(eq(setId), any())).thenReturn(List.of(
                 driftRow(9, com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, "ghost")));
         UUID dir = UUID.randomUUID();
-        when(engine.orphanDelete(setId, "uid=ghost,dc=dst", true)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+        when(engine.orphanDelete(setId, "uid=ghost,dc=dst", true, false)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
                 com.ldapportal.dto.sync.SyncPreviewAction.DELETE, dir, "uid=ghost,dc=dst", null));
 
         var r = service.deleteOrphans(setId, List.of(2, 3), AT.minusMinutes(5),
@@ -706,7 +706,7 @@ class SyncConfigServiceTest {
         assertThat(r.items()).extracting(i -> i.seq() + ":" + i.outcome())
                 .containsExactly("2:DELETED", "3:SKIPPED");
         assertThat(r.items().get(1).message()).isEqualTo(SyncConfigService.NO_LONGER_LISTED);
-        verify(engine, never()).orphanDelete(eq(setId), eq("uid=fixed,dc=dst"), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(engine, never()).orphanDelete(eq(setId), eq("uid=fixed,dc=dst"), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     @Test
@@ -715,13 +715,13 @@ class SyncConfigServiceTest {
         when(setRepo.findById(setId)).thenReturn(Optional.of(verifiedSet()));
         when(driftStore.bySeq(eq(setId), any())).thenReturn(List.of(
                 driftRow(0, com.ldapportal.entity.enums.SyncDriftCategory.ORPHAN, "ghost")));
-        when(engine.orphanDelete(setId, "uid=ghost,dc=dst", false)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
+        when(engine.orphanDelete(setId, "uid=ghost,dc=dst", false, false)).thenReturn(new com.ldapportal.dto.sync.SyncDeleteApproval(
                 com.ldapportal.dto.sync.SyncPreviewAction.DELETE, null, "uid=ghost,dc=dst", null));
 
         var items = service.previewOrphanDelete(setId, List.of(0), AT).items();
 
         assertThat(items).singleElement().satisfies(i -> assertThat(i.action().name()).isEqualTo("DELETE"));
-        verify(engine, never()).orphanDelete(setId, "uid=ghost,dc=dst", true);
+        verify(engine, never()).orphanDelete(setId, "uid=ghost,dc=dst", true, false);
     }
 
     @Test
@@ -1144,7 +1144,7 @@ class SyncConfigServiceTest {
         when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
         stubDirectoryName(sourceDir, "HR LDAP");
         stubDirectoryName(targetDir, "Corp AD");
-        when(engine.approveDelete(setId, "id-1")).thenReturn(new SyncDeleteApproval(
+        when(engine.approveDelete(setId, "id-1", false)).thenReturn(new SyncDeleteApproval(
                 SyncPreviewAction.DELETE, targetDir, "uid=a,dc=dst", null));
 
         SyncDeleteApproval result = service.approveDelete(setId, "id-1", admin);
@@ -1157,11 +1157,54 @@ class SyncConfigServiceTest {
     }
 
     @Test
+    void approveDelete_includeBeneath_auditsEachEntryDeletedBeneath_evenWhenTheEntryItselfFails() {
+        UUID setId = UUID.randomUUID();
+        UUID targetDir = UUID.randomUUID();
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(engine.approveDelete(setId, "id-1", true)).thenReturn(new SyncDeleteApproval(
+                SyncPreviewAction.ERROR, targetDir, "uid=a,dc=dst", "delete with entries beneath failed — ...",
+                false, List.of("cn=pwd,cn=policies,uid=a,dc=dst", "cn=policies,uid=a,dc=dst")));
+
+        service.approveDelete(setId, "id-1", true, admin);
+
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> detail =
+                org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).record(eq(admin), eq(targetDir), eq(AuditAction.ENTRY_DELETE),
+                eq("cn=pwd,cn=policies,uid=a,dc=dst"), detail.capture());
+        assertThat(detail.getValue()).containsEntry("beneath", "uid=a,dc=dst")
+                .containsEntry("operation", "approved-review-delete");
+        verify(auditService).record(eq(admin), eq(targetDir), eq(AuditAction.ENTRY_DELETE),
+                eq("cn=policies,uid=a,dc=dst"), any());
+        // The entry itself wasn't deleted, so it isn't audited.
+        verify(auditService, never()).record(any(), any(), any(), eq("uid=a,dc=dst"), any());
+    }
+
+    @Test
+    void approveDelete_includeBeneath_countsTheEntriesBeneathOnTheEntrysOwnRecord() {
+        UUID setId = UUID.randomUUID();
+        UUID targetDir = UUID.randomUUID();
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(engine.approveDelete(setId, "id-1", true)).thenReturn(new SyncDeleteApproval(
+                SyncPreviewAction.DELETE, targetDir, "uid=a,dc=dst", null, false,
+                List.of("cn=policies,uid=a,dc=dst")));
+
+        service.approveDelete(setId, "id-1", true, admin);
+
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> detail =
+                org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).record(eq(admin), eq(targetDir), eq(AuditAction.ENTRY_DELETE), eq("uid=a,dc=dst"),
+                detail.capture());
+        assertThat(detail.getValue()).containsEntry("deletedBeneath", 1).containsEntry("identity", "id-1");
+    }
+
+    @Test
     void approveDelete_doesNotAudit_whenNothingWasDeleted() {
         UUID setId = UUID.randomUUID();
         AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
         when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
-        when(engine.approveDelete(setId, "id-1")).thenReturn(new SyncDeleteApproval(
+        when(engine.approveDelete(setId, "id-1", false)).thenReturn(new SyncDeleteApproval(
                 SyncPreviewAction.ERROR, UUID.randomUUID(), "uid=a,dc=dst", "delete failed: 50"));
 
         service.approveDelete(setId, "id-1", admin);
