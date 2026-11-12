@@ -1,25 +1,46 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getDirectory } from '@/api/directories'
 import { getEntraSyncStatus, triggerEntraSync, listEntraUsers, listEntraGroups } from '@/api/entra'
 import { useNotificationStore } from '@/stores/notifications'
 import DataTable from '@/components/DataTable.vue'
+import { formatDateTime } from '@/utils/dateTime'
+
+interface EntraSyncStatus {
+  lastFullSync?: string | null
+  auditLastPoll?: string | null
+  userCount?: number
+  groupCount?: number
+}
+interface EntraUser {
+  objectId: string
+  displayName?: string
+  userPrincipalName?: string
+  mail?: string
+  accountEnabled?: boolean
+}
+interface EntraGroup {
+  objectId: string
+  displayName?: string
+  description?: string
+  memberCount?: number
+}
 
 const route = useRoute()
 const router = useRouter()
 const notif = useNotificationStore()
-const directoryId = route.params.directoryId
+const directoryId = route.params.directoryId as string
 
-const directory = ref(null)
-const tab = ref('users')
-const loading = ref(true)
-const syncing = ref(false)
-const syncStatus = ref(null)
-const users = ref([])
-const groups = ref([])
-const search = ref('')
+const directory = ref<{ displayName?: string } | null>(null)
+const tab = ref<'users' | 'groups'>('users')
+const loading = ref<boolean>(true)
+const syncing = ref<boolean>(false)
+const syncStatus = ref<EntraSyncStatus | null>(null)
+const users = ref<EntraUser[]>([])
+const groups = ref<EntraGroup[]>([])
+const search = ref<string>('')
 
 const userCols = [
   { key: 'displayName', label: 'Name' },
@@ -51,9 +72,13 @@ const filteredGroups = computed(() => {
     (g.description || '').toLowerCase().includes(q))
 })
 
-function fmtDateTime(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString()
+function fmtDateTime(iso: string | null | undefined): string {
+  return formatDateTime(iso, { fallback: '—' })
+}
+
+function errMessage(e: unknown): string {
+  const err = e as { response?: { data?: { detail?: string } }, message?: string }
+  return err.response?.data?.detail || err.message || 'Request failed'
 }
 
 async function loadData() {
@@ -64,31 +89,31 @@ async function loadData() {
       getEntraSyncStatus(directoryId),
     ])
     directory.value = dirRes.data
-    syncStatus.value = statusRes.data
+    syncStatus.value = statusRes.data as EntraSyncStatus
 
-    if (statusRes.data.userCount > 0 || statusRes.data.groupCount > 0) {
+    if ((statusRes.data.userCount ?? 0) > 0 || (statusRes.data.groupCount ?? 0) > 0) {
       const [usersRes, groupsRes] = await Promise.all([
         listEntraUsers(directoryId),
         listEntraGroups(directoryId),
       ])
-      users.value = usersRes.data
-      groups.value = groupsRes.data
+      users.value = usersRes.data as EntraUser[]
+      groups.value = groupsRes.data as EntraGroup[]
     }
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMessage(e))
   } finally {
     loading.value = false
   }
 }
 
-async function doSync(full) {
+async function doSync(full: boolean) {
   syncing.value = true
   try {
     const { data } = await triggerEntraSync(directoryId, full)
     notif.success(`Sync complete: ${data.usersSynced} users, ${data.groupsSynced} groups, ${data.auditEvents} events`)
     await loadData()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMessage(e))
   } finally {
     syncing.value = false
   }

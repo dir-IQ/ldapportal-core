@@ -126,6 +126,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { formatDateTime } from '@/utils/dateTime'
 import AppModal from '@/components/AppModal.vue'
 import DataTable from '@/components/DataTable.vue'
 import {
@@ -182,7 +183,7 @@ const complete = computed<boolean>(() => run.value?.status === 'COMPLETE')
 const rows = computed<SyncPreviewEntry[]>(() => result.value?.entries ?? [])
 const computedAt = computed<string>(() => {
   const at = run.value?.finishedAt
-  return at ? new Date(at).toLocaleString() : ''
+  return formatDateTime(at)
 })
 
 // Elapsed time and "last update" are aged on the server's clock: the offset

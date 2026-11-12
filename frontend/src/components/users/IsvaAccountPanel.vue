@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { formatDateTime } from '@/utils/dateTime'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notifications'
 import { IVIA_ABBR } from '@/constants/productNames'
@@ -380,26 +381,16 @@ function lifecycleDot(e: AuditEvent): string {
 }
 
 function formatTime(s: string): string {
-  // Render in the browser's local zone but make zone explicit. The
-  // audit endpoint returns ISO-8601 with offset.
-  try {
-    const d = new Date(s)
-    return d.toLocaleString(undefined, {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit',
-    })
-  } catch {
-    return s
-  }
+  // The audit endpoint returns ISO-8601 with offset; show it in the
+  // operator's local zone with the zone label.
+  return formatDateTime(s, { seconds: false, fallback: s })
 }
 
 function formatDate(s: string | null): string {
+  // validUntil is set to local end-of-day (see renew above), so render the
+  // instant locally — a UTC calendar slice could show the next day.
   if (!s) return '—'
-  try {
-    return new Date(s).toISOString().slice(0, 10)
-  } catch {
-    return s
-  }
+  return formatDateTime(s, { seconds: false, fallback: s })
 }
 </script>
 
