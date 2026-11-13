@@ -195,4 +195,17 @@ class DirectoryDiffEngineTest {
 
         assertThat(r.category()).isEqualTo(DirectoryDiffCategory.DIFFERENT);
     }
+
+    @Test
+    void anIviaPrincipalNameRdnDifferingOnlyInCase_isTheSameEntry() throws Exception {
+        com.unboundid.ldap.sdk.schema.Schema schema = new com.unboundid.ldap.sdk.schema.Schema(new Entry("cn=schema",
+                new Attribute("attributeTypes", "( 1.3.18.0.2.4.318 NAME ( 'principalName' 'principal' ) "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )")));
+        Entry a = new Entry("principalName=John.Smith," + BASE_A, new Attribute("principalName", "John.Smith"));
+        Entry b = new Entry("principalName=john.smith," + BASE_B, new Attribute("principalName", "john.smith"));
+        DirectoryDiffEngine.Options options = new DirectoryDiffEngine.Options(DirectoryDiffPairing.DN, null,
+                DirectoryDiffEngine.compared(null, null), schema, DirectoryDiffEngine.rebase(BASE_A, BASE_B));
+
+        assertThat(DirectoryDiffEngine.comparePair(a, b, options).category()).isEqualTo(DirectoryDiffCategory.SAME);
+    }
 }

@@ -235,4 +235,27 @@ class TargetEntryDifferTest {
         assertThat(TargetEntryDiffer.diff(target,
                 List.of(new Attribute("cn", "John Smith"), new Attribute("uid", "JSmith")), Set.of())).isEmpty();
     }
+
+    /** IBM's principalName as IVIA directories define it: Directory String syntax, no EQUALITY rule. */
+    private static Schema ivaSchema() throws Exception {
+        return new Schema(new Entry("cn=schema", new Attribute("attributeTypes",
+                "( 1.3.18.0.2.4.318 NAME ( 'principalName' 'principal' ) SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )")));
+    }
+
+    @Test
+    void anIviaPrincipalNameRdnDifferingOnlyInCase_isNotAChange() throws Exception {
+        Entry target = new Entry("principalName=john.smith,cn=Users,secAuthority=Default",
+                new Attribute("principalName", "john.smith"));
+        List<Attribute> desired = List.of(new Attribute("principalName", "John.Smith"));
+
+        assertThat(TargetEntryDiffer.diff(target, desired, Set.of(), ivaSchema(), List.of())).isEmpty();
+        assertThat(TargetEntryDiffer.diff(target, desired, Set.of())).isEmpty(); // no schema read
+        // Named by the alias, written under the primary name: still the same attribute.
+        Entry byAlias = new Entry("principal=john.smith,cn=Users,secAuthority=Default",
+                new Attribute("principalName", "john.smith"));
+        assertThat(TargetEntryDiffer.diff(byAlias, desired, Set.of(), ivaSchema(), List.of())).isEmpty();
+        // A real change to it still counts.
+        assertThat(TargetEntryDiffer.diff(target, List.of(new Attribute("principalName", "jane.smith")), Set.of(),
+                ivaSchema(), List.of())).hasSize(1);
+    }
 }
