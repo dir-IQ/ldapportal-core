@@ -392,4 +392,20 @@ class SyncContentVerifierTest {
         assertThat(d.expectedOnly()).isEmpty();
         assertThat(d.actualOnly()).isEmpty();
     }
+
+    @Test
+    void attributeDiffs_treatTheRdnValueAsSharedWhateverItsCase() {
+        // cn differs for another reason (an extra value); the RDN value in a different
+        // case isn't flagged as one side's alone.
+        var desired = List.of(new Attribute("cn", "John Smith", "Johnny"));
+        Entry target = new Entry("cn=john smith,dc=t", new Attribute("cn", "john smith"));
+        var mods = List.of(new com.unboundid.ldap.sdk.Modification(
+                com.unboundid.ldap.sdk.ModificationType.REPLACE, "cn", "John Smith", "Johnny"));
+
+        var d = SyncContentVerifier.attributeDiffs(mods, desired, target).get(0);
+
+        assertThat(d.expected()).containsExactly("Johnny", "John Smith");
+        assertThat(d.expectedOnly()).containsExactly(0);
+        assertThat(d.actualOnly()).isEmpty();
+    }
 }

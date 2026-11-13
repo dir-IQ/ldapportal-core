@@ -575,8 +575,10 @@ public class SyncContentVerifier {
             Attribute haveAttr = target.getAttribute(name);
             com.unboundid.ldap.matchingrules.MatchingRule rule =
                     TargetEntryDiffer.matchingRule(Attribute.getBaseName(name), schema, dnAttrs);
-            Sided want = sided(wantAttr, haveAttr, rule);
-            Sided have = sided(haveAttr, wantAttr, rule);
+            // The value naming the entry compares as the directory matches it (see TargetEntryDiffer).
+            TargetEntryDiffer.RdnValue rdn = rule == null ? TargetEntryDiffer.RdnValue.of(target, name, schema) : null;
+            Sided want = sided(wantAttr, haveAttr, rule, rdn);
+            Sided have = sided(haveAttr, wantAttr, rule, rdn);
             boolean truncated = want.values().size() > VALUE_LIMIT || have.values().size() > VALUE_LIMIT;
             out.put(key, new SyncDriftItem.AttributeDiff(name, limit(want.values()), limit(have.values()),
                     false, truncated, onlyIndexes(want.only()), onlyIndexes(have.only())));
@@ -588,20 +590,21 @@ public class SyncContentVerifier {
     private record Sided(List<String> values, int only) {
     }
 
-    private static Sided sided(Attribute side, Attribute other, com.unboundid.ldap.matchingrules.MatchingRule rule) {
+    private static Sided sided(Attribute side, Attribute other, com.unboundid.ldap.matchingrules.MatchingRule rule,
+                               TargetEntryDiffer.RdnValue rdn) {
         if (side == null || !side.hasValue()) {
             return new Sided(List.of(), 0);
         }
         Set<String> otherKeys = new java.util.HashSet<>();
         if (other != null) {
             for (byte[] raw : other.getValueByteArrays()) {
-                otherKeys.add(valueKey(raw, rule));
+                otherKeys.add(valueKey(raw, rule, rdn));
             }
         }
         List<String> only = new ArrayList<>();
         List<String> shared = new ArrayList<>();
         for (byte[] raw : side.getValueByteArrays()) {
-            (otherKeys.contains(valueKey(raw, rule)) ? shared : only).add(display(raw));
+            (otherKeys.contains(valueKey(raw, rule, rdn)) ? shared : only).add(display(raw));
         }
         List<String> all = new ArrayList<>(only.size() + shared.size());
         all.addAll(only);
@@ -609,8 +612,15 @@ public class SyncContentVerifier {
         return new Sided(all, only.size());
     }
 
-    /** The value as the sync compares it: normalized by the rule when it has one and can, else exact. */
-    private static String valueKey(byte[] raw, com.unboundid.ldap.matchingrules.MatchingRule rule) {
+    /**
+     * The value as the sync compares it: normalized by the rule when it has one
+     * and can, the RDN value whatever its case, else exact.
+     */
+    private static String valueKey(byte[] raw, com.unboundid.ldap.matchingrules.MatchingRule rule,
+                                   TargetEntryDiffer.RdnValue rdn) {
+        if (rdn != null && rdn.matches(raw)) {
+            return "rdn";
+        }
         if (rule != null) {
             try {
                 return "n:" + rule.normalize(new com.unboundid.asn1.ASN1OctetString(raw)).stringValue();

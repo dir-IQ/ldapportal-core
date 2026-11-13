@@ -66,4 +66,36 @@ class DirectoryDiffSyncAgreementTest {
         assertThat(diffSame).as("directory diff").isEqualTo(expectedSame);
         assertThat(syncSame).as("sync engine").isEqualTo(expectedSame);
     }
+
+    /** Entry pairs: each side's own DN, so the value naming the entry is in play. */
+    static Stream<Arguments> namedCases() {
+        return Stream.of(
+                Arguments.of("rdn value, case only",
+                        new Entry("cn=John Smith,dc=x", new Attribute("cn", "John Smith")),
+                        new Entry("cn=john smith,dc=x", new Attribute("cn", "john smith")), true),
+                Arguments.of("rdn value, other value case differs",
+                        new Entry("cn=John Smith,dc=x", new Attribute("cn", "John Smith", "Johnny")),
+                        new Entry("cn=john smith,dc=x", new Attribute("cn", "john smith", "johnny")), false),
+                Arguments.of("rdn value changed",
+                        new Entry("cn=Jon Smith,dc=x", new Attribute("cn", "Jon Smith")),
+                        new Entry("cn=john smith,dc=x", new Attribute("cn", "john smith")), false),
+                Arguments.of("not the rdn attribute, case only",
+                        new Entry("uid=js,dc=x", new Attribute("cn", "John Smith")),
+                        new Entry("uid=js,dc=x", new Attribute("cn", "john smith")), false));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("namedCases")
+    void diffAndSyncAgreeOnTheValueNamingTheEntry(String name, Entry source, Entry target, boolean expectedSame) {
+        Attribute a = source.getAttribute("cn");
+        Attribute b = target.getAttribute("cn");
+        boolean diffSame = DiffValueComparison.values(a, b, null, DN_ATTRS, UnaryOperator.identity(),
+                DirectoryDiffEngine.rdnValue(source, "cn", null), DirectoryDiffEngine.rdnValue(target, "cn", null)).same();
+
+        // Sync projects the source's values onto the target entry as it's named there.
+        List<Modification> mods = TargetEntryDiffer.diff(target, List.of(a), Set.of(), null, DN_ATTRS);
+
+        assertThat(diffSame).as("directory diff").isEqualTo(expectedSame);
+        assertThat(mods.isEmpty()).as("sync engine").isEqualTo(expectedSame);
+    }
 }

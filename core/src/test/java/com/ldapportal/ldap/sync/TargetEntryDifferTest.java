@@ -189,4 +189,73 @@ class TargetEntryDifferTest {
         assertThat(kept.kept()).containsExactly(java.util.Map.entry("member", List.of("uid=x,ou=people,o=src")));
         assertThat(TargetEntryDiffer.diff(target, kept.desired(), Set.of(), null, List.of("member"))).isEmpty();
     }
+
+    // ── The value naming the entry (its RDN value) ──────────────────────
+
+    @Test
+    void rdnValueDifferingOnlyInCase_isNotAChange() throws Exception {
+        // The target is named cn=john smith; the source writes "John Smith". The directory
+        // keeps the RDN's form, so a MODIFY can't change it: not a difference.
+        Entry target = new Entry("cn=john smith,ou=people,dc=x", new Attribute("cn", "john smith"));
+
+        assertThat(TargetEntryDiffer.diff(target, List.of(new Attribute("cn", "John Smith")), Set.of())).isEmpty();
+        assertThat(TargetEntryDiffer.diff(target, List.of(new Attribute("cn", "John Smith")), Set.of(),
+                Schema.getDefaultStandardSchema(), List.of())).isEmpty();
+    }
+
+    @Test
+    void anotherValueOfTheNamingAttribute_stillComparesExactly() {
+        Entry target = new Entry("cn=john smith,ou=people,dc=x", new Attribute("cn", "john smith", "johnny"));
+
+        List<Modification> mods = TargetEntryDiffer.diff(target,
+                List.of(new Attribute("cn", "John Smith", "Johnny")), Set.of());
+
+        assertThat(mods).singleElement().satisfies(m -> assertThat(m.getAttributeName()).isEqualTo("cn"));
+    }
+
+    @Test
+    void aCaseOnlyChangeToAnAttributeThatDoesntNameTheEntry_stillCounts() {
+        Entry target = new Entry("uid=jsmith,ou=people,dc=x", new Attribute("cn", "john smith"));
+
+        assertThat(TargetEntryDiffer.diff(target, List.of(new Attribute("cn", "John Smith")), Set.of())).hasSize(1);
+    }
+
+    @Test
+    void theRdnValueItselfChanging_stillCounts() {
+        Entry target = new Entry("cn=john smith,ou=people,dc=x", new Attribute("cn", "john smith"));
+
+        assertThat(TargetEntryDiffer.diff(target, List.of(new Attribute("cn", "Jon Smith")), Set.of())).hasSize(1);
+    }
+
+    @Test
+    void aMultiValuedRdn_matchesEachOfItsAttributes() {
+        Entry target = new Entry("cn=john smith+uid=jsmith,ou=people,dc=x",
+                new Attribute("cn", "john smith"), new Attribute("uid", "jsmith"));
+
+        assertThat(TargetEntryDiffer.diff(target,
+                List.of(new Attribute("cn", "John Smith"), new Attribute("uid", "JSmith")), Set.of())).isEmpty();
+    }
+
+    /** IBM's principalName as IVIA directories define it: Directory String syntax, no EQUALITY rule. */
+    private static Schema ivaSchema() throws Exception {
+        return new Schema(new Entry("cn=schema", new Attribute("attributeTypes",
+                "( 1.3.18.0.2.4.318 NAME ( 'principalName' 'principal' ) SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )")));
+    }
+
+    @Test
+    void anIviaPrincipalNameRdnDifferingOnlyInCase_isNotAChange() throws Exception {
+        Entry target = new Entry("principalName=john.smith,cn=Users,secAuthority=Default",
+                new Attribute("principalName", "john.smith"));
+        List<Attribute> desired = List.of(new Attribute("principalName", "John.Smith"));
+
+        assertThat(TargetEntryDiffer.diff(target, desired, Set.of(), ivaSchema(), List.of())).isEmpty();
+        assertThat(TargetEntryDiffer.diff(target, desired, Set.of())).isEmpty(); // no schema read
+        // Named by the alias, written under the primary name: still the same attribute.
+        Entry byAlias = new Entry("principal=john.smith,cn=Users,secAuthority=Default",
+                new Attribute("principalName", "john.smith"));
+        assertThat(TargetEntryDiffer.diff(byAlias, desired, Set.of(), ivaSchema(), List.of())).isEmpty();
+        // A real change to it still counts.
+        assertThat(TargetEntryDiffer.diff(target, List.of(new Attribute("principalName", "jane.smith")), Set.of(),
+                ivaSchema(), List.of())).hasSize(1);
+    }
 }
