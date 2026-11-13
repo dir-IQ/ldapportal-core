@@ -2,8 +2,13 @@
 <template>
   <Teleport to="body">
     <!-- The backdrop closes on a mouse click; keyboard users have Escape and the Close button. -->
+    <!-- On wide screens the panel moves left to clear the DN quick-look
+         drawer (max-w-md = 28rem, docked to the same edge), as the main page
+         does, so a looked-up entry sits beside the diff instead of over it. -->
     <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -->
-    <div class="fixed inset-0 z-40 flex justify-end bg-black/30" @click.self="emit('close')" @keydown.esc="emit('close')">
+    <div class="fixed inset-0 z-40 flex justify-end bg-black/30 transition-[padding] duration-200"
+         :class="{ 'xl:pr-[28rem]': quickLook.isOpen }"
+         @click.self="emit('close')" @keydown.esc="emit('close')">
       <aside
         v-dialog-a11y
         class="w-full max-w-3xl h-full overflow-y-auto bg-white dark:bg-gray-800 shadow-xl p-5"
@@ -109,8 +114,15 @@
           <button v-if="isPaired" type="button" class="btn-primary btn-compact" :disabled="rechecking" @click="recheck">
             {{ rechecking ? 'Re-reading…' : 'Re-read live' }}
           </button>
-          <RouterLink v-if="entry.dnA" :to="browserLink(dirA, entry.dnA)" class="btn-secondary btn-compact">Open A in browser</RouterLink>
-          <RouterLink v-if="entry.dnB" :to="browserLink(dirB, entry.dnB)" class="btn-secondary btn-compact">Open B in browser</RouterLink>
+          <!-- New tab, so the run's results and this open entry stay put. -->
+          <a v-if="entry.dnA" :href="browserHref(dirA, entry.dnA)" target="_blank" rel="noopener"
+             class="btn-secondary btn-compact" title="Open side A's entry in the Directory Browser in a new tab">
+            Open A in browser <span aria-hidden="true">↗</span>
+          </a>
+          <a v-if="entry.dnB" :href="browserHref(dirB, entry.dnB)" target="_blank" rel="noopener"
+             class="btn-secondary btn-compact" title="Open side B's entry in the Directory Browser in a new tab">
+            Open B in browser <span aria-hidden="true">↗</span>
+          </a>
         </div>
       </aside>
     </div>
@@ -124,7 +136,11 @@ import {
   type DirectoryDiffAttributeDiff, type DirectoryDiffEntry, type DirectoryDiffEntryDetail, type DirectoryDiffLiveEntry,
 } from '@/api/directoryDiff'
 import ValueList from './DirectoryDiffValueList.vue'
+import { browserHref } from '@/components/sync/syncLinks'
+import { useQuickLookStore } from '@/stores/quickLook'
 import { CATEGORY_LABELS, errMsg, formatTime } from './directoryDiffFormat'
+
+const quickLook = useQuickLookStore()
 
 const props = defineProps<{
   runId: string
@@ -166,9 +182,7 @@ const liveSummary = computed(() => {
   return `${l.diffs.length} attribute${l.diffs.length === 1 ? '' : 's'} differ${l.diffs.length === 1 ? 's' : ''}`
 })
 
-function browserLink(dir: string, dn: string) {
-  return { path: '/superadmin/directory-browser', query: { dir, dn } }
-}
+
 
 async function load() {
   detail.value = null

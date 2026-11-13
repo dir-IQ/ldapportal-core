@@ -107,11 +107,22 @@ describe('DirectoryDiffEntryPanel', () => {
     expect(box).toContain('secDN on A: uid=ghost,ou=people,dc=a')
   })
 
-  it('links each side to the directory browser', async () => {
+  it('links each side to the directory browser in a new tab, keeping the results in place', async () => {
     await mountPanel()
-    const links = Array.from(body().querySelectorAll('a')).map(a => a.getAttribute('data-to'))
-    expect(links).toContain(JSON.stringify({ path: '/superadmin/directory-browser',
-      query: { dir: 'dir-b', dn: DIFFERENT.dnB } }))
+    const link = Array.from(body().querySelectorAll('a')).find(a => a.textContent?.includes('Open B in browser'))!
+    expect(link.getAttribute('href')).toBe('/superadmin/directory-browser?'
+      + new URLSearchParams({ dir: 'dir-b', dn: DIFFERENT.dnB! }).toString())
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')).toBe('noopener')
+  })
+
+  it('moves left on wide screens while the quick-look drawer is open', async () => {
+    await mountPanel()
+    const overlay = body().querySelector<HTMLElement>('[aria-labelledby="dd-panel-title"]')!.parentElement!
+    expect(overlay.classList.contains('xl:pr-[28rem]')).toBe(false)
+    useQuickLookStore().open('dir-b', DIFFERENT.dnB!)
+    await flushPromises()
+    expect(overlay.classList.contains('xl:pr-[28rem]')).toBe(true)
   })
 
   it('does not load stored detail or offer a re-read for an unpaired entry', async () => {
