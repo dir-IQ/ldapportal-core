@@ -248,7 +248,7 @@
            Remove link clear of the scrollbar. -->
       <ul class="divide-y divide-gray-100 min-h-0 overflow-y-auto pr-3">
         <li v-for="dn in filteredMembers" :key="dn" class="flex items-center justify-between gap-4 py-2 text-sm">
-          <span class="text-xs text-gray-700 truncate" :title="dn">{{ dn }}</span>
+          <span class="text-xs text-gray-700 truncate" :title="dn"><DnLink :dn="dn" :directory-id="dirId" /></span>
           <button v-if="can.manageMembers" @click="removeMember(dn)" class="text-red-500 hover:text-red-700 text-xs shrink-0">Remove</button>
         </li>
         <li v-if="!members.length" class="py-4 text-center text-gray-500 text-sm">No members</li>
@@ -272,6 +272,7 @@ import { exportGroupCsv } from '@/api/csvTemplates'
 import { listProfiles } from '@/api/profiles'
 import { usePermissions } from '@/composables/usePermissions'
 import ResultsTable from '@/components/ResultsTable.vue'
+import DnLink from '@/components/quickLook/DnLink.vue'
 import LdapFilterBuilder from '@/components/LdapFilterBuilder.vue'
 import { rowObjectClasses } from '@/composables/useLdapFilter'
 import RecentSearches from '@/components/RecentSearches.vue'

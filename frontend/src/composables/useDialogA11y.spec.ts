@@ -48,6 +48,24 @@ describe('useDialogA11y', () => {
     expect(a.onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('ignores Escape pressed inside the non-modal quick-look drawer', async () => {
+    const a = track(dialog('a', true))
+    await nextTick()
+    const drawer = document.createElement('aside')
+    drawer.setAttribute('data-quick-look', '')
+    const inside = document.createElement('button')
+    drawer.appendChild(inside)
+    document.body.appendChild(drawer)
+    try {
+      inside.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      expect(a.onClose).not.toHaveBeenCalled()
+      press('Escape')
+      expect(a.onClose).toHaveBeenCalledTimes(1)
+    } finally {
+      drawer.remove()
+    }
+  })
+
   it('closes only the topmost of stacked dialogs on Escape', async () => {
     const outer = track(dialog('outer', true))
     await nextTick()

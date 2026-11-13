@@ -202,6 +202,7 @@
                         :directory-id="dirId ?? undefined"
                         :placeholder="'Select a DN'"
                         :superadmin="false"
+                        quick-look
                       />
                       <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                     </template>
@@ -293,6 +294,7 @@
                         :placeholder="'Select a DN'"
                         :superadmin="false"
                         :disabled="readOnly || !attr.editableOnUpdate || isNamingAttr(attr.attributeName)"
+                        quick-look
                       />
                       <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                     </template>
@@ -449,7 +451,9 @@
                     <span v-if="row.state === 'adding'" class="badge-green">Adding</span>
                     <span v-else-if="row.state === 'removing'" class="badge-red">Removing</span>
                   </div>
-                  <code class="text-xs text-gray-500 block truncate" :title="row.group.dn">{{ row.group.dn }}</code>
+                  <code class="text-xs text-gray-500 block truncate" :title="row.group.dn">
+                    <DnLink v-if="dirId" :dn="row.group.dn" :directory-id="dirId" /><template v-else>{{ row.group.dn }}</template>
+                  </code>
                 </div>
                 <button v-if="!readOnly" @click="onMembershipAction(row)"
                         class="ml-2 text-xs font-medium"
@@ -468,7 +472,9 @@
               <li v-for="g in pendingGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
                 <div class="min-w-0 flex-1">
                   <div class="font-medium text-gray-800 truncate">{{ g.cn }}</div>
-                  <code class="text-xs text-gray-500 block truncate" :title="g.dn">{{ g.dn }}</code>
+                  <code class="text-xs text-gray-500 block truncate" :title="g.dn">
+                  <DnLink v-if="dirId" :dn="g.dn" :directory-id="dirId" /><template v-else>{{ g.dn }}</template>
+                </code>
                 </div>
                 <button @click="removePendingGroup(g)" class="ml-2 text-red-500 hover:text-red-700 text-xs font-medium">Remove</button>
               </li>
@@ -500,7 +506,9 @@
             <li v-for="g in availableGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
               <div class="min-w-0 flex-1">
                 <div class="font-medium text-gray-800 truncate">{{ g.cn }}</div>
-                <code class="text-xs text-gray-500 block truncate" :title="g.dn">{{ g.dn }}</code>
+                <code class="text-xs text-gray-500 block truncate" :title="g.dn">
+                  <DnLink v-if="dirId" :dn="g.dn" :directory-id="dirId" /><template v-else>{{ g.dn }}</template>
+                </code>
               </div>
               <button @click="addToGroup(g)" class="ml-2 text-blue-600 hover:text-blue-800 text-xs font-medium">Add</button>
             </li>
@@ -532,6 +540,7 @@ import FormField from '@/components/FormField.vue'
 import FormValidationSummary from '@/components/FormValidationSummary.vue'
 import { useFormErrors } from '@/composables/useFormErrors'
 import DnPicker from '@/components/DnPicker.vue'
+import DnLink from '@/components/quickLook/DnLink.vue'
 import UserIdentityHeader from '@/components/users/UserIdentityHeader.vue'
 import IsvaAccountPanel from '@/components/users/IsvaAccountPanel.vue'
 import * as groupsApi from '@/api/groups'

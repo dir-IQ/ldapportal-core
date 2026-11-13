@@ -93,8 +93,10 @@
                            :aria-label="`Select ${issue.value} in ${issue.dn}`"
                            :checked="selected.has(issueKey(issue))" @change="toggle(issue)" />
                   </td>
-                  <td class="py-2 px-5 font-mono text-[13px] text-blue-600 break-all cursor-pointer" @click="goToBrowser(issue.dn)">
-                    {{ issue.dn }}
+                  <!-- Quick look keeps the issue list in place; Ctrl/⌘-click
+                       opens the entry in the Directory Browser instead. -->
+                  <td class="py-2 px-5 text-[13px] break-all">
+                    <DnLink :dn="issue.dn" :directory-id="checkedDirectoryId" />
                   </td>
                   <td class="py-2 px-5 text-xs text-gray-600 break-all">{{ issue.description }}</td>
                 </tr>
@@ -109,12 +111,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
 import { listDirectories } from '@/api/directories'
 import { checkIntegrity, listIntegrityChecks, removeBrokenReferences } from '@/api/browse'
+import DnLink from '@/components/quickLook/DnLink.vue'
 import DnPicker from '@/components/DnPicker.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import type { components } from '@/api/openapi'
@@ -166,7 +168,6 @@ function errMsg(e: unknown, fallback = 'Something went wrong'): string {
   return err.response?.data?.detail || err.message || fallback
 }
 
-const router = useRouter()
 const notif  = useNotificationStore()
 const auth   = useAuthStore()
 const confirm = useConfirm()
@@ -348,10 +349,6 @@ async function runCheck() {
   } finally {
     running.value = false
   }
-}
-
-function goToBrowser(dn: string) {
-  router.push({ path: '/superadmin/browser', query: { dn } })
 }
 
 // Each directory offers its own checks. A newly offered check starts ticked;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 
 const notif = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 vi.mock('@/stores/notifications', () => ({ useNotificationStore: () => notif }))
@@ -33,6 +34,8 @@ function page(content: DirectoryDiffEntry[], number = 0, totalElements = content
 let wrapper: VueWrapper | null = null
 
 beforeEach(() => {
+  // The entry panel reads the quick-look store (Pinia).
+  setActivePinia(createPinia())
   vi.clearAllMocks()
   api.listDirectoryDiffEntries.mockResolvedValue(page([entry(1), entry(2)]))
   api.getDirectoryDiffEntry.mockResolvedValue({ data: { seq: 1, category: 'DIFFERENT', dnA: 'a', dnB: 'b',

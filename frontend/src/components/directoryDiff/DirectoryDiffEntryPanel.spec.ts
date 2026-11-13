@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 
 const api = vi.hoisted(() => ({
   getDirectoryDiffEntry: vi.fn(),
@@ -10,6 +11,7 @@ vi.mock('@/api/directoryDiff', () => api)
 
 import DirectoryDiffEntryPanel from './DirectoryDiffEntryPanel.vue'
 import { vDialogA11y } from '@/directives/dialogA11y'
+import { useQuickLookStore } from '@/stores/quickLook'
 import type { DirectoryDiffEntry } from '@/api/directoryDiff'
 
 const DIFFERENT: DirectoryDiffEntry = {
@@ -21,6 +23,8 @@ let wrapper: VueWrapper | null = null
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Diff values that are DNs render as quick-look links (Pinia stores).
+  setActivePinia(createPinia())
   api.getDirectoryDiffEntry.mockResolvedValue({ data: {
     seq: 4, category: 'DIFFERENT', dnA: DIFFERENT.dnA, dnB: DIFFERENT.dnB, note: null,
     diffs: [{ name: 'cn', onlyA: ['Bob'], onlyACount: 1, onlyB: ['Robert'], onlyBCount: 1, both: [], bothCount: 0 },
@@ -103,11 +107,22 @@ describe('DirectoryDiffEntryPanel', () => {
     expect(box).toContain('secDN on A: uid=ghost,ou=people,dc=a')
   })
 
-  it('links each side to the directory browser', async () => {
+  it('links each side to the directory browser in a new tab, keeping the results in place', async () => {
     await mountPanel()
-    const links = Array.from(body().querySelectorAll('a')).map(a => a.getAttribute('data-to'))
-    expect(links).toContain(JSON.stringify({ path: '/superadmin/directory-browser',
-      query: { dir: 'dir-b', dn: DIFFERENT.dnB } }))
+    const link = Array.from(body().querySelectorAll('a')).find(a => a.textContent?.includes('Open B in browser'))!
+    expect(link.getAttribute('href')).toBe('/superadmin/directory-browser?'
+      + new URLSearchParams({ dir: 'dir-b', dn: DIFFERENT.dnB! }).toString())
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')).toBe('noopener')
+  })
+
+  it('moves left on wide screens while the quick-look drawer is open', async () => {
+    await mountPanel()
+    const overlay = body().querySelector<HTMLElement>('[aria-labelledby="dd-panel-title"]')!.parentElement!
+    expect(overlay.classList.contains('xl:pr-[28rem]')).toBe(false)
+    useQuickLookStore().open('dir-b', DIFFERENT.dnB!)
+    await flushPromises()
+    expect(overlay.classList.contains('xl:pr-[28rem]')).toBe(true)
   })
 
   it('does not load stored detail or offer a re-read for an unpaired entry', async () => {
@@ -134,5 +149,26 @@ describe('DirectoryDiffEntryPanel', () => {
     wrapper = null
     expect(document.activeElement).toBe(opener)
     opener.remove()
+  })
+
+  it('links DN values to the quick look in the directory of the column they sit in', async () => {
+    api.getDirectoryDiffEntry.mockResolvedValueOnce({ data: {
+      seq: 4, category: 'DIFFERENT', dnA: DIFFERENT.dnA, dnB: DIFFERENT.dnB, note: null,
+      diffs: [{ name: 'manager',
+        onlyA: ['uid=amy,ou=people,dc=a'], onlyACount: 1,
+        onlyB: ['uid=ben,ou=Users,dc=b'], onlyBCount: 1,
+        both: ['cn=board,ou=groups,dc=x'], bothCount: 1 }],
+      sameAttributes: [],
+    } })
+    await mountPanel()
+    const links = () => Array.from(body().querySelectorAll<HTMLElement>('[data-testid="diff-table"] .dn-link'))
+    expect(links().map(l => l.textContent?.trim())).toEqual([
+      'cn=board,ou=groups,dc=x', 'uid=amy,ou=people,dc=a', 'cn=board,ou=groups,dc=x', 'uid=ben,ou=Users,dc=b',
+    ])
+    const store = useQuickLookStore()
+    links()[1].click()
+    expect(store.current).toEqual({ directoryId: 'dir-a', dn: 'uid=amy,ou=people,dc=a' })
+    links()[2].click()
+    expect(store.current).toEqual({ directoryId: 'dir-b', dn: 'cn=board,ou=groups,dc=x' })
   })
 })

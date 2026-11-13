@@ -48,6 +48,7 @@ vi.mock('@/api/profiles', () => ({ listProfiles: vi.fn().mockResolvedValue({ dat
 beforeEach(() => setActivePinia(createPinia()))
 
 import GroupListView from './GroupListView.vue'
+import { useQuickLookStore } from '@/stores/quickLook'
 import { listProfiles } from '@/api/profiles'
 import { createGroup, updateGroup, addGroupMembersBulk, removeGroupMembersBulk, searchGroups } from '@/api/groups'
 import { getIsvaGroupRegistrations, importIsvaGroup, removeIsvaGroup } from '@/api/isvaGroup'
@@ -161,6 +162,16 @@ describe('GroupListView members drawer', () => {
     expect(t).not.toContain('Add Members')
     expect(t).not.toContain('Bulk Remove')
     expect(t).not.toContain('Remove')
+  })
+
+  it('opens a member in the quick look without leaving the drawer', async () => {
+    setActivePinia(createPinia())
+    const wrapper = await openDrawer(['group.read'])
+    const link = wrapper.findAll('.dn-link').find(l => l.text() === 'uid=a,dc=x')!
+    expect(link).toBeTruthy()
+    await link.trigger('click')
+    expect(useQuickLookStore().current).toEqual({ directoryId: 'd1', dn: 'uid=a,dc=x' })
+    expect(wrapper.find('[data-testid="modal"]').exists()).toBe(true)
   })
 
   it('offers add and remove with group.manage_members', async () => {

@@ -23,6 +23,23 @@
           <path d="M3 4h5l2 2h7a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/>
         </svg>
       </button>
+      <!-- Opt-in: show the entry the field names in the quick-look drawer.
+           Stays usable on a read-only form — viewing is the point. -->
+      <button
+        v-if="quickLook"
+        @click="openQuickLook"
+        :disabled="!canQuickLook"
+        type="button"
+        class="btn-neutral shrink-0"
+        aria-label="Quick look at this entry"
+        title="Quick look at this entry"
+        data-testid="dnpicker-quick-look"
+      >
+        <svg class="w-4 h-4 text-gray-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M1.5 10S4.5 4 10 4s8.5 6 8.5 6-3 6-8.5 6S1.5 10 1.5 10z"/>
+          <circle cx="10" cy="10" r="2.5"/>
+        </svg>
+      </button>
     </div>
 
     <!-- Tree picker modal -->
@@ -89,6 +106,8 @@ import { searchGroups } from '@/api/groups'
 import { listEntraGroups } from '@/api/entra'
 import DnTree, { type DnTreeNode } from '@/components/DnTree.vue'
 import GroupTree from '@/components/GroupTree.vue'
+import { useQuickLookStore } from '@/stores/quickLook'
+import { looksLikeDn } from '@/utils/dnValue'
 
 /** The fields of a browse response the picker reads. */
 interface BrowsePayload {
@@ -146,6 +165,12 @@ const props = withDefaults(defineProps<{
    * fallthrough attribute because attrs land on the root div, not the input.
    */
   autocomplete?: string
+  /**
+   * Adds a button that opens the field's current DN in the quick-look
+   * drawer (enabled once the value parses as a DN). Off by default: a
+   * base-DN or parent-DN field rarely needs it.
+   */
+  quickLook?: boolean
 }>(), {
   modelValue: '',
   directoryId: '',
@@ -383,5 +408,13 @@ function onNodeSelect(dn: string): void {
 function confirmSelection(): void {
   emit('update:modelValue', pickerSelectedDn.value)
   showPicker.value = false
+}
+
+const canQuickLook = computed(() => !!props.directoryId && looksLikeDn(props.modelValue))
+
+function openQuickLook(): void {
+  // Store looked up on use, so the picker (mounted widely, often in specs
+  // without Pinia) doesn't depend on it unless the button is used.
+  if (canQuickLook.value) useQuickLookStore().open(props.directoryId!, props.modelValue!.trim())
 }
 </script>

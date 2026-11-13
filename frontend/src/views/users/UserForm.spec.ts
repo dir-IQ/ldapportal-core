@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
+import { useQuickLookStore } from '@/stores/quickLook'
 import UserForm from './UserForm.vue'
 import * as groupsApi from '@/api/groups'
 import * as usersApi from '@/api/users'
@@ -191,6 +192,16 @@ describe('UserForm syntax validation', () => {
     expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).toContain('Not a valid DN')
+  })
+
+  it('offers a quick look at a DN_LOOKUP field\'s entry', async () => {
+    const wrapper = mount(UserForm, {
+      props: { data: { rdnValue: 'jsmith', attributes: { manager: 'uid=boss,ou=people,dc=x' } },
+        isEdit: false, userTemplateConfig: syntaxConfig, dirId: 'd1', profileId: null },
+    })
+    const button = wrapper.get('[data-testid="dnpicker-quick-look"]')
+    await button.trigger('click')
+    expect(useQuickLookStore().current).toEqual({ directoryId: 'd1', dn: 'uid=boss,ou=people,dc=x' })
   })
 
   it('mirrors the well-known email check once the syntax hints load', async () => {

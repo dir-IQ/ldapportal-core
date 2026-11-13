@@ -68,7 +68,10 @@
                   <span v-if="r.secret && r.values[s.key]?.length" class="italic font-sans text-gray-500">(hidden)</span>
                   <span v-else-if="!r.values[s.key]?.length" class="italic font-sans text-gray-400">(none)</span>
                   <template v-else>
-                    <div v-for="(v, i) in r.values[s.key].slice(0, VALUE_LIMIT)" :key="i">{{ v }}</div>
+                    <div v-for="(v, i) in r.values[s.key].slice(0, VALUE_LIMIT)" :key="i">
+                      <DnLink v-if="s.directoryId && looksLikeDn(v)" :dn="v" :directory-id="s.directoryId" />
+                      <template v-else>{{ v }}</template>
+                    </div>
                     <div v-if="r.values[s.key].length > VALUE_LIMIT" class="font-sans text-xs text-gray-500">
                       … and {{ r.values[s.key].length - VALUE_LIMIT }} more
                     </div>
@@ -92,6 +95,8 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import DnLink from '@/components/quickLook/DnLink.vue'
+import { looksLikeDn } from '@/utils/dnValue'
 import AppModal from '@/components/AppModal.vue'
 import { browse } from '@/api/browse'
 import { browserHref, isSecret } from './syncLinks'
