@@ -20,8 +20,17 @@ export const browse = (dirId, dn, opts = {}) =>
     },
   })
 
-export const directoryBrowse = (dirId, dn) =>
-  client.get(`/directories/${dirId}/browse`, { params: { dn: dn || undefined } })
+/**
+ * Directory-scoped, read-only browse (for admins, not just superadmins). The
+ * server enforces the caller's DN scope.
+ * @param {string} dirId
+ * @param {string} [dn]
+ * @param {{ limit?: number }} [opts]  limit — max children; 0 / omitted = all
+ */
+export const directoryBrowse = (dirId, dn, opts = {}) =>
+  client.get(`/directories/${dirId}/browse`, {
+    params: { dn: dn || undefined, limit: opts.limit || undefined },
+  })
 
 export const createEntry = (dirId, data) =>
   client.post(base(dirId), data)

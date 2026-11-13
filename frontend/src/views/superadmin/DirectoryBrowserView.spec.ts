@@ -22,6 +22,7 @@ import type { AxiosResponse } from 'axios'
 import DirectoryBrowserView from './DirectoryBrowserView.vue'
 import { browse, deleteEntry } from '@/api/browse'
 import { listDirectories } from '@/api/directories'
+import { useQuickLookStore } from '@/stores/quickLook'
 
 // Mutable so each test can set the ?dir=&dn= deep-link before mounting.
 const route = vi.hoisted(() => ({ query: {} as Record<string, string> }))
@@ -224,6 +225,25 @@ describe('DirectoryBrowserView branch paging + filter', () => {
 
     expect(browse).toHaveBeenCalledWith(DIR, outside, { limit: 1 })
     expect(browse).not.toHaveBeenCalledWith(DIR, PEOPLE, expect.anything())
+  })
+
+  it('shows DN-valued attributes as quick-look links that leave the tree selection alone', async () => {
+    const GROUP = 'cn=admins,ou=groups,' + BASE
+    vi.mocked(browse).mockImplementation(async (_dir: string, dn?: string) => {
+      if (dn === ALICE_DN) {
+        return ok({ dn: ALICE_DN, attributes: { uid: ['alice'], memberOf: [GROUP] }, children: [] })
+      }
+      return ok(!dn || dn === BASE ? rootPage : peoplePage())
+    })
+    route.query = { dir: DIR, dn: ALICE_DN }
+    const wrapper = await mountView()
+
+    const link = wrapper.get('.dn-link')
+    expect(link.text()).toBe(GROUP)
+    await link.trigger('click')
+
+    expect(useQuickLookStore().current).toEqual({ directoryId: DIR, dn: GROUP })
+    expect(router.push).not.toHaveBeenCalled()
   })
 
   it('loads the root as a bounded page', async () => {

@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
-  <div class="fixed top-4 right-4 z-50 flex flex-col gap-2 w-80 pointer-events-none"
+  <!-- z-[70]: above the DN quick-look drawer (z-[60]), which docks to the
+       same right edge and would otherwise hide toasts. -->
+  <div class="fixed top-4 right-4 z-[70] flex flex-col gap-2 w-80 pointer-events-none"
        role="region" aria-label="Notifications">
     <TransitionGroup name="toast">
       <div

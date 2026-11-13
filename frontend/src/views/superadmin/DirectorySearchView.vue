@@ -176,6 +176,19 @@
         empty-text="No entries found."
         @row-click="(row) => showEntryDetail(row.__entry as DirectoryEntry)"
       >
+        <!-- Attribute columns holding DNs (member, manager, secDN, …) render
+             each value as a quick-look link; other columns keep the table's
+             plain text. Reads the entry's own values rather than the
+             comma-joined cell text, since DNs contain commas. -->
+        <template #cell="{ row, value, col }">
+          <span v-if="dnValues(row, col.key).length" class="truncate block">
+            <template v-for="(dn, i) in dnValues(row, col.key)" :key="i">
+              <span v-if="i > 0" class="text-gray-400">; </span>
+              <DnLink :dn="dn" :directory-id="form.directoryId" />
+            </template>
+          </span>
+          <span v-else class="truncate block">{{ value ?? '' }}</span>
+        </template>
         <template #toolbar>
           <button
             v-if="results.length && auth.isDirectorySearchInlineEditEnabled"
@@ -323,7 +336,10 @@
               <tr v-for="(values, attr) in selectedEntry.attributes" :key="attr" class="border-b border-gray-100">
                 <td class="py-2 pr-4 font-medium text-gray-600 align-top whitespace-nowrap">{{ attr }}</td>
                 <td class="py-2 font-mono text-[13px] text-gray-800 break-all">
-                  <div v-for="(v, i) in values" :key="i">{{ v }}</div>
+                  <div v-for="(v, i) in values" :key="i">
+                    <DnLink v-if="looksLikeDn(v)" :dn="v" :directory-id="form.directoryId" />
+                    <template v-else>{{ v }}</template>
+                  </div>
                   <div v-if="attr === 'userAccountControl' && values.length" class="mt-1 flex flex-wrap gap-1">
                     <span v-for="flag in decodeUAC(values[0])" :key="flag"
                       :class="['px-1.5 py-0.5 rounded text-xs font-medium',
@@ -391,6 +407,8 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { useConfirm } from '@/composables/useConfirm'
 import { listDirectories } from '@/api/directories'
 import { searchEntries } from '@/api/browse'
+import DnLink from '@/components/quickLook/DnLink.vue'
+import { looksLikeDn } from '@/utils/dnValue'
 import { listAttributeTypes } from '@/api/schema'
 import { mergeSavedEntryAttributes } from '@/utils/savedEntryMerge'
 import DnPicker from '@/components/DnPicker.vue'
@@ -819,6 +837,16 @@ function decodeUAC(value: string): string[] {
   if (uac & 0x800000) flags.push('PASSWORD_EXPIRED')
   if (uac & 0x40000) flags.push('SMARTCARD_REQUIRED')
   return flags
+}
+
+/**
+ * A result cell's values when every one of them is a DN (so it renders as
+ * quick-look links); empty otherwise, falling back to the plain cell.
+ */
+function dnValues(row: Record<string, unknown>, key: string): string[] {
+  const entry = row.__entry as DirectoryEntry | undefined
+  const values = entry?.attributes?.[key] ?? []
+  return values.length && values.every(v => looksLikeDn(v)) ? values : []
 }
 
 function showEntryDetail(entry: DirectoryEntry): void {
