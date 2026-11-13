@@ -97,6 +97,14 @@ unnoticed. The rules:
   `member` pointing at the "same" user on each side matches.
 - **Every other attribute** compares exactly. A case-only change counts as a
   difference.
+- **Except the value naming the entry.** When an attribute is in both entries'
+  RDNs and the two RDN values match by its equality rule (as DN-paired entries
+  do), the value naming each entry matches the other whatever its case:
+  `cn: John Smith` at `cn=John Smith,…` and `cn: john smith` at
+  `cn=john smith,…` are the same. A directory keeps the RDN's form for that
+  value and a modify can't change it, only a rename. Other values of the
+  attribute still compare exactly, and so does an attribute the schema matches
+  case-exactly.
 - **Attribute order and value order** don't count.
 
 ### Attributes that are left out

@@ -337,7 +337,13 @@ same on every replica — but audit sources don't read cookie mode today.)
    any the target schema gives DN syntax) by **canonical DN**, so a reference
    that differs only in form — `cn=A, o=B` vs `cn=a,o=b` — is not a change;
    every other value **exactly**, so an edit that only changes case (`john` →
-   `John`) still replicates. Attribute aliases are resolved through the target
+   `John`) still replicates. The exception is the value that names the target
+   entry (its RDN value, e.g. `cn: john smith` at `cn=john smith,…`): it's
+   compared by the attribute's equality rule, case-insensitively for `cn` and
+   `uid`, because the directory keeps it as the RDN has it and a MODIFY can't
+   change its case. A source whose RDN differs only in case is therefore in
+   sync, not drift; the target's casing changes only if the entry is renamed
+   there. Attribute aliases are resolved through the target
    schema (read once per directory, cached 10 minutes). A change of DN form
    alone is not a move either. The same comparison drives the dry-run preview
    and **Verify now** (Drift tab).

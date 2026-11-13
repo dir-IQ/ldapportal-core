@@ -32,6 +32,13 @@ import java.util.function.UnaryOperator;
  * rule in the schema is DN matching) compare as DNs, using the LDAP library's
  * standard DN matching rule. A value that isn't a valid DN, and every other
  * attribute, compares byte for byte, so a case-only change counts.
+ *
+ * <p>Except for the value naming each entry: when the attribute is in both
+ * entries' RDNs and those RDN values match by the attribute's equality rule
+ * (as the paired DNs do), a value matching its own side's RDN value is that
+ * value on both sides. A directory keeps the RDN's form for it, so
+ * {@code cn: john smith} at {@code cn=john smith,…} and {@code cn: John Smith}
+ * at {@code cn=John Smith,…} are the same; only a rename changes its case.
  */
 public final class DiffValueComparison {
 
@@ -59,6 +66,15 @@ public final class DiffValueComparison {
      */
     public static ValueDiff values(Attribute a, Attribute b, Schema schema, Collection<String> dnAttrs,
                                    UnaryOperator<String> mapA) {
+        return values(a, b, schema, dnAttrs, mapA, null, null);
+    }
+
+    /**
+     * As above, with each side's RDN value for this attribute ({@code null} when
+     * it doesn't name that side's entry).
+     */
+    public static ValueDiff values(Attribute a, Attribute b, Schema schema, Collection<String> dnAttrs,
+                                   UnaryOperator<String> mapA, String rdnA, String rdnB) {
         List<String> keysA = null;
         List<String> keysB = null;
         if (isDnValued(a.getBaseName(), schema, dnAttrs)) {
@@ -66,8 +82,11 @@ public final class DiffValueComparison {
             keysB = dnKeys(b, UnaryOperator.identity());
         }
         if (keysA == null || keysB == null) {
-            keysA = byteKeys(a);
-            keysB = byteKeys(b);
+            MatchingRule rule = rdnA != null && rdnB != null
+                    ? MatchingRule.selectEqualityMatchingRule(a.getBaseName(), schema) : null;
+            boolean sameRdn = rule != null && matches(rule, rdnA, rdnB);
+            keysA = byteKeys(a, sameRdn ? rule : null, rdnA);
+            keysB = byteKeys(b, sameRdn ? rule : null, rdnB);
         }
         String[] valuesA = a.getValues();
         String[] valuesB = b.getValues();
@@ -134,11 +153,21 @@ public final class DiffValueComparison {
         return out;
     }
 
-    private static List<String> byteKeys(Attribute attr) {
+    /** Each value byte for byte, except one matching {@code rdn} by {@code rule} (when given), which is the RDN value. */
+    private static List<String> byteKeys(Attribute attr, MatchingRule rule, String rdn) {
         List<String> out = new ArrayList<>();
         for (byte[] value : attr.getValueByteArrays()) {
-            out.add(Arrays.toString(value));
+            out.add(rule != null && matches(rule, new String(value, java.nio.charset.StandardCharsets.UTF_8), rdn)
+                    ? "rdn" : Arrays.toString(value));
         }
         return out;
+    }
+
+    private static boolean matches(MatchingRule rule, String x, String y) {
+        try {
+            return rule.valuesMatch(new ASN1OctetString(x), new ASN1OctetString(y));
+        } catch (LDAPException ex) {
+            return false;
+        }
     }
 }

@@ -189,4 +189,50 @@ class TargetEntryDifferTest {
         assertThat(kept.kept()).containsExactly(java.util.Map.entry("member", List.of("uid=x,ou=people,o=src")));
         assertThat(TargetEntryDiffer.diff(target, kept.desired(), Set.of(), null, List.of("member"))).isEmpty();
     }
+
+    // ── The value naming the entry (its RDN value) ──────────────────────
+
+    @Test
+    void rdnValueDifferingOnlyInCase_isNotAChange() throws Exception {
+        // The target is named cn=john smith; the source writes "John Smith". The directory
+        // keeps the RDN's form, so a MODIFY can't change it: not a difference.
+        Entry target = new Entry("cn=john smith,ou=people,dc=x", new Attribute("cn", "john smith"));
+
+        assertThat(TargetEntryDiffer.diff(target, List.of(new Attribute("cn", "John Smith")), Set.of())).isEmpty();
+        assertThat(TargetEntryDiffer.diff(target, List.of(new Attribute("cn", "John Smith")), Set.of(),
+                Schema.getDefaultStandardSchema(), List.of())).isEmpty();
+    }
+
+    @Test
+    void anotherValueOfTheNamingAttribute_stillComparesExactly() {
+        Entry target = new Entry("cn=john smith,ou=people,dc=x", new Attribute("cn", "john smith", "johnny"));
+
+        List<Modification> mods = TargetEntryDiffer.diff(target,
+                List.of(new Attribute("cn", "John Smith", "Johnny")), Set.of());
+
+        assertThat(mods).singleElement().satisfies(m -> assertThat(m.getAttributeName()).isEqualTo("cn"));
+    }
+
+    @Test
+    void aCaseOnlyChangeToAnAttributeThatDoesntNameTheEntry_stillCounts() {
+        Entry target = new Entry("uid=jsmith,ou=people,dc=x", new Attribute("cn", "john smith"));
+
+        assertThat(TargetEntryDiffer.diff(target, List.of(new Attribute("cn", "John Smith")), Set.of())).hasSize(1);
+    }
+
+    @Test
+    void theRdnValueItselfChanging_stillCounts() {
+        Entry target = new Entry("cn=john smith,ou=people,dc=x", new Attribute("cn", "john smith"));
+
+        assertThat(TargetEntryDiffer.diff(target, List.of(new Attribute("cn", "Jon Smith")), Set.of())).hasSize(1);
+    }
+
+    @Test
+    void aMultiValuedRdn_matchesEachOfItsAttributes() {
+        Entry target = new Entry("cn=john smith+uid=jsmith,ou=people,dc=x",
+                new Attribute("cn", "john smith"), new Attribute("uid", "jsmith"));
+
+        assertThat(TargetEntryDiffer.diff(target,
+                List.of(new Attribute("cn", "John Smith"), new Attribute("uid", "JSmith")), Set.of())).isEmpty();
+    }
 }

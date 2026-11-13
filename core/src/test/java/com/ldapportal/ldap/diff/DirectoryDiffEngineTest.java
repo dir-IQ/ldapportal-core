@@ -160,4 +160,39 @@ class DirectoryDiffEngineTest {
         assertThat(r.apply("uid=a,dc=elsewhere")).isNull();
         assertThat(r.apply("garbage")).isNull();
     }
+
+    @Test
+    void anRdnDifferingOnlyInCase_isTheSameEntryAndTheSameNamingValue() {
+        Entry a = new Entry("cn=John Smith," + BASE_A, new Attribute("cn", "John Smith"),
+                new Attribute("sn", "Smith"));
+        Entry b = new Entry("cn=john smith," + BASE_B, new Attribute("cn", "john smith"),
+                new Attribute("sn", "Smith"));
+
+        DirectoryDiffEngine.Result r = DirectoryDiffEngine.comparePair(a, b,
+                byDn(DirectoryDiffEngine.compared(null, null)));
+
+        assertThat(r.category()).isEqualTo(DirectoryDiffCategory.SAME);
+    }
+
+    @Test
+    void aCaseOnlyDifferenceOutsideTheRdn_stillCounts() {
+        Entry a = new Entry("uid=jsmith," + BASE_A, new Attribute("cn", "John Smith"));
+        Entry b = new Entry("uid=jsmith," + BASE_B, new Attribute("cn", "john smith"));
+
+        DirectoryDiffEngine.Result r = DirectoryDiffEngine.comparePair(a, b,
+                byDn(DirectoryDiffEngine.compared(null, null)));
+
+        assertThat(r.category()).isEqualTo(DirectoryDiffCategory.DIFFERENT);
+    }
+
+    @Test
+    void entriesPairedByAttributeWithDifferentRdns_compareTheNamingValueExactly() {
+        Entry a = new Entry("cn=John Smith," + BASE_A, new Attribute("cn", "John Smith"));
+        Entry b = new Entry("cn=J Smith," + BASE_B, new Attribute("cn", "john smith"));
+
+        DirectoryDiffEngine.Result r = DirectoryDiffEngine.comparePair(a, b,
+                byDn(DirectoryDiffEngine.compared(null, null)));
+
+        assertThat(r.category()).isEqualTo(DirectoryDiffCategory.DIFFERENT);
+    }
 }

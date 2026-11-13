@@ -166,7 +166,9 @@ public final class DirectoryDiffEngine {
             Attribute va = attrsA.get(key);
             Attribute vb = attrsB.get(key);
             if (va != null && vb != null) {
-                DiffValueComparison.ValueDiff d = DiffValueComparison.values(va, vb, options.schema(), KNOWN_DN_ATTRIBUTES, mapA);
+                DiffValueComparison.ValueDiff d = DiffValueComparison.values(va, vb, options.schema(),
+                        KNOWN_DN_ATTRIBUTES, mapA, rdnValue(a, va.getName(), options.schema()),
+                        rdnValue(b, vb.getName(), options.schema()));
                 if (d.same()) {
                     same.add(new SameAttribute(va.getName(), List.of(va.getValues())));
                 } else {
@@ -180,6 +182,30 @@ public final class DirectoryDiffEngine {
         }
         DirectoryDiffCategory category = diffs.isEmpty() ? DirectoryDiffCategory.SAME : DirectoryDiffCategory.DIFFERENT;
         return new Result(category, a.getDN(), b.getDN(), diffs, same, null);
+    }
+
+    /** {@code e}'s RDN value for {@code attribute} as written, or {@code null} when that attribute doesn't name it. */
+    static String rdnValue(Entry e, String attribute, Schema schema) {
+        if (!Attribute.getOptions(attribute).isEmpty()) {
+            return null;
+        }
+        try {
+            com.unboundid.ldap.sdk.RDN rdn = e.getParsedDN().getRDN();
+            if (rdn == null) {
+                return null;
+            }
+            String key = DiffValueComparison.canonicalName(attribute, schema);
+            String[] names = rdn.getAttributeNames();
+            String[] values = rdn.getAttributeValues();
+            for (int i = 0; i < names.length; i++) {
+                if (DiffValueComparison.canonicalName(names[i], schema).equals(key)) {
+                    return values[i];
+                }
+            }
+        } catch (com.unboundid.ldap.sdk.LDAPException ex) {
+            // an unparseable DN: no special case
+        }
+        return null;
     }
 
     /** The compared attributes of {@code e}, keyed by their canonical name. */

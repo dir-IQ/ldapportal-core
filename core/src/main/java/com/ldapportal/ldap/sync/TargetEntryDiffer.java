@@ -35,7 +35,12 @@ import java.util.TreeSet;
  * entry, so no MODIFY is made for the DN's form alone. Every other value is
  * compared exactly, so an edit that only changes case ({@code john} →
  * {@code John}) still replicates even where the attribute matches case-ignore.
- * Attribute names are matched through the schema (aliases, case).
+ * The one exception is the value that names the target entry (its RDN value,
+ * e.g. {@code cn: john smith} at {@code cn=john smith,…}): the directory keeps
+ * it as the RDN has it and a MODIFY can't change its case, so it's compared
+ * the way the directory matches it (see {@link RdnValue}). Its case only
+ * changes with a rename. Attribute names are matched through the schema
+ * (aliases, case).
  *
  * <p>Excluded attributes (operational + the sync set's configured exclusions,
  * e.g. password values) are never touched — neither replaced nor deleted.
@@ -73,7 +78,7 @@ public final class TargetEntryDiffer {
             String key = canonicalName(d.getName(), schema);
             desiredNames.add(key);
             Attribute current = targetByName.get(key);
-            if (current == null || !sameValues(current, d, schema, dnAttrs)) {
+            if (current == null || !sameValues(current, d, schema, dnAttrs, RdnValue.of(target, d.getName(), schema))) {
                 mods.add(new Modification(ModificationType.REPLACE, d.getName(), d.getValues()));
             }
         }
@@ -115,7 +120,7 @@ public final class TargetEntryDiffer {
     }
 
     private static boolean sameValues(Attribute current, Attribute desired, Schema schema,
-                                      Collection<String> dnAttrs) {
+                                      Collection<String> dnAttrs, RdnValue rdn) {
         MatchingRule rule = matchingRule(desired.getBaseName(), schema, dnAttrs);
         if (rule != null) {
             Set<String> a = normalized(current, rule);
@@ -124,7 +129,51 @@ public final class TargetEntryDiffer {
                 return a.equals(b);
             }
         }
-        return exact(current).equals(exact(desired));
+        return exact(current, rdn).equals(exact(desired, rdn));
+    }
+
+    /**
+     * The value naming an entry for one attribute (its RDN value), and the
+     * equality rule the directory matches it by. A value that rule finds equal
+     * to it is that same value, whatever its case: the directory keeps the RDN's
+     * form, and only a rename changes it.
+     */
+    public record RdnValue(MatchingRule rule, String normalized) {
+
+        /** {@code entry}'s RDN value for {@code attribute}, or {@code null} when that attribute doesn't name it. */
+        public static RdnValue of(Entry entry, String attribute, Schema schema) {
+            if (entry == null || attribute == null) {
+                return null;
+            }
+            try {
+                com.unboundid.ldap.sdk.RDN rdn = entry.getParsedDN().getRDN();
+                if (rdn == null) {
+                    return null;
+                }
+                String key = canonicalName(Attribute.getBaseName(attribute), schema);
+                String[] names = rdn.getAttributeNames();
+                byte[][] values = rdn.getByteArrayAttributeValues();
+                for (int i = 0; i < names.length; i++) {
+                    if (canonicalName(names[i], schema).equals(key) && Attribute.getOptions(attribute).isEmpty()) {
+                        // Default (no schema): case-ignore string, as cn and uid are in every standard schema.
+                        MatchingRule rule = MatchingRule.selectEqualityMatchingRule(names[i], schema);
+                        return new RdnValue(rule, rule.normalize(new ASN1OctetString(values[i])).stringValue());
+                    }
+                }
+            } catch (LDAPException ex) {
+                // an unparseable DN or RDN value: no special case
+            }
+            return null;
+        }
+
+        /** Whether {@code value} is this RDN value, as the directory matches it. */
+        public boolean matches(byte[] value) {
+            try {
+                return normalized.equals(rule.normalize(new ASN1OctetString(value)).stringValue());
+            } catch (LDAPException ex) {
+                return false;
+            }
+        }
     }
 
     /**
@@ -271,10 +320,11 @@ public final class TargetEntryDiffer {
         return out;
     }
 
-    private static Set<String> exact(Attribute attr) {
+    /** The values byte for byte, except that one matching the RDN value counts as it ({@code rdn} may be null). */
+    private static Set<String> exact(Attribute attr, RdnValue rdn) {
         Set<String> out = new HashSet<>();
         for (byte[] value : attr.getValueByteArrays()) {
-            out.add(Arrays.toString(value));
+            out.add(rdn != null && rdn.matches(value) ? "rdn" : Arrays.toString(value));
         }
         return out;
     }
