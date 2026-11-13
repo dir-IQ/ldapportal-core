@@ -56,13 +56,13 @@
                 <tr v-for="d in diffs" :key="d.name" class="border-b border-gray-100 align-top">
                   <th scope="row" class="py-2 pr-3 font-mono font-medium text-left">{{ d.name }}</th>
                   <td class="py-2 pr-3">
-                    <ValueList :values="d.both" :total="d.bothCount" tone="both" />
-                    <ValueList :values="d.onlyA" :total="d.onlyACount" tone="a" label="only in A" />
+                    <ValueList :values="d.both" :total="d.bothCount" tone="both" :directory-id="dirA" />
+                    <ValueList :values="d.onlyA" :total="d.onlyACount" tone="a" label="only in A" :directory-id="dirA" />
                     <span v-if="!d.onlyACount && !d.bothCount" class="cell-muted">(absent)</span>
                   </td>
                   <td class="py-2">
-                    <ValueList :values="d.both" :total="d.bothCount" tone="both" />
-                    <ValueList :values="d.onlyB" :total="d.onlyBCount" tone="b" label="only in B" />
+                    <ValueList :values="d.both" :total="d.bothCount" tone="both" :directory-id="dirB" />
+                    <ValueList :values="d.onlyB" :total="d.onlyBCount" tone="b" label="only in B" :directory-id="dirB" />
                     <span v-if="!d.onlyBCount && !d.bothCount" class="cell-muted">(absent)</span>
                   </td>
                 </tr>

@@ -9,6 +9,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import type { AxiosResponse } from 'axios'
+import { createPinia, setActivePinia } from 'pinia'
+import { useQuickLookStore } from '@/stores/quickLook'
 import DnPicker from './DnPicker.vue'
 import { browse } from '@/api/browse'
 
@@ -73,5 +75,31 @@ describe('DnPicker subtree mode with several roots', () => {
     expect(browse).toHaveBeenCalledTimes(1)
     expect(browse).toHaveBeenCalledWith('dir-1', 'ou=people,' + BASE)
     expect(wrapper.find('.dn-tree').text()).toContain('ou=people,' + BASE)
+  })
+})
+
+describe('DnPicker quick look', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  const quickLookButton = (w: ReturnType<typeof mount>) => w.find('[data-testid="dnpicker-quick-look"]')
+
+  it('is off unless asked for', () => {
+    const w = mount(DnPicker, { props: { directoryId: 'dir-1', modelValue: 'uid=a,dc=x' } })
+    expect(quickLookButton(w).exists()).toBe(false)
+  })
+
+  it('opens the field\'s DN in the quick look, once the value is a DN', async () => {
+    const w = mount(DnPicker, { props: { directoryId: 'dir-1', modelValue: 'not a dn', quickLook: true } })
+    expect(quickLookButton(w).attributes('disabled')).toBeDefined()
+
+    await w.setProps({ modelValue: ' uid=a,ou=people,dc=x ' })
+    expect(quickLookButton(w).attributes('disabled')).toBeUndefined()
+    await quickLookButton(w).trigger('click')
+    expect(useQuickLookStore().current).toEqual({ directoryId: 'dir-1', dn: 'uid=a,ou=people,dc=x' })
+  })
+
+  it('needs a directory to look in', () => {
+    const w = mount(DnPicker, { props: { modelValue: 'uid=a,dc=x', quickLook: true } })
+    expect(quickLookButton(w).attributes('disabled')).toBeDefined()
   })
 })

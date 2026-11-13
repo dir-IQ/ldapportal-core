@@ -55,6 +55,10 @@ export function useDialogA11y(opts: {
 
   function onKeydown(e: KeyboardEvent): void {
     if (!opts.isOpen() || openStack[openStack.length - 1] !== token) return
+    // The DN quick-look drawer is non-modal and can sit over an open
+    // dialog; keys pressed inside it (Esc to close it, Tab through it) are
+    // its own, not the dialog's.
+    if ((e.target as Element | null)?.closest?.('[data-quick-look]')) return
     if (e.key === 'Escape') {
       e.stopPropagation()
       opts.onClose()

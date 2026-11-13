@@ -11,7 +11,6 @@ vi.mock('@/stores/auth', () => ({
 }))
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
 vi.mock('@/composables/useConfirm', () => ({ useConfirm: () => confirmMock }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('@/api/directories', () => ({
   listDirectories: vi.fn(() => Promise.resolve({ data: [{ id: 'dir-1', displayName: 'Corp', directoryType: 'OPENLDAP' }] })),
 }))
@@ -44,6 +43,7 @@ vi.mock('@/components/DnPicker.vue', () => ({ default: { template: '<input />' }
 
 import IntegrityCheckView from './IntegrityCheckView.vue'
 import * as browseApi from '@/api/browse'
+import { useQuickLookStore } from '@/stores/quickLook'
 
 function button(label: string): HTMLButtonElement | undefined {
   return Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === label)
@@ -163,6 +163,18 @@ describe('IntegrityCheckView', () => {
 
     expect(browseApi.listIntegrityChecks).toHaveBeenCalledWith('dir-1')
     expect(document.body.textContent).not.toContain('Broken references (')
+    wrapper.unmount()
+  })
+
+  it('opens an issue\'s entry in the quick look, keeping the issue list in place', async () => {
+    const wrapper = await runCheck()
+    const link = Array.from(document.querySelectorAll<HTMLElement>('.dn-link')).find(l => l.textContent?.trim() === STAFF)!
+    expect(link).toBeTruthy()
+    link.click()
+    await flushPromises()
+
+    expect(useQuickLookStore().current).toEqual({ directoryId: 'dir-1', dn: STAFF })
+    expect(document.body.textContent).toContain('references non-existent DN')
     wrapper.unmount()
   })
 })

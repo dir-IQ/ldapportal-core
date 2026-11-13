@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { useQuickLookStore } from '@/stores/quickLook'
 import SyncEntryViewer, { type EntrySide } from './SyncEntryViewer.vue'
 
 vi.mock('@/api/browse', () => ({ browse: vi.fn() }))
@@ -108,5 +110,22 @@ describe('SyncEntryViewer', () => {
     expect(w.text()).toContain('Unknown directory.')
     await w.find('button').trigger('click')
     expect(w.emitted('close')).toHaveLength(1)
+  })
+
+  it('links DN values to the quick look in their own side\'s directory', async () => {
+    setActivePinia(createPinia())
+    entries({
+      'uid=js,ou=staff,dc=corp': { manager: ['uid=boss,ou=staff,dc=corp'], cn: ['Jo'] },
+      'uid=js,ou=people,dc=hr': { manager: ['uid=boss,ou=people,dc=hr'], cn: ['Jo'] },
+    })
+    const w = mountViewer()
+    await flushPromises()
+
+    const links = w.find('[data-testid="entry-attr-manager"]').findAll('.dn-link')
+    expect(links.map(l => l.text())).toEqual(['uid=boss,ou=staff,dc=corp', 'uid=boss,ou=people,dc=hr'])
+    expect(w.find('[data-testid="entry-attr-cn"]').find('.dn-link').exists()).toBe(false)
+
+    await links[1].trigger('click')
+    expect(useQuickLookStore().current).toEqual({ directoryId: 'dir-hr', dn: 'uid=boss,ou=people,dc=hr' })
   })
 })

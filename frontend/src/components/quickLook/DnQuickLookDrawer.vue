@@ -17,6 +17,7 @@
         class="quicklook-panel fixed inset-y-0 right-0 z-[60] w-full max-w-md bg-white border-l border-gray-200 shadow-xl flex flex-col"
         :aria-labelledby="titleId"
         data-testid="dn-quick-look"
+        data-quick-look
         @keydown.escape.stop="quickLook.close()"
       >
         <!-- Header -->
