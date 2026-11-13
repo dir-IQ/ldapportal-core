@@ -212,25 +212,10 @@
                  object classes only. Open re-selects the member entry. -->
             <GroupMembersPanel :attributes="entryDetail.attributes" @open="selectEntry" />
 
-            <div v-if="Object.keys(entryDetail.attributes).length === 0" class="text-sm text-gray-500">
-              No attributes returned for this entry.
-            </div>
-            <table v-else class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-gray-200">
-                  <th class="text-left py-2 pr-4 text-xs font-semibold text-gray-500 uppercase tracking-wider w-48">Attribute</th>
-                  <th class="text-left py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Value</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-50">
-                <tr v-for="[attr, values] in sortedAttributes" :key="attr">
-                  <td class="py-2 pr-4 text-gray-600 font-mono text-[13px] align-top">{{ attr }}</td>
-                  <td class="py-2 text-gray-900 font-mono text-[13px]">
-                    <div v-for="(val, i) in values" :key="i" class="break-all">{{ formatValue(val) }}</div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <!-- DN values (member, manager, secDN, …) open the quick-look
+                 drawer, so a referenced entry can be checked without
+                 losing this one's place in the tree. -->
+            <EntryAttributeTable :attributes="entryDetail.attributes" :directory-id="selectedDirId" />
           </template>
         </template>
       </div>
@@ -351,6 +336,7 @@ import GroupMembersPanel from '@/components/GroupMembersPanel.vue'
 import LdifImportModal from '@/components/LdifImportModal.vue'
 import DnPicker from '@/components/DnPicker.vue'
 import CopyButton from '@/components/CopyButton.vue'
+import EntryAttributeTable from '@/components/quickLook/EntryAttributeTable.vue'
 
 type BrowseResult = components['schemas']['BrowseResult']
 type ChildEntry = components['schemas']['ChildEntry']
@@ -583,11 +569,6 @@ function onClickOutside(e: MouseEvent): void {
 onMounted(() => document.addEventListener('click', onClickOutside))
 onUnmounted(() => document.removeEventListener('click', onClickOutside))
 
-const sortedAttributes = computed<Array<[string, string[]]>>(() => {
-  if (!entryDetail.value?.attributes) return []
-  return Object.entries(entryDetail.value.attributes)
-    .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-})
 
 // Load the tree root when directory changes
 watch(selectedDirId, async (dirId) => {
@@ -879,13 +860,6 @@ async function onLdifImported(): Promise<void> {
   notif.success('LDIF import completed')
 }
 
-function formatValue(val: string): string {
-  // Detect likely binary data (contains non-printable characters)
-  if (val && /[\x00-\x08\x0E-\x1F]/.test(val)) {
-    return `[binary data, ${val.length} bytes]`
-  }
-  return val
-}
 
 onMounted(async () => {
   loadingDirs.value = true

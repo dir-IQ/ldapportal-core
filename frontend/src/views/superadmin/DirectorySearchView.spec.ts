@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import type { AxiosResponse } from 'axios'
+import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('vue-router', () => ({ RouterLink: { template: '<a><slot /></a>' } }))
 vi.mock('@/stores/notifications', () => ({
@@ -27,6 +28,7 @@ vi.mock('@/api/schema', () => ({ listAttributeTypes: vi.fn().mockResolvedValue({
 import DirectorySearchView from './DirectorySearchView.vue'
 import { listDirectories } from '@/api/directories'
 import { searchEntries } from '@/api/browse'
+import { useQuickLookStore } from '@/stores/quickLook'
 
 function ok<T>(data: T): AxiosResponse<T> {
   return { data, status: 200, statusText: 'OK', headers: {}, config: {} } as unknown as AxiosResponse<T>
@@ -104,5 +106,77 @@ describe('DirectorySearchView size limit and Load all', () => {
     expect(notice.text().replace(/\s+/g, ' ')).toContain('First 50,000 of more than 50,000 entries returned.')
     expect(wrapper.find('[data-testid="search-load-all"]').exists()).toBe(false)
     expect(notice.text()).toContain('Narrow the search filter')
+  })
+})
+
+describe('DirectorySearchView DN quick-look links', () => {
+  const GROUP = 'cn=admins,ou=groups,dc=example,dc=com'
+  const SEC = 'secAuthority=Default,o=ibm,c=us'
+
+  // Renders every column through the table's generic `cell` slot, as the
+  // real ResultsTable does for columns without a dedicated slot.
+  const tableStubs = {
+    ...stubs,
+    ResultsTable: {
+      props: ['rows', 'columns'],
+      emits: ['row-click'],
+      template: `<table data-results><tr v-for="row in rows" :key="row.dn" @click="$emit('row-click', row)">
+        <td v-for="col in columns.filter(c => c.key !== 'dn')" :key="col.key" :data-col="col.key">
+          <slot name="cell" :row="row" :value="row[col.key]" :col="col" />
+        </td></tr></table>`,
+    },
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+    vi.mocked(listDirectories).mockResolvedValue(ok([{ id: 'd1', displayName: 'Example', directoryType: 'OPENLDAP' }]))
+    vi.mocked(searchEntries).mockResolvedValue(ok({
+      entries: [{
+        dn: 'uid=alice,ou=people,dc=example,dc=com',
+        attributes: { cn: ['Alice'], memberOf: [GROUP], secDN: [SEC] },
+      }],
+      truncated: false, total: 1, totalIsLowerBound: false,
+    }))
+  })
+
+  async function mountWithTable() {
+    const wrapper = mount(DirectorySearchView, {
+      global: { stubs: tableStubs, directives: { 'dialog-a11y': {} } },
+    })
+    await flushPromises()
+    const vm = wrapper.vm as unknown as { form: { attributes: string }, doSearch: () => Promise<void> }
+    vm.form.attributes = 'cn,memberOf,secDN'
+    await vm.doSearch()
+    await flushPromises()
+    return wrapper
+  }
+
+  it('renders DN-valued result cells as quick-look links, other cells as text', async () => {
+    const wrapper = await mountWithTable()
+
+    expect(wrapper.get('[data-col="memberOf"] .dn-link').text()).toBe(GROUP)
+    expect(wrapper.get('[data-col="secDN"] .dn-link').text()).toBe(SEC)
+    expect(wrapper.get('[data-col="cn"]').find('.dn-link').exists()).toBe(false)
+  })
+
+  it('opens the quick look from a cell without also opening the row detail', async () => {
+    const wrapper = await mountWithTable()
+
+    await wrapper.get('[data-col="secDN"] .dn-link').trigger('click')
+    await flushPromises()
+
+    expect(useQuickLookStore().current).toEqual({ directoryId: 'd1', dn: SEC })
+    expect(wrapper.find('#dir-search-entry-title').exists()).toBe(false)
+  })
+
+  it('links DN values in the entry detail dialog', async () => {
+    const wrapper = await mountWithTable()
+    await wrapper.get('[data-results] tr').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('#dir-search-entry-title').exists()).toBe(true)
+    const links = wrapper.findAll('[role="dialog"] .dn-link').map(l => l.text())
+    expect(links).toEqual(expect.arrayContaining([GROUP, SEC]))
   })
 })

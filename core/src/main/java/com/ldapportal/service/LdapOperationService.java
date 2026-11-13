@@ -216,10 +216,18 @@ public class LdapOperationService {
     // ── Browse ────────────────────────────────────────────────────────────────
 
     public BrowseResult browse(UUID directoryId, AuthPrincipal principal, String dn) {
+        return browse(directoryId, principal, dn, 0);
+    }
+
+    /**
+     * As {@link #browse(UUID, AuthPrincipal, String)}, returning at most
+     * {@code limit} children ({@code 0} = all, up to the service ceiling).
+     */
+    public BrowseResult browse(UUID directoryId, AuthPrincipal principal, String dn, int limit) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
         permissionService.requireBaseDnWithinScope(principal, directoryId, dn);
-        return browseService.browse(dc, dn);
+        return browseService.browse(dc, dn, null, limit);
     }
 
     /**

@@ -277,7 +277,11 @@
       Pages that don't use flex-1 (the natural-flow majority) continue
       to render at content height as flex items with `flex: 0 1 auto`.
     -->
-    <main id="main-content" class="flex-1 overflow-y-auto flex flex-col">
+    <!-- On wide screens the page makes room for the DN quick-look drawer
+         (max-w-md = 28rem) instead of sliding under it, so it sits beside
+         the page. Narrower screens let it overlay. -->
+    <main id="main-content" class="flex-1 overflow-y-auto flex flex-col transition-[margin] duration-200"
+          :class="{ 'xl:mr-[28rem]': quickLook.isOpen }">
       <!-- Deployment-skew warning. Shown when the bundle's embedded
            SHA differs from the server's reported SHA — the most common
            cause of "I deployed but the new feature doesn't work". -->
@@ -309,6 +313,10 @@
 
     <!-- Global upgrade prompt, shown by the axios 402 interceptor -->
     <UpgradeModal />
+
+    <!-- DN quick look: non-modal side panel opened by <DnLink> anywhere in
+         the app (see stores/quickLook.ts). -->
+    <DnQuickLookDrawer />
 
     <!-- Global confirm dialog, opened via useConfirm() composable.
          Replaces ad-hoc window.confirm() call sites across the app
@@ -348,6 +356,8 @@ import NotificationBell from '@/components/NotificationBell.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
 import LicenseExpirationBanner from '@/components/LicenseExpirationBanner.vue'
 import UpgradeModal from '@/components/UpgradeModal.vue'
+import DnQuickLookDrawer from '@/components/quickLook/DnQuickLookDrawer.vue'
+import { useQuickLookStore } from '@/stores/quickLook'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { useConfirmStore } from '@/stores/confirm'
 import { useNotificationStore } from '@/stores/notifications'
@@ -385,6 +395,7 @@ const auth          = useAuthStore()
 const profilePicker = useProfilePickerStore()
 const { hasFeature } = usePermissions()
 const settings      = useSettingsStore()
+const quickLook     = useQuickLookStore()
 
 onMounted(() => settings.init())
 const router = useRouter()

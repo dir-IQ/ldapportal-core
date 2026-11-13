@@ -103,6 +103,35 @@ class LdapOperationServiceTest {
                 membershipGate, nullProvider, nullApprovalProvider());
     }
 
+    // ── Directory-scoped browse ──────────────────────────────────────────────
+
+    @Test
+    void browse_withLimit_checksScopeThenPassesLimit() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String dn = "uid=alice,ou=people,dc=example,dc=com";
+        var result = new com.ldapportal.ldap.LdapBrowseService.BrowseResult(dn, java.util.Map.of(), List.of());
+        when(browseService.browse(dc, dn, null, 1)).thenReturn(result);
+
+        assertThat(service.browse(dirId, adminPrincipal(), dn, 1)).isSameAs(result);
+
+        var order = inOrder(permissionService, browseService);
+        order.verify(permissionService).requireBaseDnWithinScope(any(), eq(dirId), eq(dn));
+        order.verify(browseService).browse(dc, dn, null, 1);
+    }
+
+    @Test
+    void browse_outOfScope_doesNotRead() {
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(enabledDir(true)));
+        String dn = "uid=mallory,ou=elsewhere,dc=example,dc=com";
+        doThrow(new AccessDeniedException("out of scope"))
+                .when(permissionService).requireBaseDnWithinScope(any(), eq(dirId), eq(dn));
+
+        assertThatThrownBy(() -> service.browse(dirId, adminPrincipal(), dn, 1))
+                .isInstanceOf(AccessDeniedException.class);
+        verify(browseService, never()).browse(any(), anyString(), any(), anyInt());
+    }
+
     // ── Directory loading ─────────────────────────────────────────────────────
 
     @Test
